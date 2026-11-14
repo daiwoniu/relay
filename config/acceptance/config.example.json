@@ -1,0 +1,8 @@
+{
+  "origin": "http://localhost:9081",
+  "username": "admin",
+  "edgePath": "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
+  "desktopViewport": { "width": 1456, "height": 819, "deviceScaleFactor": 1 },
+  "mobileViewport": { "width": 390, "height": 844, "deviceScaleFactor": 1 },
+  "timeouts": { "startupMs": 15000, "navigationMs": 30000, "scenarioMs": 120000 }
+}

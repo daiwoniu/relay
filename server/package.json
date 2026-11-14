@@ -1,0 +1,51 @@
+{
+  "name": "relay-server",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "tsx src/index.ts",
+    "frontend-gateway": "tsx src/frontend-gateway.ts",
+    "typecheck": "tsc --noEmit",
+    "contracts:generate": "tsx scripts/generate-client-contracts.ts",
+    "contracts:check": "tsx scripts/generate-client-contracts.ts --check",
+    "test": "npm run contracts:check && tsx --test src/**/*.test.ts",
+    "build": "tsc",
+    "verify:continuity": "node scripts/verify-continuity.mjs",
+    "verify:multidevice": "node scripts/verify-multidevice.mjs",
+    "verify:title": "node scripts/verify-title.mjs",
+    "verify:security": "node scripts/verify-security.mjs",
+    "verify:auth": "node scripts/verify-auth.mjs",
+    "verify:authorization-notifications": "node scripts/verify-authorization-notifications.mjs",
+    "probe:codebuddy": "tsx scripts/probe-codebuddy-acp.ts",
+    "verify:multi-engine": "tsx scripts/verify-multi-engine.ts",
+    "verify:engine-maintenance": "tsx scripts/verify-engine-maintenance.ts"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.13.0",
+    "exceljs": "^4.4.0",
+    "hono": "^4.7.0",
+    "jszip": "^3.10.1",
+    "lunar-javascript": "^1.7.7",
+    "mammoth": "^1.12.0",
+    "pdf-lib": "^1.17.1",
+    "sanitize-html": "2.17.5",
+    "saxes": "^5.0.1",
+    "sql.js": "^1.12.0",
+    "uuid": "^11.0.0",
+    "ws": "^8.18.0",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "@types/sanitize-html": "^2.16.1",
+    "@types/uuid": "^10.0.0",
+    "@types/ws": "^8.5.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  },
+  "overrides": {
+    "exceljs": {
+      "uuid": "^11.1.0"
+    }
+  }
+}

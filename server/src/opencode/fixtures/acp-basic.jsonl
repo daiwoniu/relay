@@ -1,0 +1,18 @@
+{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1,"clientCapabilities":{},"clientInfo":{"name":"relay-opencode-probe","version":"1.0.0"}},"_direction":"client","_probe":"1"}
+{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"serverInfo":{"name":"opencode","version":"<ID_1>"},"capabilities":{"roots":{"listChanged":true},"sampling":{}}},"_direction":"server","_probe":"1"}
+{"jsonrpc":"2.0","method":"notifications/initialized","_direction":"client","_probe":"1"}
+{"jsonrpc":"2.0","id":2,"method":"session/new","params":{"cwd":"<PROBE_CWD>","mcpServers":[]},"_direction":"client","_probe":"1"}
+{"jsonrpc":"2.0","id":2,"result":{"sessionId":"<ID_2>","configOptions":[{"id":"model","type":"string","category":"model","currentValue":"opencode/default","options":[]},{"id":"mode","type":"string","category":"general","currentValue":"build","options":[{"label":"Build","value":"build"},{"label":"Plan","value":"plan"}]}],"authMethods":[{"id":"opencode-login","name":"Login with opencode","description":"Run opencode auth login in the terminal"}],"cost":{"usage":0,"total":0}},"_direction":"server","_probe":"1"}
+{"jsonrpc":"2.0","id":3,"method":"session/prompt","params":{"sessionId":"<ID_2>","prompt":[{"type":"text","text":"只回复 ACP_1"}]},"_direction":"client","_probe":"1"}
+{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"<ID_2>","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"ACP_1"},"messageId":"<ID_3>"}},"_direction":"server","_probe":"1"}
+{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"<ID_2>","update":{"sessionUpdate":"usage_update","used":120,"size":192000}},"_direction":"server","_probe":"1"}
+{"jsonrpc":"2.0","id":3,"result":{"stopReason":"end_turn","cost":{"usage":120,"total":120}},"_direction":"server","_probe":"1"}
+{"jsonrpc":"2.0","id":11,"method":"initialize","params":{"protocolVersion":1,"clientCapabilities":{},"clientInfo":{"name":"relay-opencode-probe","version":"1.0.0"}},"_direction":"client","_probe":"2"}
+{"jsonrpc":"2.0","id":11,"result":{"protocolVersion":1,"serverInfo":{"name":"opencode","version":"<ID_1>"},"capabilities":{"roots":{"listChanged":true},"sampling":{}}},"_direction":"server","_probe":"2"}
+{"jsonrpc":"2.0","method":"notifications/initialized","_direction":"client","_probe":"2"}
+{"jsonrpc":"2.0","id":12,"method":"session/new","params":{"cwd":"<PROBE_CWD>","mcpServers":[]},"_direction":"client","_probe":"2"}
+{"jsonrpc":"2.0","id":12,"result":{"sessionId":"<ID_4>","configOptions":[{"id":"model","type":"string","category":"model","currentValue":"opencode/default","options":[]}],"authMethods":[],"cost":{"usage":0,"total":0}},"_direction":"server","_probe":"2"}
+{"jsonrpc":"2.0","id":13,"method":"session/prompt","params":{"sessionId":"<ID_4>","prompt":[{"type":"text","text":"只回复 ACP_2"}]},"_direction":"client","_probe":"2"}
+{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"<ID_4>","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"ACP_2"},"messageId":"<ID_5>"}},"_direction":"server","_probe":"2"}
+{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"<ID_4>","update":{"sessionUpdate":"usage_update","used":95,"size":192000}},"_direction":"server","_probe":"2"}
+{"jsonrpc":"2.0","id":13,"result":{"stopReason":"end_turn","cost":{"usage":95,"total":95}},"_direction":"server","_probe":"2"}

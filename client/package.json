@@ -1,0 +1,37 @@
+{
+  "name": "relay-client",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "test": "node --experimental-strip-types --test src/**/*.test.mjs",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc -b && vite build && node scripts/check-build-budget.mjs",
+    "build:release": "node ../scripts/frontend-build.mjs --activate",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@dnd-kit/core": "^6.3.1",
+    "@dnd-kit/sortable": "^10.0.0",
+    "@dnd-kit/utilities": "^3.2.2",
+    "highlight.js": "^11.11.1",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "react-markdown": "^9.0.0",
+    "react-router-dom": "^7.1.0",
+    "rehype-highlight": "^7.0.0",
+    "remark-gfm": "^4.0.0",
+    "uqr": "0.1.3",
+    "zustand": "^5.0.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^4.3.0",
+    "tailwindcss": "^4.0.0",
+    "terser": "^5.50.0",
+    "typescript": "^5.7.0",
+    "vite": "^6.0.0"
+  }
+}

@@ -1,0 +1,1 @@
+export const OPENCODE_CLIENT_CAPABILITIES = {} as const;

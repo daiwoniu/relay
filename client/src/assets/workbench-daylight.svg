@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 260" fill="none" aria-hidden="true">
+  <defs>
+    <linearGradient id="sky" x1="36" y1="20" x2="410" y2="249" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#DDF4F2"/><stop offset=".53" stop-color="#D5EBFA"/><stop offset="1" stop-color="#E8E6FA"/>
+    </linearGradient>
+    <linearGradient id="hill" x1="67" y1="160" x2="411" y2="245" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#91D7CD"/><stop offset="1" stop-color="#9EC9E9"/>
+    </linearGradient>
+    <filter id="blur"><feGaussianBlur stdDeviation="19"/></filter>
+  </defs>
+  <ellipse cx="258" cy="129" rx="210" ry="112" fill="url(#sky)" opacity=".68"/>
+  <circle cx="324" cy="79" r="37" fill="#FFF8D9"/>
+  <circle cx="324" cy="79" r="60" fill="#FFEEC5" opacity=".37" filter="url(#blur)"/>
+  <path d="M39 203c57-77 97-111 150-102 53 9 70 71 114 63 46-8 68-75 139-52v104H39v-13Z" fill="#C7E9E7" opacity=".7"/>
+  <path d="M20 227c87-71 139-35 203-78 60-41 111-26 176 29 21 18 39 24 61 26v44H20v-21Z" fill="url(#hill)" opacity=".82"/>
+  <path d="M24 241c99-41 159-25 218-7 87 27 137-42 219-19v32H24v-6Z" fill="#69B9BB" opacity=".56"/>
+  <path d="M54 213c69-32 122-47 175-32m73-42c41-20 74-21 112-6" stroke="#fff" stroke-width="2" stroke-linecap="round" opacity=".55"/>
+  <circle cx="105" cy="69" r="4" fill="#A8D5DF"/><circle cx="135" cy="51" r="2.5" fill="#B5D8E8"/>
+</svg>

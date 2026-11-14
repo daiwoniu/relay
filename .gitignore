@@ -1,0 +1,50 @@
+# Dependencies
+node_modules/
+
+# Build and generated output
+dist/
+build/
+coverage/
+*.tsbuildinfo
+__pycache__/
+*.pyc
+
+# Runtime data and local state
+data/
+*.db
+*.sqlite
+.relay-setup/
+workspace/
+
+# Environment and local AI tool state
+.env
+.env.local
+.env.*.local
+.agents/
+.codex/
+.relay-dev/
+.workbuddy/
+.worktrees/
+.relay-build/
+config/mcporter.json
+config/workspace-console.local.conf
+config/workspace-console.local.json
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# Temporary files
+*.tmp
+*.bak
+
+# Editors and IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Operating system files
+.DS_Store
+Thumbs.db

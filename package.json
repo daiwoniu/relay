@@ -1,0 +1,28 @@
+{
+  "name": "daiwoniu-relay",
+  "private": true,
+  "version": "0.52.1",
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "help": "node scripts/help.mjs",
+    "setup": "node scripts/setup.mjs",
+    "start": "node scripts/launcher-host.mjs",
+    "dev": "node scripts/launcher-host.mjs --dev",
+    "stop": "node scripts/start.mjs --stop",
+    "restart": "node scripts/launcher-host.mjs --restart",
+    "check": "node scripts/start.mjs --check-only",
+    "version:assess": "node scripts/version-assessment.mjs",
+    "performance:engines": "node scripts/engine-performance-report.mjs",
+    "acceptance:auth": "node scripts/acceptance/auth.mjs",
+    "acceptance:status": "node scripts/acceptance/status.mjs",
+    "acceptance:cleanup": "node scripts/acceptance/cleanup.mjs",
+    "acceptance:page": "node scripts/acceptance/page.mjs",
+    "screenshots:readme": "node scripts/acceptance/readme.mjs",
+    "worktree:clean": "node scripts/worktree-cleanup.mjs",
+    "test:scripts": "node scripts/test-scripts.mjs"
+  }
+}

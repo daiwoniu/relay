@@ -1,0 +1,33 @@
+/* ===== 登录页：复用 Relay 中性主题变量 ===== */
+.relay-auth-shell { isolation: isolate; }
+
+.relay-auth-grid {
+  opacity: 0.38;
+  background-image:
+    linear-gradient(color-mix(in srgb, var(--color-border) 52%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, var(--color-border) 52%, transparent) 1px, transparent 1px);
+  background-size: 42px 42px;
+  mask-image: radial-gradient(circle at center, black, transparent 78%);
+}
+.relay-auth-orb {
+  position: absolute;
+  width: 28rem;
+  height: 28rem;
+  border-radius: 9999px;
+  filter: blur(90px);
+  opacity: 0.13;
+  pointer-events: none;
+}
+
+.relay-auth-orb-primary { left: -12rem; top: -12rem; background: var(--color-status-processing); }
+.relay-auth-orb-secondary { bottom: -14rem; right: -12rem; background: var(--color-status-success); }
+.relay-auth-card { animation: relay-auth-enter 360ms ease-out both; }
+
+@keyframes relay-auth-enter {
+  from { opacity: 0; transform: translateY(10px) scale(0.99); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .relay-auth-card { animation: none; }
+}

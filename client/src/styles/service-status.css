@@ -1,0 +1,57 @@
+/* ===== 后端服务状态呼吸灯 ===== */
+@keyframes status-breathe {
+  0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.4); }
+  50% { opacity: 0.6; box-shadow: 0 0 0 4px rgba(34, 197, 94, 0); }
+}
+.status-dot-online {
+  animation: status-breathe 2s ease-in-out infinite;
+}
+.message-bubble-content-visibility {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 180px;
+}
+
+.engine-maintenance-card {
+  border: 1px solid var(--color-border);
+  border-radius: 0.75rem;
+  background: var(--color-surface);
+  padding: 0.875rem;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.05);
+}
+.engine-maintenance-scroll {
+  overscroll-behavior: contain;
+  padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
+}
+.engine-maintenance-scroll.has-primary { padding-bottom: 0.75rem; }
+@media (min-width: 1024px) {
+  .engine-maintenance-scroll { padding-bottom: 0.75rem; }
+}
+.engine-maintenance-summary {
+  display: flex;
+  min-height: 2.75rem;
+  cursor: pointer;
+  list-style: none;
+  align-items: center;
+  justify-content: space-between;
+  color: var(--color-text-secondary);
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+.engine-maintenance-summary::-webkit-details-marker { display: none; }
+.engine-maintenance-summary::after { content: "⌄"; }
+.engine-maintenance-control {
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-secondary);
+  color: var(--color-text);
+}
+.engine-maintenance-control:not(:disabled):hover { background: var(--color-surface-hover); }
+.engine-maintenance-primary { background: var(--color-primary); color: var(--theme-on-primary); }
+.engine-maintenance-status { font-size: 0.6875rem; font-weight: 500; }
+.engine-maintenance-status.success { color: var(--color-status-success); }
+.engine-maintenance-status.warning { color: var(--color-status-warning); }
+.engine-maintenance-status.danger { color: var(--color-status-danger); }
+.engine-maintenance-status.neutral { color: var(--color-text-secondary); }
+.panel-shell--operations :is(a, button, input, summary):focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--color-focus-ring);
+}

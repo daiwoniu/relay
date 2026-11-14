@@ -1,0 +1,10 @@
+# Optional RSSHub service for AI 情报. Run separately from Relay.
+services:
+  rsshub:
+    image: diygod/rsshub:chromium-bundled
+    restart: unless-stopped
+    ports:
+      - '127.0.0.1:1200:1200'
+    environment:
+      NODE_ENV: production
+      CACHE_EXPIRE: '3600'

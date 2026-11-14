@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 260" fill="none" aria-hidden="true">
+  <defs>
+    <linearGradient id="pane" x1="116" y1="31" x2="353" y2="227" gradientUnits="userSpaceOnUse"><stop stop-color="#fff" stop-opacity=".76"/><stop offset=".55" stop-color="#DCD8FA" stop-opacity=".52"/><stop offset="1" stop-color="#BFDDF7" stop-opacity=".64"/></linearGradient>
+    <linearGradient id="orb" x1="286" y1="49" x2="373" y2="155" gradientUnits="userSpaceOnUse"><stop stop-color="#FFE5F5"/><stop offset="1" stop-color="#C7B9ED"/></linearGradient>
+    <filter id="soft"><feGaussianBlur stdDeviation="14"/></filter>
+  </defs>
+  <ellipse cx="251" cy="134" rx="209" ry="112" fill="#EDE9FF" opacity=".62"/>
+  <circle cx="335" cy="94" r="56" fill="url(#orb)" opacity=".73"/>
+  <circle cx="335" cy="94" r="72" fill="#D5C7F0" opacity=".27" filter="url(#soft)"/>
+  <rect x="117" y="48" width="196" height="156" rx="24" fill="url(#pane)" stroke="#fff" stroke-width="4"/>
+  <rect x="179" y="74" width="202" height="144" rx="24" fill="url(#pane)" stroke="#fff" stroke-width="4"/>
+  <rect x="179" y="74" width="202" height="144" rx="24" stroke="#B8B4E3" stroke-opacity=".48" stroke-width="2"/>
+  <path d="M201 103h97m-97 20h61m-61 52h145" stroke="#fff" stroke-width="7" stroke-linecap="round" opacity=".74"/>
+  <rect x="201" y="142" width="48" height="16" rx="8" fill="#B9DBF5" opacity=".76"/>
+  <rect x="257" y="142" width="66" height="16" rx="8" fill="#D5C9F0" opacity=".76"/>
+  <path d="M95 183c26-20 51-16 73 9m193-107c30-12 52-5 67 15" stroke="#fff" stroke-width="5" stroke-linecap="round" opacity=".75"/>
+  <circle cx="108" cy="78" r="12" fill="#fff" opacity=".55"/><circle cx="402" cy="172" r="8" fill="#fff" opacity=".67"/>
+</svg>

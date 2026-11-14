@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/x-icon" href="/favicon.ico?v=1" />
+    <link rel="icon" type="image/png" sizes="192x192" href="/relay-192.png?v=2" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/relay-32.png?v=2" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/relay-180.png?v=2" />
+    <link rel="manifest" href="/manifest.webmanifest?v=2" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0" />
+    <meta name="theme-color" content="#ffffff" />
+    <meta name="application-name" content="Relay" />
+    <meta name="apple-mobile-web-app-title" content="Relay" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <title>Relay</title>
+    <script>
+      // 在 React 加载前应用不含私人背景的主题镜像，避免首屏闪变。
+      (function() {
+        var preference = 'system';
+        var colorStyle = 'neutral';
+        var textScale = 'standard';
+        var publicShare = /^\/share(?:\/|$)/.test(window.location.pathname);
+        try {
+          var stored = localStorage.getItem('relay_theme');
+          if (stored === 'light' || stored === 'dark' || stored === 'system') preference = stored;
+          if (!publicShare) {
+            var mirror = JSON.parse(localStorage.getItem('relay_theme_bootstrap_v2') || 'null');
+            if (mirror && typeof mirror === 'object' && Object.keys(mirror).length === 4 && mirror.version === 2
+              && (mirror.basePreference === 'light' || mirror.basePreference === 'dark' || mirror.basePreference === 'system')
+              && (mirror.colorStyle === 'neutral' || mirror.colorStyle === 'aurora')
+              && (mirror.textScale === 'compact' || mirror.textScale === 'standard' || mirror.textScale === 'large')) {
+              preference = mirror.basePreference;
+              colorStyle = mirror.colorStyle;
+              textScale = mirror.textScale;
+            }
+          }
+        } catch (_) {}
+        var theme = preference === 'system'
+          ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
+          : preference;
+        document.documentElement.dataset.theme = theme;
+        document.documentElement.dataset.themePreference = preference;
+        document.documentElement.dataset.colorStyle = colorStyle;
+        document.documentElement.dataset.textScale = textScale;
+        document.documentElement.dataset.themeScope = publicShare ? 'public-share' : 'workspace';
+        var browserChromeColor = theme === 'dark'
+          ? (colorStyle === 'aurora' ? '#12131d' : '#181818')
+          : (colorStyle === 'aurora' ? '#f7f8ff' : '#ffffff');
+        document.querySelector('meta[name="theme-color"]').setAttribute('content', browserChromeColor);
+      })();
+    </script>
+    <style>
+      html {
+        overflow: hidden;
+      }
+      body {
+        height: 100%;
+        margin: 0;
+        overflow: hidden;
+      }
+      #root {
+        height: 100%;
+        overflow: hidden;
+      }
+    </style>
+    <script>
+      // 移动端浏览器的 100dvh 不稳定（地址栏显示/隐藏时不会即时更新）
+      // 用 visualViewport API 动态设置 html 高度，绕过 CSS 高度计算问题
+      (function() {
+        function setViewHeight() {
+          var viewport = window.visualViewport;
+          var h = viewport
+            ? viewport.height + Math.max(0, viewport.offsetTop || 0)
+            : window.innerHeight;
+          // 最小 400px 保证布局可用
+          if (h < 400) h = 400;
+          document.documentElement.style.height = h + 'px';
+        }
+        setViewHeight();
+        if (window.visualViewport) {
+          window.visualViewport.addEventListener('resize', setViewHeight);
+          window.visualViewport.addEventListener('scroll', setViewHeight);
+        } else {
+          window.addEventListener('resize', setViewHeight);
+        }
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
