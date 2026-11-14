@@ -98,12 +98,12 @@ export function readInstalledCodeBuddyVersion(): string | null {
 export async function fetchCodeBuddyRelease(version: string, fetchImpl: typeof fetch = fetch): Promise<CodeBuddyReleaseMetadata> {
   if (!isCodeBuddyVersion(version)) throw new Error('invalid CodeBuddy release version');
   const response = await fetchImpl(getCodeBuddyReleasePageUrl(version), {
-    headers: { Accept: 'text/html', 'User-Agent': 'daiwoniu-relay' },
+    headers: { Accept: 'text/html', 'User-Agent': 'relay' },
     signal: AbortSignal.timeout(VERSION_TIMEOUT_MS),
   });
   if (response.status === 404) {
     const changelogResponse = await fetchImpl(CHANGELOG_PAGE_URL, {
-      headers: { Accept: 'text/html', 'User-Agent': 'daiwoniu-relay' },
+      headers: { Accept: 'text/html', 'User-Agent': 'relay' },
       signal: AbortSignal.timeout(VERSION_TIMEOUT_MS),
     });
     if (!changelogResponse.ok) throw new Error(`CodeBuddy changelog check failed: ${changelogResponse.status}`);
@@ -202,7 +202,7 @@ const REGISTRY_URL = 'https://registry.npmjs.org/@tencent-ai%2Fcodebuddy-code';
 export async function fetchCodeBuddyNpmPublishedAt(version: string): Promise<number | null> {
   try {
     const response = await fetch(REGISTRY_URL, {
-      headers: { Accept: 'application/json', 'User-Agent': 'daiwoniu-relay' },
+      headers: { Accept: 'application/json', 'User-Agent': 'relay' },
       signal: AbortSignal.timeout(VERSION_TIMEOUT_MS),
     });
     if (!response.ok) return null;
@@ -218,7 +218,7 @@ export async function fetchCodeBuddyNpmPublishedAt(version: string): Promise<num
 export const codeBuddyVersionService = createCodeBuddyVersionService({
   readInstalledVersion: readInstalledCodeBuddyVersion,
   fetchLatestVersion: async () => {
-    const response = await fetch(LATEST_URL, { headers: { Accept: 'application/json', 'User-Agent': 'daiwoniu-relay' }, signal: AbortSignal.timeout(5_000) });
+    const response = await fetch(LATEST_URL, { headers: { Accept: 'application/json', 'User-Agent': 'relay' }, signal: AbortSignal.timeout(5_000) });
     if (!response.ok) throw new Error(`registry ${response.status}`);
     const payload = await response.json() as { version?: unknown };
     if (typeof payload.version !== 'string') throw new Error('missing version');

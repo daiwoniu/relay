@@ -26,7 +26,6 @@ import { CACHE_TTL_MS, RESPONSIBILITY_CACHE_TTL_MS } from './workspace-console-c
 import { shouldAutoRefreshSnapshot, snapshotNotice, taskCountDisplay } from './workspace-persistent-snapshot';
 import { createWorkspaceRefreshTracker } from './workspace-refresh-policy';
 import { createWorkbenchWheelHandoff } from './workbench-wheel-scroll';
-import { observeHistoryPageEnd } from './workbench-history-scroll';
 import './workspace-console-theme.css';
 
 const WorkspaceCalendarPanel = lazy(() => import('./WorkspaceDayPanels').then((module) => ({ default: module.WorkspaceCalendarPanel })));
@@ -139,9 +138,7 @@ export default function WorkspaceConsolePage() {
   const [laneStatusFilters, setLaneStatusFilters] = useState<Record<TaskLane, string>>({ unstarted: '', doing: '', completed: '' });
   const [search, setSearch] = useState('');
   const [completedVisibleCount, setCompletedVisibleCount] = useState(10);
-  const [completedLoading, setCompletedLoading] = useState(false);
   const completedScrollRef = useRef<HTMLDivElement>(null);
-  const completedEndRef = useRef<HTMLParagraphElement>(null);
   const [mobileTaskLane, setMobileTaskLane] = useState<TaskLane>('doing');
   const [detailSelection, setDetailSelection] = useState<WorkbenchDetailSelection | null>(null);
   const [detailSnapshot, setDetailSnapshot] = useState<WorkbenchDetailSnapshot | null>(null);
@@ -485,12 +482,6 @@ export default function WorkspaceConsolePage() {
     setCompletedVisibleCount(10);
     if (completedScrollRef.current) completedScrollRef.current.scrollTop = 0;
   }, [userId, search, associationFilter, laneStatusFilters.completed]);
-  useEffect(() => {
-    const root = completedScrollRef.current;
-    const end = completedEndRef.current;
-    if (!root || !end || completedVisibleCount >= taskLanes.completed.length) return;
-    return observeHistoryPageEnd(root, end, () => setCompletedVisibleCount((count) => Math.min(taskLanes.completed.length, count + 10)), globalThis.IntersectionObserver, setCompletedLoading);
-  }, [completedVisibleCount, taskLanes.completed.length, userId, search, associationFilter, laneStatusFilters.completed]);
   const visibleTaskCount = taskLanes.unstarted.length + taskLanes.doing.length + taskLanes.completed.length;
   const activeDetail = detailSelection && detailSnapshot?.selection.kind === detailSelection.kind && detailSnapshot.selection.id === detailSelection.id ? detailSnapshot : null;
   const taskDashboard = useMemo(() => {
@@ -702,9 +693,8 @@ export default function WorkspaceConsolePage() {
           {desktopLayout && <WorkspaceCodexResourceCard key={userId} userId={userId} />}
         </div>
         <div className="mt-3 border-t border-white/10 pt-3">
-          <div className="flex min-w-0 flex-wrap items-center justify-between gap-x-4 gap-y-2">
-            <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-4 gap-y-2">
-              <div className="flex flex-wrap items-center gap-2">
+          <div className="workspace-workbench__header-toolbar">
+              <div className="workspace-workbench__header-actions">
               <button type="button" onClick={() => setSidebarOpen(!sidebarOpen)} aria-pressed={sidebarOpen} className="rounded-lg border border-white/15 px-3 py-1.5 text-xs hover:bg-white/10">{sidebarOpen ? '隐藏左侧面板' : '展开左侧面板'}</button>
               <details ref={refreshPicker} className="workspace-workbench__theme-picker relative" onToggle={(event) => { if (event.currentTarget.open) themePicker.current?.removeAttribute('open'); }}>
                 <summary aria-disabled={localLoading || projectLoading} onClick={(event) => { if (localLoading || projectLoading) event.preventDefault(); }} className="workspace-workbench__theme-trigger workspace-workbench__refresh-trigger cursor-pointer rounded-lg border px-3 py-1.5 text-xs aria-disabled:cursor-wait aria-disabled:opacity-50"><span>{localLoading || projectLoading ? '同步中…' : '刷新任务'}</span><svg className="workspace-workbench__theme-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false"><path d="m6 9 6 6 6-6" /></svg></summary>
@@ -715,23 +705,7 @@ export default function WorkspaceConsolePage() {
                 </div>
               </details>
               </div>
-            <div className="min-w-0 space-y-1 text-xs text-slate-400">
-                {compactTaskCounts ? <p title="本地台账、本人父项和本人子任务各自计数；同一事项可能有多条记录">
-                  <span className="font-medium text-slate-300">任务记录 {totalTaskCount} 条</span>
-                  <span className="text-slate-500">（台账 {dashboard?.counts.total}{localRefreshFailed ? '（旧数据）' : ''} · 飞书 {feishuTaskCount}{projectRefreshFailed ? '（旧数据）' : ''}）</span>
-                </p> : <div className="flex flex-wrap gap-x-5 gap-y-1">
-                  <span title="本地台账、本人父项和本人子任务各自计数">任务记录：{taskCountDisplay(hasLocalData || hasProjectData, totalTaskCount, localLoading || projectLoading, displayingOldData)}</span>
-                  <span>本地台账：{taskCountDisplay(hasLocalData, dashboard?.counts.total ?? 0, localLoading, hasLocalData && localRefreshFailed)}</span>
-                  <span>飞书任务：{taskCountDisplay(hasProjectData, feishuTaskCount, projectLoading, hasProjectData && projectRefreshFailed)}</span>
-                </div>}
-                {(dashboard?.registryGeneratedAt || responsibility?.generatedAt) && <p className="text-slate-500">
-                  数据时间：{dashboard?.registryGeneratedAt && `台账 ${formatSummaryTime(dashboard.registryGeneratedAt)}`}
-                  {dashboard?.registryGeneratedAt && responsibility?.generatedAt && ' · '}
-                  {responsibility?.generatedAt && `飞书 ${formatSummaryTime(responsibility.generatedAt)}`}
-                </p>}
-              </div>
-            </div>
-            <div className="ml-auto flex shrink-0 items-center gap-2">
+            <div className="workspace-workbench__header-display">
               <button type="button" onClick={() => setWide((value) => !value)} aria-pressed={wide} className="hidden rounded-lg border border-white/15 px-3 py-1.5 text-xs hover:bg-white/10 lg:inline-flex">{wide ? '标准宽度' : '宽屏显示'}</button>
               <details ref={themePicker} className="workspace-workbench__theme-picker relative" onToggle={(event) => { if (event.currentTarget.open) refreshPicker.current?.removeAttribute('open'); }}>
                 <summary className="workspace-workbench__theme-trigger cursor-pointer rounded-lg border px-3 py-1.5 text-xs"><span>主题：{WORKBENCH_THEME_OPTIONS.find((option) => option.id === workbenchTheme)?.label}</span><svg className="workspace-workbench__theme-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false"><path d="m6 9 6 6 6-6" /></svg></summary>
@@ -740,6 +714,24 @@ export default function WorkspaceConsolePage() {
                 </div>
               </details>
             </div>
+            <div className="workspace-workbench__header-meta space-y-1 text-xs text-slate-400">
+                {compactTaskCounts ? <p className="workspace-workbench__header-counts" title="本地台账、本人父项和本人子任务各自计数；同一事项可能有多条记录">
+                  <span className="font-medium text-slate-300">任务记录 {totalTaskCount} 条</span>
+                  <span className="text-slate-500">台账 {dashboard?.counts.total}{localRefreshFailed ? '（旧数据）' : ''}</span>
+                  <span className="text-slate-500">飞书 {feishuTaskCount}{projectRefreshFailed ? '（旧数据）' : ''}</span>
+                </p> : <div className="workspace-workbench__header-counts">
+                  <span title="本地台账、本人父项和本人子任务各自计数">任务记录：{taskCountDisplay(hasLocalData || hasProjectData, totalTaskCount, localLoading || projectLoading, displayingOldData)}</span>
+                  <span>本地台账：{taskCountDisplay(hasLocalData, dashboard?.counts.total ?? 0, localLoading, hasLocalData && localRefreshFailed)}</span>
+                  <span>飞书任务：{taskCountDisplay(hasProjectData, feishuTaskCount, projectLoading, hasProjectData && projectRefreshFailed)}</span>
+                </div>}
+                {(dashboard?.registryGeneratedAt || responsibility?.generatedAt) && <div className="workspace-workbench__header-times text-slate-500">
+                  <span>数据时间</span>
+                  <div>
+                    {dashboard?.registryGeneratedAt && <span>台账 {formatSummaryTime(dashboard.registryGeneratedAt)}</span>}
+                    {responsibility?.generatedAt && <span>飞书 {formatSummaryTime(responsibility.generatedAt)}</span>}
+                  </div>
+                </div>}
+              </div>
           </div>
           {refreshTiming && (localLoading || projectLoading || ((!refreshTiming.localRequested || !localRefreshFailed) && (!refreshTiming.projectRequested || !projectRefreshFailed))) && <div className={`workspace-workbench__refresh-banner mt-2 flex w-fit max-w-full items-start gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs ${refreshBannerTone}`}>
             <p role="status" className="min-w-0 break-words">{refreshTiming.localRequested && <>本地台账：{localLoading ? '同步中' : localRefreshFailed ? '失败' : localRefreshPartial ? '部分失败' : '已更新'} · {localLoading ? '已耗时' : '耗时'} {formatRefreshSeconds(refreshTiming.localMs ?? refreshTiming.observedAt - refreshTiming.startedAt)} · </>}任务报表：{refreshTiming.projectRequested
@@ -786,7 +778,7 @@ export default function WorkspaceConsolePage() {
             {associationFilter === 'all' && !localLoading && !projectLoading && entries.length === 0 && !dashboard?.sourceAvailable.registry && !responsibility && <p className="col-span-full p-3 text-sm text-slate-400">任务来源暂不可用。</p>}
              {taskLaneOrder.map(({ key, title, note, titleTone, headerTone }) => <section key={key} id={`task-lane-${key}`} aria-label={`${title}任务`} data-mobile-active={mobileTaskLane === key} className="workspace-workbench__task-lane min-w-0 rounded-xl border border-white/10 bg-slate-950/40 p-2.5 scroll-mt-4">
               <div className={`mb-3 min-w-0 rounded-lg border px-2.5 py-2 ${headerTone} ${key === 'doing' ? 'workspace-workbench__lane-doing' : ''}`}><div className="flex min-w-0 flex-wrap items-center justify-between gap-2"><h3 className={`text-sm font-semibold ${titleTone}`}>{title} <span className="ml-1 font-normal tabular-nums text-slate-400">{taskLanes[key].length}</span></h3><select aria-label={`${title}状态筛选`} value={laneStatusFilters[key]} onChange={(event) => setLaneStatusFilters((current) => ({ ...current, [key]: event.target.value }))} className="max-w-full rounded-md border border-white/15 bg-slate-950 px-2 py-1 text-xs text-slate-100"><option value="">全部状态</option>{laneStatusOptions[key].map((status) => <option key={status} value={status}>{status}</option>)}</select></div><p className="mt-0.5 text-[11px] text-slate-400">{note}</p></div>
-               <div ref={key === 'completed' ? completedScrollRef : undefined} aria-busy={key === 'completed' ? completedLoading : undefined} aria-label={`${title}任务卡片`} tabIndex={0} className="workspace-workbench__task-lane-scroll min-w-0 space-y-2">
+               <div ref={key === 'completed' ? completedScrollRef : undefined} aria-label={`${title}任务卡片`} tabIndex={0} className="workspace-workbench__task-lane-scroll min-w-0 space-y-2">
                  {(key === 'completed' ? taskLanes[key].slice(0, completedVisibleCount) : taskLanes[key]).map((entry, index) => <Fragment key={entry.key}>
                   {key === 'completed' && index % 10 === 0 && <p className="border-b border-white/10 py-2 text-center text-[11px] text-slate-400">第 {index / 10 + 1} 页 · 第 {index + 1}–{Math.min(index + 10, taskLanes.completed.length)} 项</p>}
                   {entry.kind === 'group'
@@ -795,7 +787,10 @@ export default function WorkspaceConsolePage() {
                      ? <LocalTaskCard key={entry.key} task={entry.task} responsibility={responsibility} compact isNew={taskDisplayEntryIsNew(entry, newTaskKeys)} onOpen={() => openTask(entry.task.id)} onStart={() => startTask(entry.task)} actionLabel={actionLabel(entry.task)} onOpenDocument={(filePath) => void openFilePreview(filePath)} />
                   : <ProjectTaskCard key={entry.key} item={entry.item} actionLabel={entryActionLabel(entry)} reportGeneratedAt={responsibility?.generatedAt ?? null} isNew={taskDisplayEntryIsNew(entry, newTaskKeys)} onOpen={() => openProject(entry.item.workItemId)} onStart={() => startProjectItem(entry.item)} />}</Fragment>)}
                 {!localLoading && !projectLoading && taskLanes[key].length === 0 && (associationFilter === 'all' || comparisonReady) && <p className="p-3 text-xs text-slate-500">{search || laneStatusFilters[key] ? '没有匹配任务' : '暂无任务'}</p>}
-                {key === 'completed' && taskLanes.completed.length > 0 && <p ref={completedEndRef} role="status" className="py-2 text-center text-[11px] text-slate-500">{completedLoading ? '正在加载更多…' : completedVisibleCount < taskLanes.completed.length ? `已显示 ${completedVisibleCount} / ${taskLanes.completed.length} 项，滚动到底部加载下一页` : `已显示全部 ${taskLanes.completed.length} 项`}</p>}
+                {key === 'completed' && taskLanes.completed.length > 0 && <div className="space-y-2 py-2 text-center">
+                  <p role="status" className="text-[11px] text-slate-500">{completedVisibleCount < taskLanes.completed.length ? `已显示 ${completedVisibleCount} / ${taskLanes.completed.length} 项` : `已显示全部 ${taskLanes.completed.length} 项`}</p>
+                  {completedVisibleCount < taskLanes.completed.length && <button type="button" onClick={() => setCompletedVisibleCount((count) => Math.min(taskLanes.completed.length, count + 10))} className="min-h-10 w-full rounded-lg border border-white/15 px-3 py-2 text-xs text-cyan-300 hover:bg-white/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-300">加载下一页</button>}
+                </div>}
               </div>
             </section>)}
             {(localLoading || projectLoading) && entries.length === 0 && <p className="p-3 text-sm text-slate-400">正在读取任务…</p>}

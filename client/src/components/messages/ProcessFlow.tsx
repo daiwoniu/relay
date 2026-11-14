@@ -2,6 +2,7 @@ import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSPr
 import { createPortal } from 'react-dom';
 import MessageAttachmentList from './MessageAttachmentList';
 import { formatFlowTime, getFlowTimes, canLinkFlowNode, getFlowTravelRoute } from './process-flow-time';
+import { createFlowTravelController } from './process-flow-travel';
 import type { ProcessNarrativeStatus } from './process-timeline';
 import {
   buildFlowNodes, groupFlowNodes, getFlowCategoryGroups, getFlowSourceLabel, getFlowStatusLabel, groupFlowCapabilities, describeFlowCapability,
@@ -227,12 +228,17 @@ function FlowActivity({ title, detail, waiting, motion, steps, timeline, finalCo
   </div>;
 }
 
-function FlowTravel({ container, targetId }: { container: { current: HTMLDivElement | null }; targetId: string }) {
+function FlowTravel({ container, targetId, motion }: { container: { current: HTMLDivElement | null }; targetId?: string; motion: boolean }) {
   const marker = useRef<HTMLSpanElement>(null);
+  const controller = useRef<ReturnType<typeof createFlowTravelController> | null>(null);
+  const reducedMotion = useRef(false);
+  const latest = useRef({ targetId, motion });
   useLayoutEffect(() => {
-    const element = container.current, light = marker.current;
+    const light = marker.current;
+    // Child layout effects run before the parent host ref is attached on mount.
+    const element = light?.parentElement || container.current;
     if (!element || !light) return;
-    const measure = () => {
+    const measure = (targetId: string) => {
       const rect = element.getBoundingClientRect();
       const cards = [...element.querySelectorAll<HTMLElement>(':scope > .flow-branch > .flow-branch__nodes > .flow-node')];
       const path = cards.slice(0, cards.findIndex(card => card.dataset.flowNode === targetId) + 1);
@@ -243,16 +249,36 @@ function FlowTravel({ container, targetId }: { container: { current: HTMLDivElem
         const dot = rail?.querySelector('.flow-node__dot')?.getBoundingClientRect();
         return { id: card.dataset.flowNode!, x: dot?.width ? dot.left + dot.width / 2 - rect.left : NaN, y: dot?.width ? dot.top + dot.height / 2 - rect.top : NaN, connects: index === 0 && connects, color: index ? getComputedStyle(card).getPropertyValue('--flow-type') : '' };
       }) : [];
-      const route = getFlowTravelRoute(points, targetId);
-      light.hidden = !route;
-      if (route) light.style.cssText = `--flow-x:${route.x}px;--flow-from:${route.from}px;--flow-to:${route.to}px;--flow-travel-color:${route.color}`;
+      return getFlowTravelRoute(points, targetId);
     };
-    measure();
-    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(measure);
-    observer?.observe(element); window.addEventListener('resize', measure);
-    return () => { observer?.disconnect(); window.removeEventListener('resize', measure); };
+    const travel = createFlowTravelController({ measure, show: route => {
+      light.style.cssText = `--flow-x:${route.x}px;--flow-from:${route.from}px;--flow-to:${route.to}px;--flow-travel-color:${route.color}`;
+      light.hidden = false;
+    }, hide: () => { light.hidden = true; } });
+    controller.current = travel;
+    const refresh = () => travel.refresh();
+    const preference = window.matchMedia('(prefers-reduced-motion: reduce)');
+    reducedMotion.current = preference.matches;
+    const onPreference = () => {
+      reducedMotion.current = preference.matches;
+      if (preference.matches) travel.reset();
+      // Restart from the beginning after CSS reduced-motion cancelled the animation.
+      travel.update(preference.matches ? undefined : latest.current.targetId, latest.current.motion);
+    };
+    preference.addEventListener('change', onPreference);
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(refresh);
+    observer?.observe(element); window.addEventListener('resize', refresh);
+    return () => {
+      travel.reset(); controller.current = null;
+      observer?.disconnect(); window.removeEventListener('resize', refresh);
+      preference.removeEventListener('change', onPreference);
+    };
+  }, [container]);
+  useLayoutEffect(() => {
+    latest.current = { targetId, motion };
+    controller.current?.update(reducedMotion.current ? undefined : targetId, motion);
   });
-  return <span ref={marker} className="flow-travel-marker" hidden aria-hidden="true" />;
+  return <span ref={marker} className="flow-travel-marker" hidden data-flow-target={targetId} data-flow-motion={motion ? 'on' : 'off'} aria-hidden="true" onAnimationIteration={() => controller.current?.finish()} />;
 }
 
 export default function ProcessFlow({ context, steps, timeline, mode, streaming, narrativeStatus, outcome, finalContent, finalRecordedAt, answeredIds, renderDetail, runtimeStatus, toolbarTarget }: Props) {
@@ -313,7 +339,7 @@ export default function ProcessFlow({ context, steps, timeline, mode, streaming,
   useEffect(() => {
     let visible = true;
     let headerVisible = true;
-    const update = () => { const enabled = document.visibilityState !== 'hidden' && streaming; setMotion(visible && enabled); setHeaderMotion((toolbarTarget ? headerVisible : visible) && enabled); };
+    const update = () => { const enabled = document.visibilityState !== 'hidden'; setMotion(visible && enabled); setHeaderMotion((toolbarTarget ? headerVisible : visible) && enabled && streaming); };
     const observer = typeof IntersectionObserver === 'undefined' ? null : new IntersectionObserver(entries => { for (const entry of entries) { if (entry.target === rootRef.current) visible = entry.isIntersecting; else headerVisible = entry.isIntersecting; } update(); });
     if (rootRef.current) observer?.observe(rootRef.current);
     if (toolbarTarget) observer?.observe(toolbarTarget.parentElement || toolbarTarget);
@@ -355,7 +381,7 @@ export default function ProcessFlow({ context, steps, timeline, mode, streaming,
     <div className="process-flow__caption"><span title={caption}>{caption}</span></div>
     <FlowActivity title={streaming ? activityTitle : terminal?.title || ''} detail={streaming ? activityDetail : terminal?.subtitle || ''} settled={!streaming} outcome={outcome} waiting={streaming && Boolean(waiting)} motion={headerMotion} steps={steps} timeline={timeline} finalContent={finalContent} runtimeState={runtimeStatus?.state} action={active.length > 0 ? <button type="button" onClick={goToActive}>{streaming ? '回到当前' : '查看待答'}</button> : undefined} />
   </div>;
-  return <div ref={rootRef} className={`process-flow process-flow--${mode}`} data-flow-motion={motion ? 'on' : 'off'} aria-label={mode === 'time' ? '时间流' : '分类流'} onClickCapture={event => {
+  return <div ref={rootRef} className={`process-flow process-flow--${mode}`} data-flow-motion={motion && streaming ? 'on' : 'off'} aria-label={mode === 'time' ? '时间流' : '分类流'} onClickCapture={event => {
     const heading = event.target instanceof Element ? event.target.closest('.flow-branch__heading, .flow-capability__heading, .flow-node__summary') : null;
     if (event.detail > 0 && heading && hasFlowTextSelection(window.getSelection(), heading)) { event.preventDefault(); event.stopPropagation(); }
   }}>
@@ -364,7 +390,7 @@ export default function ProcessFlow({ context, steps, timeline, mode, streaming,
     {mode === 'time' && earlierCount > 0 && <button type="button" className="flow-history-toggle" aria-expanded={showEarlier} onClick={() => { context.ui.expanded['time:earlier'] = !showEarlier; setShowEarlier(!showEarlier); setWindows({}); }}><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" aria-hidden="true"><path d="M3 3h10M3 6h10M3 9h6M3 12h6" /></svg><span>{showEarlier ? '已展开较早记录' : `还有 ${earlierCount} 项较早记录`}</span><span className="flow-history-toggle__count">{showEarlier ? `${earlierCount} 项` : '已折叠'}</span><span className="flow-history-toggle__action">{showEarlier ? '只看最近' : '展开查看'}<svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true"><path d="m3 4 3 3 3-3" /></svg></span></button>}
     {windowStart > 0 && <button type="button" className="flow-more" onClick={() => setWindows(previous => ({ ...previous, [mode]: { start: Math.max(0, windowStart - 40), limit: groupWindow.limit + Math.min(40, windowStart) } }))}>展开此前 {Math.min(40, windowStart)} 组记录</button>}
     <div ref={groupsRef} className="process-flow__groups" style={mode === 'category' ? { '--flow-columns': columns } as CSSProperties : undefined}>
-      {mode === 'time' && streaming && !specialStatus && !waiting && current?.state === 'running' && <FlowTravel container={groupsRef} targetId={nodes.find(node => node.id === current.id || node.children?.some(child => child.id === current.id))?.id || current.id} />}
+      {mode === 'time' && <FlowTravel container={groupsRef} motion={motion} targetId={streaming && !specialStatus && !waiting && current?.state === 'running' ? nodes.find(node => node.id === current.id || node.children?.some(child => child.id === current.id))?.id || current.id : undefined} />}
       {groups.slice(windowStart, windowStart + groupWindow.limit).flatMap((group, index, visibleGroups) => {
         const props = { group, context, renderDetail };
         if (mode !== 'category') return [<FlowBranch key={`${mode}:${showEarlier}:${focusVersion}:${group.id}`} {...props} nextNode={visibleGroups[index + 1]?.nodes[0]} />];

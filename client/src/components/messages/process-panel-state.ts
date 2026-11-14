@@ -1,3 +1,20 @@
+interface ProcessPanelUiState {
+  panelExpanded?: boolean;
+  panelSettled?: boolean;
+}
+
+export function getInitialProcessPanelCollapsed(
+  defaultCollapsed: boolean,
+  settled: boolean,
+  preserveExpandedOnSettle: boolean,
+  ui?: ProcessPanelUiState,
+): boolean {
+  if (preserveExpandedOnSettle) return false;
+  // 实时气泡完成后会重新挂载，终态转换必须从共享 UI 状态恢复。
+  if (ui?.panelSettled === false && settled) return true;
+  return ui?.panelExpanded === undefined ? defaultCollapsed : !ui.panelExpanded;
+}
+
 export function shouldAutoCollapseProcessPanel(
   wasSettled: boolean,
   isSettled: boolean,

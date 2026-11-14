@@ -1,10 +1,24 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  getInitialProcessPanelCollapsed,
   getSearchPreservedExpandedState,
   hasPendingInteraction,
   shouldAutoCollapseProcessPanel,
 } from './process-panel-state.ts';
+
+test('实时流程移交完成气泡时自动折叠，即使运行时保留了展开偏好', () => {
+  assert.equal(getInitialProcessPanelCollapsed(true, true, false, { panelExpanded: true, panelSettled: false }), true);
+});
+
+test('没有最终回复时仍展开，历史消息手动展开偏好和运行时偏好继续保留', () => {
+  assert.equal(getInitialProcessPanelCollapsed(true, true, true, { panelExpanded: true, panelSettled: false }), false);
+  assert.equal(getInitialProcessPanelCollapsed(true, true, false, { panelExpanded: true, panelSettled: true }), false);
+  assert.equal(getInitialProcessPanelCollapsed(true, true, false, { panelExpanded: true }), false);
+  assert.equal(getInitialProcessPanelCollapsed(false, false, false, { panelExpanded: false, panelSettled: false }), true);
+  assert.equal(getInitialProcessPanelCollapsed(true, true, false), true);
+  assert.equal(getInitialProcessPanelCollapsed(false, false, false), false);
+});
 
 test('实时处理进入终态时自动折叠处理过程', () => {
   assert.equal(shouldAutoCollapseProcessPanel(false, true), true);

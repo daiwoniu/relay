@@ -10,7 +10,7 @@ import { captureProcessFlow } from './process-flow-session.ts';
 import { buildFlowNodes, groupFlowNodes, getFlowCategoryGroups, groupFlowCapabilities } from './process-flow-model.ts';
 
 const require = createRequire(import.meta.url);
-const result = buildSync({ stdin: { contents: readFileSync(new URL('./ProcessFlow.tsx', import.meta.url),'utf8')+'\nexport { FlowCapabilityGrid, FlowBranch };', resolveDir: fileURLToPath(new URL('.',import.meta.url)), loader: 'tsx' }, bundle: true, platform: 'node', format: 'cjs', jsx: 'automatic', write: false, external: ['react', 'react/jsx-runtime', 'react-dom'] });
+const result = buildSync({ stdin: { contents: readFileSync(new URL('./ProcessFlow.tsx', import.meta.url),'utf8')+'\nexport { FlowCapabilityGrid, FlowBranch, FlowTravel };', resolveDir: fileURLToPath(new URL('.',import.meta.url)), loader: 'tsx' }, bundle: true, platform: 'node', format: 'cjs', jsx: 'automatic', write: false, external: ['react', 'react/jsx-runtime', 'react-dom'] });
 const compiled = { exports: {} };
 new Function('require','module','exports',result.outputFiles[0].text)(require,compiled,compiled.exports);
 const ProcessFlow = compiled.exports.default;
@@ -34,6 +34,66 @@ const render = (context, extra = {}) => {
   }
   return renderToStaticMarkup(React.createElement(ProcessFlow, { context, steps:context.steps, timeline:[], mode:'time', streaming:true, renderDetail: step=>React.createElement('span',null,`detail:${step.id}`), ...props }));
 };
+
+test('光线首次挂载不依赖尚未绑定的父ref，事件结束后由动画回调完成收尾', () => {
+  const hooks = [], effects = [], cleanups = [];
+  let cursor = 0;
+  const testReact = { ...React,
+    useRef: value => { const index=cursor++; return hooks[index] ??= { current:value }; },
+    useLayoutEffect: (effect, deps) => {
+      const index=cursor++, old=hooks[index];
+      if (!old || !deps || deps.some((dep,i)=>dep!==old[i])) effects.push(effect);
+      hooks[index]=deps;
+    },
+  };
+  const lifecycle = { exports:{} };
+  new Function('require','module','exports',result.outputFiles[0].text)(name=>name==='react'?testReact:require(name),lifecycle,lifecycle.exports);
+  const listeners = new Map();
+  const preference = { matches:false, addEventListener: (event,fn)=>listeners.set(`media:${event}`,fn), removeEventListener: event=>listeners.delete(`media:${event}`) };
+  const original = Object.fromEntries(['window','getComputedStyle','ResizeObserver'].map(key=>[key,Object.getOwnPropertyDescriptor(globalThis,key)]));
+  globalThis.window = { matchMedia:()=>preference, addEventListener:(event,fn)=>listeners.set(event,fn), removeEventListener:event=>listeners.delete(event) };
+  globalThis.getComputedStyle = () => ({ getPropertyValue:()=> 'blue' });
+  globalThis.ResizeObserver = undefined;
+  const cards = ['a','b'].map((id,index)=>{
+    const dot={getBoundingClientRect:()=>({left:36,top:10+index*100,width:8,height:8})};
+    const rail={querySelector:()=>dot};
+    return {dataset:{flowNode:id},classList:{contains:()=>false},querySelector:()=>rail};
+  });
+  const parent={getBoundingClientRect:()=>({left:0,top:0}),querySelectorAll:()=>cards};
+  const light={parentElement:parent,hidden:true,style:{cssText:''}};
+  const container={current:null};
+  const commit = props => {
+    cursor=0;
+    const element=lifecycle.exports.FlowTravel({container,...props});
+    element.props.ref.current=light;
+    for(const effect of effects.splice(0)){const cleanup=effect();if(cleanup)cleanups.push(cleanup);}
+    return element;
+  };
+  try {
+    let element=commit({targetId:'b',motion:true});
+    assert.equal(light.hidden,false,'child layout effect must initialize before the parent ref attaches');
+    assert.match(light.style.cssText,/--flow-to:114px/);
+    container.current=parent;
+    element=commit({targetId:undefined,motion:true});
+    assert.equal(light.hidden,false,'terminal event must not remove the travelling light');
+    element.props.onAnimationIteration();
+    assert.equal(light.hidden,true);
+    element=commit({targetId:'b',motion:true});
+    assert.equal(light.hidden,false);
+    preference.matches=true;listeners.get('media:change')();
+    assert.equal(light.hidden,true);
+    listeners.get('resize')();
+    assert.equal(light.hidden,true,'resize must not bypass reduced motion');
+    preference.matches=false;listeners.get('media:change')();
+    assert.equal(light.hidden,false);
+  } finally {
+    for(const cleanup of cleanups)cleanup();
+    for(const [key,descriptor] of Object.entries(original)){
+      if(descriptor)Object.defineProperty(globalThis,key,descriptor);else delete globalThis[key];
+    }
+  }
+  assert.equal(listeners.size,0);
+});
 
 test('单次对象一层展开即显示正文，多次才有逐次行，文件摘要不展示绝对路径', () => {
   const context=makeContext([{id:'single-file',type:'fileChange',status:'completed',details:{path:'D:/relay/src/Widget.tsx',kind:'update'}}]);
@@ -402,9 +462,9 @@ test('时间流只有一个整段运行光点，等待回答、恢复和已完�
   const context=makeContext([{id:'before',type:'commandExecution',status:'completed',details:{command:'node before.mjs'}},{id:'active',type:'webSearch',status:'in_progress',details:{query:'文档'}}]);
   assert.equal((render(context).match(/class="flow-travel-marker"/g)||[]).length,1);
   const waiting=makeContext([{id:'ask',type:'interaction',status:'in_progress',details:{interactionKind:'async_question'}}]);
-  assert(!render(waiting).includes('flow-travel-marker'));
-  assert(!render(context,{streaming:false,outcome:'completed'}).includes('flow-travel-marker'));
-  assert(!render(context,{runtimeStatus:{state:'recovering',label:'恢复中'}}).includes('flow-travel-marker'));
+  assert(!render(waiting).includes('data-flow-target='));
+  assert(!render(context,{streaming:false,outcome:'completed'}).includes('data-flow-target='));
+  assert(!render(context,{runtimeStatus:{state:'recovering',label:'恢复中'}}).includes('data-flow-target='));
   assert(!render(context,{mode:'category'}).includes('flow-travel-marker'));
 });
 
@@ -534,6 +594,24 @@ test('完成消息提供三种Tab，消息偏好独立，未载入详情不画�
   const other=makeContext(); other.ui.panelExpanded=true;
   const defaultHtml=renderToStaticMarkup(React.createElement(ProcessSteps,{steps:[],flowContext:other,settled:true}));
   assert.match(defaultHtml,/aria-pressed="true">普通列表/); assert.match(defaultHtml,/>分类流/);
+});
+
+test('实时流程完成后重新挂载时三种视图均折叠，缺失正文和搜索目标保持可见', () => {
+  for (const view of ['list', 'time', 'category']) {
+    const context=makeContext();
+    context.ui.panelExpanded=true; context.ui.panelSettled=false; context.ui.view=view;
+    const props={steps:[],flowContext:context,settled:true,defaultCollapsed:true,flowDetailsPending:true};
+    const html=renderToStaticMarkup(React.createElement(ProcessSteps,props));
+    assert(!html.includes('process-timeline__panel'));
+    assert.match(html,/aria-expanded="false"/);
+    const missing=renderToStaticMarkup(React.createElement(ProcessSteps,{...props,preserveExpandedOnSettle:true}));
+    assert.match(missing,/process-timeline__panel/);
+    const search=renderToStaticMarkup(React.createElement(ProcessSteps,{...props,searchTargetScope:'process'}));
+    assert.match(search,/process-timeline__panel/);
+    context.ui.panelSettled=true;
+    const reopened=renderToStaticMarkup(React.createElement(ProcessSteps,props));
+    assert.match(reopened,/process-timeline__panel/);
+  }
 });
 
 test('运行节点无出线仍有状态动效，折叠分类组独立显示运行指示', () => {

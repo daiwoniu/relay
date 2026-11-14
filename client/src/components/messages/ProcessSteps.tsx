@@ -10,7 +10,7 @@ import { buildProcessTimelineSections, getDefaultExpandedNarrativeItemId, getPro
 import { getProcessStepStatus, getProcessStepStatusCounts, isPendingProcessInteraction } from './process-step-status';
 import { getCollabAgentStepInfo } from './collab-agent-step';
 import { getSubAgentActivityStepInfo } from './sub-agent-activity';
-import { getSearchPreservedExpandedState, shouldAutoCollapseProcessPanel } from './process-panel-state';
+import { getInitialProcessPanelCollapsed, getSearchPreservedExpandedState, shouldAutoCollapseProcessPanel } from './process-panel-state';
 import { getToolCallTitle } from './tool-call-title';
 import Tooltip from '../ui/Tooltip';
 import { shouldShowProcessPanelBottomCollapse } from './process-panel-bottom-collapse';
@@ -561,24 +561,25 @@ function FlowRawRecord({ step }: { step: ProcessStep }) {
 
 function ProcessStepsComponent({ steps, sessionId, processContent, processContentDetail, processTimeline, renderNarrativeDetail, defaultCollapsed = true, preserveExpandedOnSettle = false, settled = true, narrativeStatus = 'completed', onInteractionRespond, onAsyncQuestionAnswer, answeredAsyncQuestionIds, asyncQuestionAnswers, canAnswerAsyncQuestion, searchTargetScope, searchTargetItemId, full, historicalRecords, historicalRecordCount = 0, flowContext, flowFinalContent, flowFinalRecordedAt, flowOutcome, flowRuntimeStatus, flowDetailsPending, onLoadFlowDetails }: Props) {
   const followups = useSessionFollowupStore(state => sessionId ? state.bySession[sessionId] : undefined);
-  const [collapsed, setCollapsed] = useState(() => flowContext?.ui.panelExpanded === undefined ? defaultCollapsed : !flowContext.ui.panelExpanded);
+  const [collapsed, setCollapsed] = useState(() => getInitialProcessPanelCollapsed(defaultCollapsed, settled, preserveExpandedOnSettle, flowContext?.ui));
   const [view, setView] = useState<ProcessView>(flowContext?.ui.view || 'list');
   const [flowToolbarTarget, setFlowToolbarTarget] = useState<HTMLDivElement | null>(null);
   const hasSearchTarget = searchTargetScope === 'process' || searchTargetScope === 'operation';
   const effectiveCollapsed = full ? false : hasSearchTarget ? false : collapsed;
   const [showBottomCollapse, setShowBottomCollapse] = useState(false);
-  const wasSettledRef = useRef(settled);
+  const wasSettledRef = useRef(flowContext?.ui.panelSettled ?? settled);
   const headerButtonRef = useRef<HTMLButtonElement>(null);
   const processContentRef = useRef<HTMLDivElement>(null);
   const pendingInteractionRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (shouldAutoCollapseProcessPanel(wasSettledRef.current, settled) && !preserveExpandedOnSettle && !flowContext) {
+    if (shouldAutoCollapseProcessPanel(wasSettledRef.current, settled) && !preserveExpandedOnSettle) {
       setCollapsed(true);
     } else if (preserveExpandedOnSettle) {
       setCollapsed(false);
     }
     wasSettledRef.current = settled;
+    if (flowContext) flowContext.ui.panelSettled = settled;
   }, [preserveExpandedOnSettle, settled, flowContext]);
 
   useEffect(() => { if (flowContext) flowContext.ui.panelExpanded = !collapsed; }, [flowContext, collapsed]);

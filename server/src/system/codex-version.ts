@@ -100,7 +100,7 @@ export async function fetchLatestCodexNpmVersion(fetchImpl: typeof fetch = fetch
   const response = await fetchImpl(CODEX_LATEST_URL, {
     headers: {
       Accept: 'application/json',
-      'User-Agent': 'daiwoniu-relay',
+      'User-Agent': 'relay',
     },
     signal: AbortSignal.timeout(VERSION_CHECK_TIMEOUT_MS),
   });
@@ -113,7 +113,7 @@ export async function fetchLatestCodexNpmVersion(fetchImpl: typeof fetch = fetch
 export async function fetchCodexRelease(version: string, fetchImpl: typeof fetch = fetch): Promise<CodexReleaseMetadata> {
   if (!parseVersion(version)) throw new Error('invalid Codex release version');
   const response = await fetchImpl(`${CODEX_RELEASE_URL_PREFIX}${encodeURIComponent(version)}`, {
-    headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'daiwoniu-relay' },
+    headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'relay' },
     signal: AbortSignal.timeout(VERSION_CHECK_TIMEOUT_MS),
   });
   if (!response.ok) throw new Error(`Codex release notes check failed: ${response.status}`);
@@ -244,7 +244,7 @@ const CODEX_REGISTRY_URL = 'https://registry.npmjs.org/@openai%2Fcodex';
 export async function fetchCodexNpmPublishedAt(version: string): Promise<number | null> {
   try {
     const response = await fetch(CODEX_REGISTRY_URL, {
-      headers: { Accept: 'application/json', 'User-Agent': 'daiwoniu-relay' },
+      headers: { Accept: 'application/json', 'User-Agent': 'relay' },
       signal: AbortSignal.timeout(VERSION_CHECK_TIMEOUT_MS),
     });
     if (!response.ok) return null;

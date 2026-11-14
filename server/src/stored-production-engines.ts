@@ -43,7 +43,7 @@ export function createStoredProductionEngines(options:{root:string;withCodexRead
       return{cliInstalled:engine?.cliInstalled===true,installedVersion:installation.version??engine?.version??null,installSource:installation.installSource,
         installedAt:readNpmGlobalInstalledAt('opencode-ai'),readiness:engine?.available?'ready':'unknown',readinessCheckedAt:engine?.available?Date.now():null,availabilityStage:engine?.availabilityStage};
     },fetchLatestVersion:async()=>{
-      const response=await fetch('https://registry.npmjs.org/opencode-ai',{headers:{Accept:'application/json','User-Agent':'daiwoniu-relay'},signal:AbortSignal.timeout(5000)});
+      const response=await fetch('https://registry.npmjs.org/opencode-ai',{headers:{Accept:'application/json','User-Agent':'relay'},signal:AbortSignal.timeout(5000)});
       if(!response.ok)throw new Error('OPENCODE_REGISTRY_UNAVAILABLE');
       const payload=await response.json() as{'dist-tags'?:{latest?:string};time?:Record<string,string>},version=payload['dist-tags']?.latest;
       if(typeof version!=='string')throw new Error('OPENCODE_REGISTRY_INVALID');

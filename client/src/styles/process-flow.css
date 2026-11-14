@@ -151,11 +151,11 @@
 .flow-node--running > .flow-node__summary .flow-node__status { color: var(--flow-accent); border-radius: .375rem; font-weight: 600; background: color-mix(in srgb, var(--flow-accent) 13%, var(--color-surface)); }
 .flow-node__status .execution-status-spinner { width: 1rem; height: 1rem; }
 .flow-node__status > [aria-hidden] { width: 1rem; height: 1rem; flex: 0 0 1rem; }
-.flow-travel-marker { position: absolute; z-index: 2; left: calc(var(--flow-x) - 4px); width: 8px; height: 32px; pointer-events: none; animation: flow-route 2.4s linear infinite; }
+.flow-travel-marker { position: absolute; z-index: 2; left: calc(var(--flow-x) - 4px); width: 8px; height: 32px; pointer-events: none; animation: flow-route 1.2s linear infinite; }
 .flow-travel-marker::before { content: ''; position: absolute; inset: 0 2px; border-radius: 4px; background: linear-gradient(transparent, var(--flow-travel-color)); }
 .flow-travel-marker::after { content: ''; position: absolute; bottom: 0; width: 8px; height: 8px; box-sizing: border-box; border-radius: 50%; border: 1px solid var(--color-surface); background: var(--flow-travel-color); box-shadow: 0 0 8px var(--flow-travel-color); }
 .flow-travel-marker[hidden] { display: none; }
-.process-flow[data-flow-motion="off"] .flow-travel-marker { animation-play-state: paused; visibility: hidden; }
+.flow-travel-marker[data-flow-motion="off"] { animation-play-state: paused; visibility: hidden; }
 .flow-node--running > .flow-node__rail .flow-node__dot { left: 0; width: .5rem; height: .5rem; box-shadow: 0 0 .375rem var(--flow-node-tone); }
 .flow-node--running > .flow-node__rail .flow-node__dot::after { content: ''; position: absolute; inset: -3px; border: 1.5px solid var(--flow-node-tone); border-radius: 50%; animation: flow-node-ping 1.35s ease-out infinite; }
 .flow-node--waiting .flow-node__status, .flow-node--unknown .flow-node__status { color: var(--color-status-warning); }
