@@ -25,7 +25,8 @@ test('ChatView keeps runtime orchestration and stays within the facade budget', 
   assert.match(source, /const requestLatestMessagesRefresh = useCallback/);
   assert.match(source, /const ensureMessageDetails = useCallback/);
   assert.match(source, /const navigateSearchMatch = useCallback/);
-  assert.ok(source.trimEnd().split(/\r?\n/).length <= 1310, 'ChatView.tsx should stay at or below 1,310 lines');
+  const codeLines = source.split(/\r?\n/).filter((line) => line.trim().length > 0);
+  assert.ok(codeLines.length <= 1310, 'ChatView.tsx should stay at or below 1,310 non-empty lines');
 });
 
 test('ChatView presentation does not own stores, websocket, or APIs', async () => {

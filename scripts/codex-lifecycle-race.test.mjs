@@ -16,6 +16,7 @@ function harness(overrides = {}) {
   let spawns = 0;
   const supervisor = createServiceSupervisor({
     owned, services: new Map([['codex', service]]), codexIdleTimeoutMs: 5,
+    codexIdleShutdownEnabled: true,
     now: Date.now, write() {}, writeError() {},
     spawnChild: () => { spawns++; return { pid: 3, exitCode: null, signalCode: null }; },
     stopChild: async () => {}, waitForReady: async () => {}, ...overrides,

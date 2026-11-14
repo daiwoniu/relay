@@ -57,14 +57,19 @@ test('空清单移除展示，普通 Plan Mode 文本不转成进度清单', () 
   assert.equal(getProcessPlan([snapshot([null, { step: '错误', status: 'invalid' }])]), null);
 });
 
-test('计划完整保留在过程末尾，以动态状态和进度增强展示但不增加折叠或 sticky', () => {
+test('计划位于三种过程视图之后，流程上下文可固定计划但不折叠清单', () => {
   const component = fs.readFileSync(new URL('./ProcessPlan.tsx', import.meta.url), 'utf8');
   const processSteps = fs.readFileSync(new URL('./ProcessSteps.tsx', import.meta.url), 'utf8');
   const styles = fs.readFileSync(new URL('../../styles/message-ui.css', import.meta.url), 'utf8');
-  const planRenderIndex = processSteps.indexOf('{plan && <ProcessPlan');
+  const flowStyles = fs.readFileSync(new URL('../../styles/process-flow.css', import.meta.url), 'utf8');
+  const planRenderIndex = processSteps.indexOf('{plan && <div className={flowContext');
   const executionRenderIndex = processSteps.indexOf('{timelineSections ? timelineSections.map');
 
+  assert.ok(executionRenderIndex >= 0);
   assert.ok(planRenderIndex > executionRenderIndex);
+  assert.ok(planRenderIndex > processSteps.indexOf('</ErrorBoundary> : ordinaryContent}'));
+  assert.match(processSteps, /className=\{flowContext \? 'process-plan-dock' : undefined\}/);
+  assert.match(flowStyles, /\.process-plan-dock\s*\{[^}]*position:\s*sticky/);
   assert.doesNotMatch(processSteps, /const hasInProgress/);
   assert.match(component, /plan\.entries\.map/);
   assert.match(component, /role="progressbar"/);

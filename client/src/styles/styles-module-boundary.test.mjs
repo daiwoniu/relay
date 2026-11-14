@@ -12,6 +12,7 @@ const expectedImports = [
   '@import "./notification-settings.css";',
   '@import "./markdown-content.css";',
   '@import "./message-ui.css";',
+  '@import "./process-flow.css";',
   '@import "./authorization.css";',
   '@import "./assistant-messages.css";',
   '@import "./service-status.css";',

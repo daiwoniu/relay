@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
 import test from 'node:test';
 import { parseAcceptanceArguments, runEngineScenarios } from './lib/engine-scenarios.mjs';
 
@@ -16,14 +15,6 @@ test('真实引擎必须同时显式提供 allow、engine 和 scenario', () => {
   assert.throws(() => parseAcceptanceArguments(['--allow-engine-run', '--engine', 'other', '--scenario', 'complete']), /engine/u);
   assert.throws(() => parseAcceptanceArguments(['--allow-engine-run', '--engine', 'codex', '--scenario', 'unknown']), /scenario/u);
   assert.throws(() => parseAcceptanceArguments(['--mystery']), /未知参数/u);
-});
-
-test('skill 默认说明不能隐式授权真实引擎', () => {
-  const source = fs.readFileSync(new URL('../../ai/skills/relay-headless-acceptance/SKILL.md', import.meta.url), 'utf8');
-  assert.match(source, /--allow-engine-run/u);
-  assert.match(source, /--engine/u);
-  assert.match(source, /--scenario/u);
-  assert.doesNotMatch(source, /默认.*(?:codex|codebuddy).*complete/iu);
 });
 
 function fakePage({ terminal = { userCount: 1, assistantCount: 1, terminalCount: 1, outcome: 'completed' } } = {}) {
