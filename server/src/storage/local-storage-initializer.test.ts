@@ -28,6 +28,62 @@ function legacy(filename:string){
 }
 const digest=(filename:string)=>createHash('sha256').update(fs.readFileSync(filename)).digest('hex');
 
+for (const format of ['legacy', 'native'] as const) test(`${format} startup upgrades old audit actions, preserves history and permits membership writes`, async () => {
+  const f = fixture();
+  try {
+    legacy(f.filename);
+    let identity: string | undefined;
+    if (format === 'native') {
+      const initial = await initializeLocalStorage(f.filename);
+      identity = initial.storeId;
+      await initial.owner.release();
+    }
+    const db = new DatabaseSync(f.filename);
+    const oldAudit = schema.match(/CREATE TABLE admin_audit_events[\s\S]*?;/)![0]
+      .replace("'account.project_permission','project.member_set','project.member_remove',", '');
+    db.exec(`DROP TABLE admin_audit_events; ${oldAudit}
+      INSERT INTO admin_audit_events VALUES('history','owner','session.delete','session','session','owner','succeeded',1);
+      UPDATE users SET role='admin' WHERE id='owner';
+      INSERT INTO users(id,username,password_hash,created_at,updated_at) VALUES('candidate','candidate','synthetic',1,1);
+      INSERT INTO auth_sessions VALUES('synthetic-audit-session','owner',1,${Date.now() + 600_000});`);
+    const request = (storeId: string, operationId: string) => ({
+      protocolVersion: 1 as const, storeId, workerGeneration: 1, requestId: operationId, operationId,
+      principal: { kind: 'user' as const, userId: 'owner', authSessionHash: 'synthetic-audit-session' },
+      command: { name: 'project.setMember' as const, input: { projectId: 'project', userId: 'candidate', role: 'collaborator' as const } },
+    });
+    if (identity) {
+      const before = new NativeStore(f.filename, identity, 1);
+      try { assert.equal(before.execute(request(identity, 'before-upgrade')).state, 'unknown'); }
+      finally { before.close(); }
+      assert.equal(db.prepare('SELECT count(*) AS n FROM project_members').get()!.n, 0);
+    }
+    db.close();
+    const upgraded = await initializeLocalStorage(f.filename);
+    try {
+      assert.equal(upgraded.action, 'migrated');
+      assert.equal(upgraded.backups.length, 1);
+      const saved = new DatabaseSync(upgraded.backups[0], { readOnly: true });
+      try {
+        assert.doesNotMatch(String(saved.prepare("SELECT sql FROM sqlite_master WHERE name='admin_audit_events'").get()!.sql), /project\.member_set/);
+        assert.equal(saved.prepare("SELECT count(*) AS n FROM admin_audit_events WHERE id='history'").get()!.n, 1);
+      } finally { saved.close(); }
+      const store = new NativeStore(f.filename, upgraded.storeId, 1);
+      try { assert.equal(store.execute(request(upgraded.storeId, 'after-upgrade')).state, 'committed'); }
+      finally { store.close(); }
+      const current = new DatabaseSync(f.filename, { readOnly: true });
+      try {
+        assert.equal(current.prepare("SELECT count(*) AS n FROM admin_audit_events WHERE id='history'").get()!.n, 1);
+        assert.equal(current.prepare("SELECT count(*) AS n FROM admin_audit_events WHERE action='project.member_set'").get()!.n, 1);
+        assert.equal(current.prepare('SELECT count(*) AS n FROM project_members').get()!.n, 1);
+        assert.equal(current.prepare("SELECT content FROM messages WHERE id='message'").get()!.content, '不能丢失的正文');
+      } finally { current.close(); }
+    } finally { await upgraded.owner.release(); }
+    const repeated = await initializeLocalStorage(f.filename);
+    try { assert.equal(repeated.action, 'current'); assert.deepEqual(repeated.backups, []); }
+    finally { await repeated.owner.release(); }
+  } finally { f.cleanup(); }
+});
+
 test('fresh install initializes Native and news directly; restart preserves identity and creates no repeated backup',async()=>{
   const f=fixture();
   try{

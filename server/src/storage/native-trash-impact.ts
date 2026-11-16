@@ -11,7 +11,7 @@ function deny(code: ConstructorParameters<typeof StorageContractError>[0]): neve
 /** Worker-local, inside the caller's read/commit transaction. No paths or relation bodies leave this boundary. */
 export function readTrashImpact(db: DB, actor: Actor, kind: 'project' | 'session', target: string, expectedRevision?: string) {
   const project = kind === 'project'
-    ? db.get('SELECT id,owner_user_id,deletion_protected FROM projects WHERE id=? AND deleted_at IS NOT NULL AND is_system=0', [target])
+    ? db.get('SELECT id,owner_user_id,deletion_protected FROM projects WHERE id=? AND deleted_at IS NOT NULL', [target])
     : db.get(`SELECT p.id,p.owner_user_id,p.deletion_protected FROM projects p JOIN sessions s ON s.project_id=p.id
         WHERE s.id=? AND s.deleted_at IS NOT NULL AND p.deleted_at IS NULL`, [target]);
   if (!project?.owner_user_id) deny('NOT_FOUND');

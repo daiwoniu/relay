@@ -608,18 +608,18 @@ test('永久删除仅管理员可准备，严格校验项目名与最新 impact 
   } finally { current.cleanup(); }
 });
 
-test('默认项目异常删除记录不能生成永久删除计划', async () => {
+test('已删除的系统初始项目可以生成永久删除计划', async () => {
   const current = await harness();
   try {
     current.db.run(
       'INSERT INTO projects VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       ['eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee', '默认项目', 'D:/system', 1, 1, 0, null, 1, 1, 'member'],
     );
-    assert.equal((await current.app.request('/api/trash/projects/eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee/impact')).status, 404);
+    assert.equal((await current.app.request('/api/trash/projects/eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee/impact')).status, 200);
   } finally { current.cleanup(); }
 });
 
-test('默认项目本身受保护，但其中单独删除的会话仍可生成影响摘要', async () => {
+test('系统初始项目中单独删除的会话仍可生成影响摘要', async () => {
   const current = await harness();
   try {
     const projectId = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';

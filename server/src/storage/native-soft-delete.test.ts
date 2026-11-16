@@ -184,7 +184,21 @@ test('safe abandonment is allowed only before any potentially new archive dispat
     const next=p.prepare();p.claim(next.jobId);assert.equal(p.exec({name:'trash.abandonSoftDelete',input:{jobId:next.jobId}},undefined,maintenance).state,'rejected');
   }finally{p.cleanup();}
 });
-test('system, protected, default, foreign-owner and inconsistent/shared external bindings refuse preparation',()=>{
+test('member owner can delete and restore a former system default but cannot permanently delete it',()=>{
+  const p=prepared();try{
+    p.f.mutate(`UPDATE projects SET is_system=1 WHERE id='${project}';UPDATE users SET default_project_id='project' WHERE id='owner'`);
+    const job=p.prepare();p.confirm(job.jobId);p.ok({name:'trash.commitSoftDelete',input:{jobId:job.jobId}});
+    assert.ok(p.store.readTrash({principal:owner,name:'projects',input:{limit:50,offset:0,q:''}}).items.some(row=>row.id===project));
+    const impact=p.store.readTrash({principal:owner,name:'impact',input:{kind:'project',id:project}});
+    assert.equal(p.exec({name:'trash.preparePurge',input:{jobId:randomUUID(),kind:'project',resourceId:project,impactRevision:impact.impactRevision,confirmationName:'Soft project'}}).state,'rejected');
+    const restore=p.store.readTrash({principal:owner,name:'restorePlan',input:{kind:'project',id:project}});
+    p.ok({name:'trash.restoreProject',input:{projectId:project,sourceDigest:restore.sourceDigest}});
+    assert.equal(p.f.scalar(`SELECT deleted_at FROM projects WHERE id='${project}'`),null);
+    assert.equal(p.f.scalar("SELECT default_project_id FROM users WHERE id='owner'"),'project');
+  }finally{p.cleanup();}
+});
+
+test('system without a valid replacement, protected, default, foreign-owner and inconsistent/shared external bindings refuse preparation',()=>{
   const p=prepared();try{
     for(const change of [`UPDATE projects SET is_system=1 WHERE id='${project}'`,`UPDATE projects SET is_system=0,deletion_protected=1 WHERE id='${project}'`,`UPDATE projects SET deletion_protected=0 WHERE id='${project}';UPDATE users SET default_project_id='${project}' WHERE id='owner'`]){
       p.f.mutate(change);assert.equal(p.exec({name:'trash.prepareSoftDelete',input:{jobId:randomUUID(),kind:'project',resourceId:project}}).state,'rejected');}

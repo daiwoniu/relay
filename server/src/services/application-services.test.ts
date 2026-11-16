@@ -103,7 +103,7 @@ test('管理员从他人项目创建会话时解析为管理员自己的同目�
   assert.equal(service.resolveOwnedProjectForSession({ userId: 'admin', role: 'admin' }, other.id).id, own.id);
 });
 
-test('ProjectService 统一路径、重复项目和默认项目保护', async () => {
+test('ProjectService 统一路径、重复项目且系统标记不单独禁止删除', async () => {
   const existing: Project = { id: 'project-1', name: '现有项目', path: 'D:\\work', owner_user_id: 'user-1', created_at: 1, updated_at: 1, pinned: 0, is_system: 0 };
   const repository = createProjectRepository([existing]);
   const closed: string[] = [];
@@ -142,7 +142,8 @@ test('ProjectService 统一路径、重复项目和默认项目保护', async ()
   const systemService = createProjectService({ repository: systemRepository, filesystem: {
     isAbsolute: () => true, realpath: (value) => value, isDirectory: () => true, basename: () => 'work',
   } });
-  await assert.rejects(() => systemService.delete(existing.id), /Relay 系统项目不允许删除/);
+  await systemService.delete(existing.id);
+  assert.equal(systemRepository.getProject(existing.id), undefined);
 });
 
 test('ProjectService 重新添加软删除路径时返回安全冲突且不做半恢复', () => {

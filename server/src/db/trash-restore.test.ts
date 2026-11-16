@@ -108,11 +108,11 @@ test('批量完成多个回收站取消归档只保存一次数据库', async ()
   } finally { current.cleanup(); }
 });
 
-test('单会话只在父项目有效时恢复，默认项目异常记录拒绝恢复', async () => {
+test('单会话只在父项目有效时恢复，已删除的系统初始项目允许恢复', async () => {
   const current = await harness();
   try {
     assert.equal(restoreSessionFromTrashInDatabase(current.db, '44444444-4444-4444-8444-444444444444', 500), undefined);
-    assert.equal(restoreProjectFromTrashInDatabase(current.db, '33333333-3333-4333-8333-333333333333', 500), undefined);
+    assert.equal(restoreProjectFromTrashInDatabase(current.db, '33333333-3333-4333-8333-333333333333', 500)?.project.deleted_at, null);
     const restored = restoreSessionFromTrashInDatabase(current.db, '66666666-6666-4666-8666-666666666666', 500);
     assert.equal(restored?.deleted_at, null);
     assert.equal(restored?.pinned, 0);

@@ -53,18 +53,24 @@ export default function UserMenu({
   onLogout: () => void;
 }) {
   const run = (action: () => void) => { onClose(); action(); };
+  const canReadCodexQuota = user?.role === 'admin';
   const [quotaState, setQuotaState] = useState<{ userId: string; snapshot: CodexAccountSnapshotDto | null }>(() => ({
-    userId: user?.id ?? '', snapshot: user?.id ? readWorkspaceCodexCache(user.id).value : null,
+    userId: user?.id ?? '', snapshot: canReadCodexQuota && user?.id ? readWorkspaceCodexCache(user.id).value : null,
   }));
   const [quotaError, setQuotaError] = useState<string | null>(null);
   const [warningAnchor, setWarningAnchor] = useState<DOMRect | null>(null);
   const [quotaRefreshing, setQuotaRefreshing] = useState(false);
-  useEffect(() => user?.id ? subscribeWorkspaceCodexCache(user.id, (value) => {
+  useEffect(() => canReadCodexQuota && user?.id ? subscribeWorkspaceCodexCache(user.id, (value) => {
     setQuotaState({ userId: user.id, snapshot: value });
     setQuotaError(value.sourceMeta?.state === 'failed_snapshot' ? value.sourceMeta.error || 'Codex 额度更新失败' : null);
-  }) : undefined, [user?.id]);
+  }) : undefined, [user?.id, canReadCodexQuota]);
   useEffect(() => {
-    if (!user?.id) { setQuotaState({ userId: '', snapshot: null }); return; }
+    setWarningAnchor(null);
+    if (!canReadCodexQuota || !user?.id) {
+      setQuotaState({ userId: '', snapshot: null });
+      setQuotaError(null);
+      return;
+    }
     let active = true;
     const cached = readWorkspaceCodexCache(user.id);
     setQuotaState({ userId: user.id, snapshot: cached.value });
@@ -103,16 +109,16 @@ export default function UserMenu({
     const timer = window.setInterval(refreshIfDue, 30_000);
     document.addEventListener('visibilitychange', refreshIfDue);
     return () => { active = false; window.clearInterval(timer); document.removeEventListener('visibilitychange', refreshIfDue); };
-  }, [user?.id]);
-  const quotaSnapshot = quotaState.userId === user?.id ? quotaState.snapshot : null;
+  }, [user?.id, canReadCodexQuota]);
+  const quotaSnapshot = canReadCodexQuota && quotaState.userId === user?.id ? quotaState.snapshot : null;
   const quota = selectSidebarCodexQuota(quotaSnapshot);
-  const quotaWarning = quotaError !== null || quotaSnapshot?.sourceMeta?.state === 'failed_snapshot';
+  const quotaWarning = canReadCodexQuota && (quotaError !== null || quotaSnapshot?.sourceMeta?.state === 'failed_snapshot');
   const warningText = quota.length > 0
     ? snapshotNotice('Codex', quotaSnapshot?.sourceMeta)
       ?? `Codex 额度更新失败，显示上次成功读取的数据（${quotaSnapshot ? new Date(quotaSnapshot.fetchedAt).toLocaleString('zh-CN') : '时间未知'}）。`
     : 'Codex 额度暂时无法读取，请稍后重试。';
   const refreshQuota = async () => {
-    if (!user?.id || quotaRefreshing) return;
+    if (!canReadCodexQuota || !user?.id || quotaRefreshing) return;
     setQuotaRefreshing(true);
     try {
       const next = await loadWorkspaceCodexAccount(user.id, () => getCodexAccount(undefined, true), true);
@@ -185,9 +191,9 @@ export default function UserMenu({
         </button>
         {quotaWarning && <Tooltip content={warningText} coexist><button type="button" className="user-menu__quota-warning" aria-label="Codex 额度更新失败，查看提醒" onMouseDown={(event) => event.stopPropagation()} onClick={(event) => { onClose(); setWarningAnchor(warningAnchor ? null : event.currentTarget.getBoundingClientRect()); }}><svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 2.2 14.3 13H1.7L8 2.2Z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round"/><path d="M8 6v3.4M8 11.4h.01" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/></svg></button></Tooltip>}
       </div>
-      <Popover open={warningAnchor !== null} anchorRect={warningAnchor} onClose={() => setWarningAnchor(null)} placement="top" mobile={mobile} label="Codex 额度提醒" className="w-[min(280px,calc(100vw-1rem))]">
+      {canReadCodexQuota && <Popover open={warningAnchor !== null} anchorRect={warningAnchor} onClose={() => setWarningAnchor(null)} placement="top" mobile={mobile} label="Codex 额度提醒" className="w-[min(280px,calc(100vw-1rem))]">
         <div className="p-3 text-xs text-[var(--color-text-secondary)]"><p>{warningText}</p>{quotaError && <p className="mt-1 text-[var(--color-text-tertiary)]"><FailureNotice error={quotaError} /></p>}<button type="button" disabled={quotaRefreshing} onClick={() => void refreshQuota()} className="mt-2 rounded-md border border-[var(--color-border)] px-2 py-1 text-[var(--color-text)] disabled:opacity-50">{quotaRefreshing ? '刷新中…' : '重新获取'}</button></div>
-      </Popover>
+      </Popover>}
     </div>
   );
 }

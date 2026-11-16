@@ -39,13 +39,9 @@ async function request(path, options = {}) {
 }
 
 try {
-  const projects = await request('/api/projects');
-  const defaultProject = projects.find((project) => project.is_system === 1);
-  if (!defaultProject) throw new Error('未找到系统默认项目');
-
   const session = await request('/api/sessions', {
     method: 'POST',
-    body: JSON.stringify({ title: '新对话', projectId: defaultProject.id }),
+    body: JSON.stringify({ title: '新对话' }),
   });
   sessionId = session.id;
 

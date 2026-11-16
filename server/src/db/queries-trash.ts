@@ -105,7 +105,7 @@ const pageOffset = (value: number) => Math.max(0, Math.trunc(value));
 
 const trashPattern = (query: string) => `%${query.trim().replace(/[\\%_]/g, '\\$&')}%`;
 const projectFilterSql = (ownerUserId?: string, filter: TrashListFilter = {}) => {
-  const conditions = ['p.deleted_at IS NOT NULL', 'p.is_system = 0'];
+  const conditions = ['p.deleted_at IS NOT NULL'];
   const params: unknown[] = [];
   if (ownerUserId) { conditions.push('p.owner_user_id = ?'); params.push(ownerUserId); }
   if (filter.query?.trim()) {
@@ -287,7 +287,7 @@ export function listProjectTrashSessionsInDatabase(db: TrashReadDatabase, projec
             COALESCE(s.deleted_at, p.deleted_at) AS deleted_at
        FROM sessions s
        INNER JOIN projects p ON p.id = s.project_id AND p.deleted_at IS NOT NULL
-      WHERE p.id = ? AND p.is_system = 0 ${ownerUserId ? 'AND p.owner_user_id = ?' : ''}
+      WHERE p.id = ? ${ownerUserId ? 'AND p.owner_user_id = ?' : ''}
       ORDER BY COALESCE(s.deleted_at, p.deleted_at) DESC, s.id ASC
       LIMIT ? OFFSET ?`,
     [projectId, ...(ownerUserId ? [ownerUserId] : []), pageSize(limit), pageOffset(offset)],
@@ -302,7 +302,7 @@ export function countProjectTrashSessionsInDatabase(db: TrashReadDatabase, proje
   return Number(db.get(
     `SELECT COUNT(*) AS count FROM sessions s
        INNER JOIN projects p ON p.id = s.project_id AND p.deleted_at IS NOT NULL
-      WHERE p.id = ? AND p.is_system = 0 ${ownerUserId ? 'AND p.owner_user_id = ?' : ''}`,
+      WHERE p.id = ? ${ownerUserId ? 'AND p.owner_user_id = ?' : ''}`,
     ownerUserId ? [projectId, ownerUserId] : [projectId],
   )?.count || 0);
 }
@@ -333,7 +333,7 @@ export function restoreProjectFromTrashInDatabase(
   now = Date.now(),
 ): RestoredProjectRecord | undefined {
   const candidate = db.get(
-    'SELECT id FROM projects WHERE id = ? AND deleted_at IS NOT NULL AND is_system = 0',
+    'SELECT id FROM projects WHERE id = ? AND deleted_at IS NOT NULL',
     [projectId],
   );
   if (!candidate) return undefined;
@@ -342,7 +342,7 @@ export function restoreProjectFromTrashInDatabase(
   db.exec('BEGIN');
   try {
     db.run(
-      'UPDATE projects SET deleted_at = NULL, pinned = 0, pinned_at = NULL, updated_at = ? WHERE id = ? AND deleted_at IS NOT NULL AND is_system = 0',
+      'UPDATE projects SET deleted_at = NULL, pinned = 0, pinned_at = NULL, updated_at = ? WHERE id = ? AND deleted_at IS NOT NULL',
       [now, projectId],
     );
     db.run(
@@ -609,7 +609,7 @@ export function buildProjectPermanentDeletePlanInDatabase(
   projectId: string,
 ): TrashPermanentDeletePlan | undefined {
   const project = db.get(
-    'SELECT * FROM projects WHERE id = ? AND deleted_at IS NOT NULL AND is_system = 0',
+    'SELECT * FROM projects WHERE id = ? AND deleted_at IS NOT NULL',
     [projectId],
   ) as unknown as Project | undefined;
   if (!project) return undefined;
@@ -707,7 +707,7 @@ function executePermanentDelete(
       db.run('DELETE FROM sidebar_order_items WHERE scope = ?', [`project:${plan.projectId}`]);
       db.run('DELETE FROM sidebar_order_scopes WHERE scope = ?', [`project:${plan.projectId}`]);
       db.run('DELETE FROM sessions WHERE project_id = ?', [plan.projectId]);
-      db.run('DELETE FROM projects WHERE id = ? AND is_system = 0', [plan.projectId]);
+      db.run('DELETE FROM projects WHERE id = ?', [plan.projectId]);
     } else {
       db.run('DELETE FROM sessions WHERE id = ?', [plan.targetId]);
     }

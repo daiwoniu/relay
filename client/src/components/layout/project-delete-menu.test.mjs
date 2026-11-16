@@ -12,7 +12,7 @@ test('项目菜单加载后端权威删除影响且加载期间保守禁用', ()
 });
 
 test('项目删除动作要求权威菜单状态允许', () => {
-  assert.match(source, /const handleProjectDeleteStart[\s\S]*?const deleteState = getProjectDeleteMenuState\(Boolean\(project\.is_system\), menuState, false, Boolean\(project\.deletion_protected\), user\?\.defaultProjectId === project\.id\)[\s\S]*?if \(deleteState\.disabled\)/);
+  assert.match(source, /const handleProjectDeleteStart[\s\S]*?const deleteState = getProjectDeleteMenuState\(menuState, false, Boolean\(project\.deletion_protected\), user\?\.defaultProjectId === project\.id\)[\s\S]*?if \(deleteState\.disabled\)/);
   assert.match(source, /const confirmDelete[\s\S]*?getProjectDeletionImpact\(deleteConfirm\.project\.id\)[\s\S]*?inProgressSessionCount > 0/);
   assert.match(source, /error instanceof ApiError && error\.status === 409/);
 });

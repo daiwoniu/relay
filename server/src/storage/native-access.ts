@@ -120,7 +120,10 @@ export function executeAccess(db: DB, actor: AccessActor, command: Command) {
       } else db.run('DELETE FROM project_members WHERE project_id=? AND user_id=?', [projectId, userId]);
       let defaultProjectId = user.default_project_id ?? null;
       if (defaultProjectId === projectId && (command.name === 'project.removeMember' || command.input.role === 'viewer')) {
-        defaultProjectId = db.get('SELECT id FROM projects WHERE owner_user_id=? AND deleted_at IS NULL ORDER BY is_system DESC,created_at,id LIMIT 1', [userId])?.id ?? null;
+        defaultProjectId = db.get(`SELECT p.id FROM projects p
+          WHERE p.deleted_at IS NULL AND (p.owner_user_id=? OR EXISTS (
+            SELECT 1 FROM project_members pm WHERE pm.project_id=p.id AND pm.user_id=? AND pm.role IN ('collaborator','manager')))
+          ORDER BY (p.owner_user_id=?) DESC,p.is_system DESC,p.created_at,p.id LIMIT 1`, [userId, userId, userId])?.id ?? null;
         db.run('UPDATE users SET default_project_id=?,updated_at=? WHERE id=?', [defaultProjectId, now, userId]);
       }
       audit(db, actor, command.name === 'project.setMember' ? 'project.member_set' : 'project.member_remove', 'project', projectId, project.owner_user_id, now);

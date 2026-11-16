@@ -4,6 +4,16 @@ import test from 'node:test';
 import { getFailurePresentation } from './failure-presentation.ts';
 import { getMessageErrorGuidance } from '../messages/message-error-guidance.ts';
 
+test('存储结果未知不推断为连接异常，保留服务端原始提示', () => {
+  const raw = '成员授权结果暂时无法确认，请刷新状态核对';
+  const result = getFailurePresentation({ message: raw, status: 503, data: { code: 'STORAGE_RESULT_UNKNOWN' } });
+  assert.equal(result.raw, raw);
+  assert.equal(result.code, 'STORAGE_RESULT_UNKNOWN');
+  assert.match(result.description, /无法确认.*是否已保存/);
+  assert.doesNotMatch(result.description, /连接异常|网络/);
+  assert.match(result.suggestion, /核对实际状态/);
+});
+
 test('文件预览只保留错误文本时仍解释缺失路径，而不是退回未知操作异常', () => {
   const raw = '文件不存在或已被移动，请确认路径并重新选择文件。';
   const result = getFailurePresentation(raw);

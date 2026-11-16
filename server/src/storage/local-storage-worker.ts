@@ -14,6 +14,7 @@ import { TOOLS_SCHEMA_SQL } from './tools-contract.js';
 import { createMemberWithDefaultProjectInDatabase } from '../db/queries-account.js';
 import { hashPassword } from '../auth/password.js';
 import { assertStorageRuntime } from '../../../scripts/lib/storage-runtime.mjs';
+import { ensureAdminAuditTable, needsAdminAuditTableUpgrade } from '../db/admin-audit.js';
 
 const quote = (name: string) => '"' + name.replaceAll('"', '""') + '"';
 const schema = fs.readFileSync(new URL('./application-schema-v1.sql', import.meta.url), 'utf8');
@@ -125,6 +126,13 @@ async function initialize() {
       }, before);
     }
     // Additive business schema upgrade; historical Native support migration SQL stays immutable.
+    const bridge = nativeQueries(db);
+    if (needsAdminAuditTableUpgrade(bridge)) {
+      const before = contents(db);
+      if (!workerData.fresh && backups.length === 0) await makeBackup(db, filename, backups, before);
+      transaction(db, () => { ensureAdminAuditTable(bridge); }, before);
+      if (action === 'current') action = 'migrated';
+    }
     if (!has(db, 'user_tools_settings')) {
       if (!workerData.fresh && backups.length === 0) await makeBackup(db, filename, backups, contents(db));
       transaction(db, () => db.exec(TOOLS_SCHEMA_SQL), null);

@@ -4,6 +4,7 @@ import type { CoreCommand,SoftDeleteJob,StoragePrincipal } from './contracts.js'
 import { canonicalJson,StorageContractError } from './command-boundary.js';
 import { appendAdminAuditEventInDatabase } from '../db/admin-audit.js';
 import { beginArchiveSnapshot } from './native-archive.js';
+import { getUserDefaultProjectInDatabase } from '../db/queries-account.js';
 type DB=ReturnType<typeof nativeQueries>;type Actor={id:string;role:string}|null;
 const names=['trash.prepareSoftDelete','trash.claimTrashArchive','trash.confirmTrashArchive','trash.commitSoftDelete','trash.abandonSoftDelete','trash.beginSoftDeleteCancel','trash.claimTrashRestore','trash.confirmTrashRestore','trash.finishSoftDeleteCancel'] as const;
 type Name=typeof names[number];
@@ -26,7 +27,8 @@ function source(db:DB,actor:Exclude<Actor,null>,kind:'project'|'session',id:stri
   if(!project?.owner_user_id)deny('NOT_FOUND');
   if(kind==='project'){
     owned(actor,project.owner_user_id);
-    if(project.is_system||project.deletion_protected||db.get('SELECT 1 FROM users WHERE default_project_id=? LIMIT 1',[id]))deny('CONFLICT');
+    if(project.deletion_protected||db.get('SELECT 1 FROM users WHERE default_project_id=? LIMIT 1',[id]))deny('CONFLICT');
+    if(project.is_system&&!getUserDefaultProjectInDatabase(db,String(project.owner_user_id)))deny('CONFLICT');
   }
   const selection=kind==='project'?'SELECT id FROM sessions WHERE project_id=?':'SELECT id FROM sessions WHERE id=?';
   const where=`session_id IN (${selection})`,sizes=columns.map(c=>`coalesce(length(CAST(${c} AS BLOB)),0)`).join('+');

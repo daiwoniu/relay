@@ -15,7 +15,7 @@ const reads={projects:z.object({...page,q}).strict(),sessions:z.object({...page,
 export function isTrashCommand(name:string):name is 'trash.restoreProject'|'trash.restoreSession'{return name==='trash.restoreProject'||name==='trash.restoreSession';}
 function deny(code:ConstructorParameters<typeof StorageContractError>[0]):never{throw new StorageContractError(code);}
 function owned(actor:Actor,owner:unknown){if(typeof owner!=='string'||!owner||owner!==actor.id&&actor.role!=='admin')deny('FORBIDDEN');}
-function project(db:DB,actor:Actor,projectId:string){const row=db.get('SELECT id,owner_user_id,path,name,deleted_at,is_system FROM projects WHERE id=? AND deleted_at IS NOT NULL AND is_system=0',[projectId]);if(!row)deny('NOT_FOUND');owned(actor,row.owner_user_id);return row;}
+function project(db:DB,actor:Actor,projectId:string){const row=db.get('SELECT id,owner_user_id,path,name,deleted_at,is_system FROM projects WHERE id=? AND deleted_at IS NOT NULL',[projectId]);if(!row)deny('NOT_FOUND');owned(actor,row.owner_user_id);return row;}
 function previewable(db:DB,actor:Actor,sessionId:string){const row=legacy.getPreviewableTrashSessionOwnerInDatabase(db,sessionId);if(!row||!row.project_owner_user_id)deny('NOT_FOUND');owned(actor,row.owner_user_id);}
 function match(db:DB,sessionId:string,query:string,offset=0){
   const pattern=createLiteralSearchPattern(query),where="session_id=? AND role IN ('user','assistant') AND LOWER(content) LIKE LOWER(?) ESCAPE '\\'";

@@ -89,6 +89,7 @@ const KNOWN_CODES: Record<string, KnownGuidance> = {
   ATTACHMENT_INVALID: guide('消息中的附件未通过安全校验，未进入任务处理。', '请移除失效附件或重新选择文件。'),
   MESSAGE_PROCESSING_FAILED: (options) => retryOrUnsafe(options, 'Relay 在处理这条消息时发生异常，任务未能正常继续。', retrySuggestion),
   STORAGE_UNAVAILABLE: guide('Relay 暂时无法读取或确认数据，当前操作结果尚无法确认。', '请先刷新并核对实际状态，查看 Relay 日志；确认操作未生效后再重试，不要删除数据库。'),
+  STORAGE_RESULT_UNKNOWN: guide('Relay 暂时无法确认本次操作是否已保存。', '请刷新并核对实际状态，查看 Relay 日志；确认操作未生效后再重试，避免重复提交。'),
   OPERATION_EXPIRED: guide('本次操作的确认已过期。', '请刷新当前页面并重新发起操作。'),
   FORBIDDEN: guide('当前账号没有执行此操作的权限。', '请检查账号、项目权限；如需权限，请联系管理员。'),
   UNAUTHORIZED: guide('登录状态已失效，当前请求未通过身份校验。', '请重新登录，确认账号后再发起操作。'),

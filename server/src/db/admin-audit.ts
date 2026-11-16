@@ -46,10 +46,15 @@ function createAdminAuditTableSql(table = 'admin_audit_events'): string {
     )`;
 }
 
-export function ensureAdminAuditTable(db: Pick<SQLiteDB, 'all' | 'exec'>): boolean {
+export function needsAdminAuditTableUpgrade(db: Pick<SQLiteDB, 'all'>): boolean {
   const row = db.all("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'admin_audit_events'")[0];
   const currentSql = String(row?.sql || '');
-  if (currentSql.includes("'started'") && ADMIN_AUDIT_ACTIONS.every((action) => currentSql.includes(`'${action}'`))) return false;
+  return !currentSql.includes("'started'") || !ADMIN_AUDIT_ACTIONS.every((action) => currentSql.includes(`'${action}'`));
+}
+
+export function ensureAdminAuditTable(db: Pick<SQLiteDB, 'all' | 'exec'>): boolean {
+  if (!needsAdminAuditTableUpgrade(db)) return false;
+  const row = db.all("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'admin_audit_events'")[0];
   if (!row) {
     db.exec(`${createAdminAuditTableSql()};
     CREATE INDEX idx_admin_audit_occurred_at ON admin_audit_events(occurred_at DESC, id DESC);

@@ -55,6 +55,31 @@ test('membership downgrade/removal repairs shared default preference and old rec
   } finally { await port.close(); f.cleanup(); }
 });
 
+for (const action of ['remove', 'viewer'] as const) test(`after bootstrap deletion, ${action} repairs default to another writable collaboration`, async () => {
+  const f = fixture(); seed(f);
+  const alternative = '33333333-3333-4333-8333-333333333333';
+  f.mutate(`UPDATE projects SET deleted_at=1 WHERE id='${fallback}';
+    INSERT INTO projects(id,owner_user_id,path,deleted_at) VALUES
+      ('${alternative}','admin','D:/remaining-share',NULL),('viewer-only','admin','D:/viewer-only',NULL),('deleted-share','admin','D:/deleted-share',1);
+    INSERT INTO project_members(project_id,user_id,role,can_view_sessions,created_at,updated_at) VALUES
+      ('viewer-only','other','viewer',0,0,0),('deleted-share','other','collaborator',0,0,0),('${alternative}','other','manager',0,2,2);`);
+  const port = await StorageWorkerClient.open({ filename: f.filename, storeId: 'store', generation: 1, initialize: true });
+  try {
+    assert.equal((await port.execute(command('grant-current', 'project.setMember', { projectId: shared, userId: 'other', role: 'collaborator' }))).state, 'committed');
+    assert.equal((await port.execute(command('select-current', 'account.setDefaultProject', { projectId: shared }, 'other'))).state, 'committed');
+    const result = action === 'remove'
+      ? await port.execute(command('revoke-current', 'project.removeMember', { projectId: shared, userId: 'other' }))
+      : await port.execute(command('downgrade-current', 'project.setMember', { projectId: shared, userId: 'other', role: 'viewer' }));
+    assert.equal(result.state, 'committed');
+    if (result.state === 'committed') assert.equal(result.value.defaultProjectId, alternative);
+    assert.equal(f.scalar("SELECT default_project_id FROM users WHERE id='other'"), alternative);
+    assert.equal((await port.execute(command('create-after-revoke', 'session.create', {
+      sessionId: 'after-revoke', projectId: null, engine: null, title: null,
+    }, 'other'))).state, 'committed');
+    assert.equal(f.scalar("SELECT project_id FROM sessions WHERE id='after-revoke'"), alternative);
+  } finally { await port.close(); f.cleanup(); }
+});
+
 test('audit and receipt failures roll back visibility, role and default fallback together', async () => {
   const f = fixture(); seed(f); const port = await StorageWorkerClient.open({ filename: f.filename, storeId: 'store', generation: 1, initialize: true });
   try {

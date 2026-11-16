@@ -148,11 +148,11 @@ test('单会话永久删除只清理目标关系并保留父项目', async () =>
   } finally { current.cleanup(); }
 });
 
-test('默认项目永久删除始终拒绝', async () => {
+test('已删除的系统初始项目允许永久删除', async () => {
   const current = await harness();
   try {
-    assert.equal(permanentlyDeleteProjectInDatabase(current.db, PROJECT_SYSTEM, undefined).status, 'not_found');
-    assert.equal(current.db.get('SELECT COUNT(*) AS count FROM projects WHERE id = ?', [PROJECT_SYSTEM])?.count, 1);
+    assert.equal(permanentlyDeleteProjectInDatabase(current.db, PROJECT_SYSTEM, undefined).status, 'deleted');
+    assert.equal(current.db.get('SELECT COUNT(*) AS count FROM projects WHERE id = ?', [PROJECT_SYSTEM])?.count, 0);
   } finally { current.cleanup(); }
 });
 

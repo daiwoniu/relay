@@ -251,7 +251,6 @@ export function createProjectService({
     async delete(id: string): Promise<void> {
       const project = repository.getProject(id);
       if (!project) throw new ServiceError(404, '项目不存在');
-      if (project.is_system) throw new ServiceError(403, 'Relay 系统项目不允许删除');
       const sessionIds = repository.listSessionsByProject(id).map((session) => session.id);
       await deletionState.runProjectDeletion(id, sessionIds, async () => {
         const sessions = repository.listSessionsByProject(id);

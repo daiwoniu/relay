@@ -4,18 +4,18 @@ import test from 'node:test';
 import { getProjectDeleteMenuState } from './project-delete-state.ts';
 
 test('项目删除菜单在权威状态加载前和加载失败时保守禁用', () => {
-  assert.deepEqual(getProjectDeleteMenuState(false, null), { disabled: true, reason: '正在确认项目状态…' });
-  assert.deepEqual(getProjectDeleteMenuState(false, { projectId: 'project-1', status: 'loading', impact: null }), { disabled: true, reason: '正在确认项目状态…' });
-  assert.deepEqual(getProjectDeleteMenuState(false, { projectId: 'project-1', status: 'unavailable', impact: null }), { disabled: true, reason: '暂时无法确认项目状态' });
+  assert.deepEqual(getProjectDeleteMenuState(null), { disabled: true, reason: '正在确认项目状态…' });
+  assert.deepEqual(getProjectDeleteMenuState({ projectId: 'project-1', status: 'loading', impact: null }), { disabled: true, reason: '正在确认项目状态…' });
+  assert.deepEqual(getProjectDeleteMenuState({ projectId: 'project-1', status: 'unavailable', impact: null }), { disabled: true, reason: '暂时无法确认项目状态' });
 });
 
 test('项目删除菜单由后端全量运行态数量决定', () => {
-  assert.deepEqual(getProjectDeleteMenuState(false, {
+  assert.deepEqual(getProjectDeleteMenuState({
     projectId: 'project-1',
     status: 'ready',
     impact: { sessionCount: 73, linkedCodexSessionCount: 2, inProgressSessionCount: 1 },
   }), { disabled: true, reason: '项目中有会话正在处理中，完成后才能删除' });
-  assert.deepEqual(getProjectDeleteMenuState(false, {
+  assert.deepEqual(getProjectDeleteMenuState({
     projectId: 'project-1',
     status: 'ready',
     impact: { sessionCount: 73, linkedCodexSessionCount: 2, inProgressSessionCount: 0 },
@@ -23,9 +23,16 @@ test('项目删除菜单由后端全量运行态数量决定', () => {
 });
 
 test('菜单打开后可见会话新进入运行态时立即禁用', () => {
-  assert.deepEqual(getProjectDeleteMenuState(false, {
+  assert.deepEqual(getProjectDeleteMenuState({
     projectId: 'project-1',
     status: 'ready',
     impact: { sessionCount: 73, linkedCodexSessionCount: 2, inProgressSessionCount: 0 },
   }, true), { disabled: true, reason: '项目中有会话正在处理中，完成后才能删除' });
+});
+
+test('当前默认项目须先切换，删除保护独立生效', () => {
+  const state = { projectId: 'bootstrap', status: 'ready', impact: { sessionCount: 0, linkedCodexSessionCount: 0, inProgressSessionCount: 0 } };
+  assert.deepEqual(getProjectDeleteMenuState(state, false, false, true), { disabled: true, reason: '当前是默认项目，请先切换默认项目' });
+  assert.deepEqual(getProjectDeleteMenuState(state, false, true, false), { disabled: true, reason: '该项目已设置为不可删除' });
+  assert.deepEqual(getProjectDeleteMenuState(state, false, false, false), { disabled: false });
 });
