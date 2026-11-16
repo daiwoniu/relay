@@ -24,6 +24,7 @@ export const HTML_PREVIEW_ANCHOR_MESSAGE = 'codex-inline-vis-anchor';
 interface SandboxedHtmlDocumentOptions {
   nonce?: string;
   allowUserScripts?: boolean;
+  standalone?: boolean;
 }
 
 export type VisualizationThemeVariables = Record<string, string>;
@@ -134,7 +135,9 @@ export function buildSandboxedHtmlDocument(
   const nonce = normalizeNonce(options.nonce);
   const allowUserScripts = options.allowUserScripts === true;
   const sanitizedContent = removeDocumentNavigationMetadata(content);
-  const securityHead = buildSecurityHead(themeVariables, nonce, allowUserScripts);
+  const securityHead = options.standalone
+    ? `<meta http-equiv="Content-Security-Policy" content="${buildPreviewCsp(nonce, allowUserScripts)}"><meta name="referrer" content="no-referrer">`
+    : buildSecurityHead(themeVariables, nonce, allowUserScripts);
   if (/<head(?:\s[^>]*)?>/i.test(sanitizedContent)) {
     return sanitizedContent.replace(/<head(?:\s[^>]*)?>/i, (head) => `${head}${securityHead}`);
   }
@@ -142,4 +145,15 @@ export function buildSandboxedHtmlDocument(
     return sanitizedContent.replace(/<html(?:\s[^>]*)?>/i, (html) => `${html}<head>${securityHead}</head>`);
   }
   return `<!doctype html><html><head>${securityHead}</head><body>${sanitizedContent}</body></html>`;
+}
+
+function escapeHtmlAttribute(value: string): string {
+  return value.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+// Keep untrusted HTML in an opaque origin even when opened outside Relay.
+// A viewport-sized frame preserves vh/vw, media queries and native scrolling.
+export function buildStandaloneHtmlPreview(content: string, title: string): string {
+  const document = buildSandboxedHtmlDocument(content, {}, { standalone: true, allowUserScripts: true });
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="referrer" content="no-referrer"><title>${escapeHtmlAttribute(title)}</title><style>html,body{margin:0;width:100%;height:100%;overflow:hidden}iframe{display:block;width:100%;height:100%;border:0}</style></head><body><iframe title="HTML 预览" sandbox="allow-scripts" referrerpolicy="no-referrer" srcdoc="${escapeHtmlAttribute(document)}"></iframe></body></html>`;
 }

@@ -14,6 +14,7 @@ import PreviewState from './PreviewState';
 import { getFilePreviewView, isMarkdownPreview, supportsRenderedPreview, type FilePreviewView } from './file-preview-view';
 import { attachPreviewScrollRestoration, type PreviewScrollPosition } from './preview-scroll-restoration';
 import { revealPreviewTab } from './preview-tab-scroll';
+import { buildStandaloneHtmlPreview } from './html-preview-document';
 import {
   buildCodePreviewMarkdown,
   buildPreviewLineNumbers,
@@ -186,6 +187,19 @@ export default function RightPanelContent({
   const htmlVisualizationEnabled = Boolean(
     isHtmlPreview && activeTab && previewView === 'preview' && shouldUseHtmlVisualization(activeTab.contentSize, 'visualization'),
   );
+  const standaloneDocument = useMemo(() => (
+    isHtmlPreview && activeTab && !activeTab.loading && !activeTab.previewError && !activeTab.textPreviewTruncated
+      ? buildStandaloneHtmlPreview(activeTab.content, activeTab.title)
+      : ''
+  ), [isHtmlPreview, activeTab?.content, activeTab?.title, activeTab?.loading, activeTab?.previewError, activeTab?.textPreviewTruncated]);
+  const [standalonePreview, setStandalonePreview] = useState({ document: '', url: '' });
+  useEffect(() => {
+    if (!standaloneDocument) return;
+    const url = URL.createObjectURL(new Blob([standaloneDocument], { type: 'text/html;charset=utf-8' }));
+    setStandalonePreview({ document: standaloneDocument, url });
+    return () => URL.revokeObjectURL(url);
+  }, [standaloneDocument]);
+  const standaloneUrl = standalonePreview.document === standaloneDocument ? standalonePreview.url : '';
   const codeMarkdown = useMemo(
     () => largeCodePreview ? '' : activeTab?.language ? buildCodePreviewMarkdown(activeTab.content, activeTab.language) : '',
     [activeTab?.content, activeTab?.language, largeCodePreview],
@@ -358,6 +372,13 @@ export default function RightPanelContent({
                 </Tooltip>
               </div>
               <div className="workspace-preview-file-actions">
+              {standaloneUrl && (
+                <Tooltip content="在新标签页打开 HTML" disabled={isMobile} placement="bottom">
+                  <a href={standaloneUrl} target="_blank" rel="noopener noreferrer" aria-label="在新标签页打开 HTML" className={`inline-flex shrink-0 items-center justify-center rounded-lg text-[var(--color-text-tertiary)] hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus-ring)] ${isMobile ? 'h-10 w-10' : 'h-7 w-7'}`}>
+                    <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M9 2.5h4.5V7M13 3 7 9M6 3H3.5a1 1 0 0 0-1 1v8.5a1 1 0 0 0 1 1H12a1 1 0 0 0 1-1V10" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                  </a>
+                </Tooltip>
+              )}
               <IconActionButton label="刷新文件" variant="neutral" tooltip={!isMobile} onClick={() => onRefresh(activeTab)}>
                 <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M13 6a5.2 5.2 0 10.2 3M13 2.5V6H9.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" /></svg>
               </IconActionButton>
