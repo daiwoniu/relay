@@ -19,6 +19,7 @@ export interface TaskRegistryTask {
   completedAt?: string | null;
   deliveryMatrix?: DeliveryMatrixItem[];
   feishuWorkItemIds: string[];
+  feishuPrimaryWorkItemId?: string | null;
   feishuWorkItemUrls?: Record<string, string>;
 }
 
@@ -172,6 +173,9 @@ export async function readTaskRegistry(root: string): Promise<TaskRegistryProjec
     const overview = await readTaskOverview(taskDocumentPath);
     const registryTitle = optionalString(item.title);
     const feishuWorkItemIds = feishuIds(item.feishu_work_item_ids);
+    const primaryId = item.feishu_primary_work_item_id;
+    const primary = typeof primaryId === 'string' && /^[1-9]\d*$/.test(primaryId) && feishuWorkItemIds.includes(primaryId)
+      ? primaryId : null;
     return {
       id,
       title: registryTitle && /[\u3400-\u9fff]/.test(registryTitle) ? registryTitle : overview.title || registryTitle,
@@ -189,6 +193,7 @@ export async function readTaskRegistry(root: string): Promise<TaskRegistryProjec
       completedAt: optionalString(item.completed_at),
       deliveryMatrix: await readDeliveryMatrix(root, optionalString(item.task_path)),
       feishuWorkItemIds,
+      ...(primary ? { feishuPrimaryWorkItemId: primary } : {}),
       feishuWorkItemUrls: { ...await readGuideFeishuUrls(taskDocumentPath, feishuWorkItemIds), ...feishuUrls(item.feishu_work_item_urls, feishuWorkItemIds) },
     } satisfies TaskRegistryTask;
   }));

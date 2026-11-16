@@ -37,7 +37,8 @@ import {
 } from './sidebar-order';
 import { createSidebarDropMove, isMatchingSidebarDropTarget, isSidebarDragData, sidebarDragId } from './sidebar-drag';
 import { truncateMiddlePath } from '../../utils/path-display';
-import { createSessionMenuItems, MenuIcon } from '../chat/session-menu-items';
+import { createSessionMenuItems } from '../chat/session-menu-items';
+import { MenuIcon } from '../icons/MenuIcon';
 import { readStoredChatLocation, readUrlSessionChatLocation, readUrlWorkspaceTaskProjectLocation, resolveInitialChatLocation, retainPendingUrlSessionLocation } from '../../stores/chat-location';
 import { loadSidebarNavigation } from './sidebar-navigation-loader';
 import MySharesDialog from '../sharing/MySharesDialog';
@@ -953,8 +954,8 @@ export default function Sidebar({
             setContextMenu(null);
           },
         } satisfies ContextMenuItem] : []),
-        ...((user?.role === 'admin') ? [{ id: 'project-members', label: '管理授权', icon: <MenuIcon type="select" />, onSelect: () => { if (!restoreMinimizedPanel(`project-members-dialog:${menuProject.id}`)) setMembersProjects((current) => current.some((project) => project.id === menuProject.id) ? current : [...current, menuProject]); setContextMenu(null); } } satisfies ContextMenuItem] : []),
-        ...(canManageMenuProject && !menuProject.is_system ? [{ id: 'deletion-protection', label: menuProject.deletion_protected ? '关闭删除保护' : '开启删除保护', icon: <MenuIcon type="pin" />, onSelect: () => { const next = menuProject.deletion_protected ? 0 : 1; void updateProject(menuProject.id, { deletion_protected: next }).then(() => setProjects(projects.map((project) => project.id === menuProject.id ? { ...project, deletion_protected: next } : project))).catch(console.error); setContextMenu(null); } } satisfies ContextMenuItem] : []),
+        ...((user?.role === 'admin') ? [{ id: 'project-members', label: '管理授权', icon: <MenuIcon type="members" />, onSelect: () => { if (!restoreMinimizedPanel(`project-members-dialog:${menuProject.id}`)) setMembersProjects((current) => current.some((project) => project.id === menuProject.id) ? current : [...current, menuProject]); setContextMenu(null); } } satisfies ContextMenuItem] : []),
+        ...(canManageMenuProject && !menuProject.is_system ? [{ id: 'deletion-protection', label: menuProject.deletion_protected ? '关闭删除保护' : '开启删除保护', icon: <MenuIcon type="shield" />, onSelect: () => { const next = menuProject.deletion_protected ? 0 : 1; void updateProject(menuProject.id, { deletion_protected: next }).then(() => setProjects(projects.map((project) => project.id === menuProject.id ? { ...project, deletion_protected: next } : project))).catch(console.error); setContextMenu(null); } } satisfies ContextMenuItem] : []),
         ...(canManageMenuProject ? [{
           id: 'delete',
           label: '删除项目',

@@ -12,6 +12,7 @@ import {
 const STATIC_SHARE_SCRIPT = fs.readFileSync(new URL('../../../public/static-share-script.js', import.meta.url), 'utf8');
 
 const pageSource = fs.readFileSync(new URL('./PublicSharePage.tsx', import.meta.url), 'utf8');
+const controlsSource = fs.readFileSync(new URL('./ShareViewControls.tsx', import.meta.url), 'utf8');
 const listSource = fs.readFileSync(new URL('./PublicShareMessageList.tsx', import.meta.url), 'utf8');
 const userSource = fs.readFileSync(new URL('../messages/UserMessage.tsx', import.meta.url), 'utf8');
 const assistantSource = fs.readFileSync(new URL('../messages/AssistantMessage.tsx', import.meta.url), 'utf8');
@@ -66,8 +67,8 @@ test('公开分享页只在有效分享中接入离线下载入口与状态反�
 test('公开分享加载状态和顶部主题入口复用统一反馈与图标操作', () => {
   assert.match(pageSource, /message-inline-feedback message-inline-feedback--share-loading/);
   assert.match(pageSource, /assistant-message__status-icon animate-spin/);
-  assert.match(pageSource, /data-static-share-theme/);
-  assert.match(pageSource, /<IconActionButton[\s\S]*?label=\{themeLabel\}/);
+  assert.match(controlsSource, /data-static-share-theme/);
+  assert.match(controlsSource, /<IconActionButton[\s\S]*?label=\{themeLabel\}/);
   assert.doesNotMatch(pageSource, /<button type="button" onClick=\{cycleTheme\}[^>]*border/);
 });
 
@@ -80,7 +81,7 @@ test('切换分享链接会使尚未完成的旧导出结果失效', () => {
 
 test('分享错误反馈具备完整卡片骨架且顶部操作满足移动触控尺寸', () => {
   assert.match(messageStyles, /\.message-feedback\s*\{[\s\S]*?border:\s*1px solid transparent;[\s\S]*?border-radius:[\s\S]*?padding:/);
-  assert.equal(pageSource.match(/className="h-10 w-10 sm:h-7 sm:w-7"/g)?.length, 3);
+  assert.equal((pageSource + controlsSource).match(/className="h-10 w-10 sm:h-7 sm:w-7"/g)?.length, 3);
 });
 
 test('离线脚本响应必须成功、类型正确且内容匹配 CSP 哈希', async () => {
@@ -132,8 +133,8 @@ test('公开分享助手消息不显示无实际用途的更多操作入口', ()
 });
 
 test('离线页面保留宽屏与主题切换控件', () => {
-  assert.match(pageSource, /data-static-share-theme/);
-  assert.match(pageSource, /切换宽屏显示/);
+  assert.match(controlsSource, /data-static-share-theme/);
+  assert.match(controlsSource, /切换宽屏显示/);
   assert.match(STATIC_SHARE_SCRIPT, /dataset\.theme/);
   assert.match(STATIC_SHARE_SCRIPT, /static-share-theme/);
   assert.match(STATIC_SHARE_SCRIPT, /max-w-none/);
@@ -148,5 +149,5 @@ test('下载链接加入文档并延迟释放 object URL', () => {
 });
 
 test('宽屏按钮根据当前布局切换方向图标', () => {
-  assert.match(pageSource, /d=\{wideLayout \?/);
+  assert.match(controlsSource, /d=\{wideLayout \?/);
 });

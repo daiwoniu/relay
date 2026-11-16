@@ -1,3 +1,4 @@
+import Tooltip from './Tooltip';
 import { useEffect, useRef, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { registerMinimizedPanel } from './minimizedPanelRegistry';
@@ -42,7 +43,7 @@ export default function MinimizedPanelBar({ open, panelId, title, description = 
         <span className="minimized-panel-bar__icon" aria-hidden="true">{icon}</span>
         <span className="minimized-panel-bar__copy"><strong className="minimized-panel-bar__title">{title}</strong><span className="minimized-panel-bar__description">{description}</span></span>
       </div>
-      <div className="minimized-panel-bar__actions"><button ref={restoreRef} type="button" onClick={onRestore} aria-label={`恢复${title}`} title={`恢复${title}`} className="minimized-panel-bar__restore"><RestorePanelIcon /></button><button type="button" onClick={onClose} disabled={closeDisabled} aria-label={`关闭${title}`} title={`关闭${title}`} className="minimized-panel-bar__close"><ClosePanelIcon /></button></div>
+      <div className="minimized-panel-bar__actions"><Tooltip content={`恢复${title}`} asChild><button ref={restoreRef} type="button" onClick={onRestore} aria-label={`恢复${title}`} className="minimized-panel-bar__restore"><RestorePanelIcon /></button></Tooltip><Tooltip content={`关闭${title}`} asChild><button type="button" onClick={onClose} disabled={closeDisabled} aria-label={`关闭${title}`} className="minimized-panel-bar__close"><ClosePanelIcon /></button></Tooltip></div>
     </div>,
     slot,
   );

@@ -1,3 +1,4 @@
+import Tooltip from '../ui/Tooltip';
 import { useEffect, useMemo, useState } from 'react';
 import type { SpreadsheetDocumentPreviewDto, SpreadsheetSheetPreviewDto } from '../../generated/relay-contracts';
 import { readSpreadsheetSheet } from '../../api/filesystem';
@@ -99,9 +100,9 @@ export default function SpreadsheetPreview({
                 <tr key={row.rowNumber}>
                   <th>{row.rowNumber}</th>
                   {row.cells.map((cell) => (
-                    <td key={cell.address} title={cell.formula ? `公式：${cell.formula}` : undefined}>
+                    <Tooltip key={cell.address} content={cell.formula ? `公式：${cell.formula}` : undefined} asChild><td>
                       {cell.display}{cell.formula ? <span className="spreadsheet-formula-mark" aria-label="包含公式">ƒ</span> : null}
-                    </td>
+                    </td></Tooltip>
                   ))}
                 </tr>
               ))}

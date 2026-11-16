@@ -20,7 +20,9 @@ export function createStoredFilesystemRouter(options:{port:CoreStoragePort;servi
         result.headers.set('Cache-Control','private, no-store');return result;
       }catch(error){
         const code=error instanceof StorageContractError?error.code:'STORAGE_UNAVAILABLE';
-        return c.json(presentApiError('文件操作暂时不可用，请刷新状态核对',{code}),code==='FORBIDDEN'?403:code==='NOT_FOUND'?404:code==='CONFLICT'?409:code==='INVALID_ARGUMENT'?400:code==='PAYLOAD_TOO_LARGE'?413:503);
+        const message=code==='NOT_FOUND'?'文件不存在或已被移动，请确认路径并重新选择文件。':'文件操作暂时不可用，请刷新状态核对';
+        c.header('Cache-Control','private, no-store');
+        return c.json(presentApiError(message,{code}),code==='FORBIDDEN'?403:code==='NOT_FOUND'?404:code==='CONFLICT'?409:code==='INVALID_ARGUMENT'?400:code==='PAYLOAD_TOO_LARGE'?413:503);
       }
     });
   }return router;

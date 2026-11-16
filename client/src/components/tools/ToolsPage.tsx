@@ -1,3 +1,4 @@
+import Tooltip from '../ui/Tooltip';
 import FailureNotice from '../ui/FailureNotice';
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
@@ -99,9 +100,9 @@ function ToolsContent({ storageKey, signedIn, checking }: { storageKey: string; 
     <header className="border-b border-[var(--color-border)] bg-[var(--color-surface)]"><div className={`mx-auto flex ${widthClass} flex-wrap items-center justify-between gap-3 px-5 py-4`}>
       <div className="flex items-center gap-2 font-semibold"><RelayLogo className="h-7 w-7 text-[var(--color-brand-mark)]" />Relay <span className="ml-2 border-l border-[var(--color-border)] pl-3 text-sm font-normal">工具集</span></div>
       <nav aria-label="工具集显示设置" className="flex items-center gap-2">
-        <button type="button" onClick={cycleTheme} title={`当前主题：${themeLabel}；点击切换`} aria-label={`当前主题：${themeLabel}；点击切换`} className={`${control} flex items-center gap-2`}>
+        <Tooltip content={`当前主题：${themeLabel}；点击切换`} asChild><button type="button" onClick={cycleTheme} aria-label={`当前主题：${themeLabel}；点击切换`} className={`${control} flex items-center gap-2`}>
           <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7">{preference === 'system' ? <><rect x="3" y="4" width="18" height="13" rx="2" /><path d="M8 21h8m-4-4v4" /></> : effectiveTheme === 'dark' ? <path d="M20 15.5A8.5 8.5 0 0 1 8.5 4 8.5 8.5 0 1 0 20 15.5Z" /> : <><circle cx="12" cy="12" r="4" /><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5" /></>}</svg><span className="hidden sm:inline">{themeLabel}</span>
-        </button>
+        </button></Tooltip>
         <button type="button" onClick={toggleWide} aria-pressed={wide} className={`${control} hidden lg:inline-flex`}>{wide ? '收窄布局' : '宽屏布局'}</button>
         {!signedIn && !checking && <Link to="/?next=/tools" className={control}>登录</Link>}
       </nav>

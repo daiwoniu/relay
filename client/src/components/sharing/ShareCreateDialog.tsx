@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { CreateShareRequest, SharePreviewResponseDto, ShareScope } from '../../generated/relay-contracts';
 import { createShare, getShareUrl, previewShare } from '../../api/shares';
 import { copyToClipboard } from '../../utils/clipboard';
@@ -21,6 +21,7 @@ import SharePreviewDialog from './SharePreviewDialog';
 import { getShareCaution } from './share-caution';
 import { buildShareExpiry, SHARE_EXPIRY_OPTIONS, type ShareExpiryOption } from './share-expiry';
 import { getShareScopePresentation } from './share-scope';
+import { createShareRequestGate } from './share-request-gate';
 
 export interface ShareDraft {
   sessionId: string;
@@ -41,16 +42,26 @@ export default function ShareCreateDialog({ draft, onClose }: { draft: ShareDraf
   const [shareUrl, setShareUrl] = useState('');
   const [copied, setCopied] = useState(false);
   const [minimized, setMinimized] = useState(false);
+  const gate = useRef(createShareRequestGate()).current;
+  gate.synchronize(draft);
+  useEffect(() => () => gate.invalidate(), [gate]);
+  const close = () => { if (submitting) return; gate.invalidate(); setPreview(null); onClose(); };
+  const copyLink = async () => {
+    const current = gate.begin();
+    try { await copyToClipboard(shareUrl); if (current()) { setCopied(true); setError(''); } }
+    catch { if (current()) setError('复制失败，请手动选择上方链接复制'); }
+  };
 
   useEffect(() => {
-    if (!draft) { setMinimized(false); return; }
+    setMinimized(false);
+    setPreview(null);
+    setPreviewing(false);
+    setSubmitting(false);
+    if (!draft) { setShareUrl(''); return; }
     setTitle(draft.defaultTitle);
     setIncludeProcess(false);
     setExpiryOption('1d');
     setCustomExpiry('');
-    setSubmitting(false);
-    setPreviewing(false);
-    setPreview(null);
     setError('');
     setShareUrl('');
     setCopied(false);
@@ -79,15 +90,18 @@ export default function ShareCreateDialog({ draft, onClose }: { draft: ShareDraf
     if (!draft || submitting || previewing) return;
     setError('');
     setSubmitting(true);
+    const current = gate.begin();
     try {
       const request = buildRequest();
       if (!request) return;
       const result = await createShare(request);
+      if (!current()) return;
       setShareUrl(getShareUrl(result.publicToken));
     } catch (cause) {
+      if (!current()) return;
       setError(cause instanceof Error ? cause.message : '创建分享失败');
     } finally {
-      setSubmitting(false);
+      if (current()) setSubmitting(false);
     }
   };
 
@@ -95,14 +109,17 @@ export default function ShareCreateDialog({ draft, onClose }: { draft: ShareDraf
     if (previewing || submitting) return;
     setError('');
     setPreviewing(true);
+    const current = gate.begin();
     try {
       const request = buildRequest();
       if (!request) return;
-      setPreview(await previewShare(request));
+      const result = await previewShare(request);
+      if (current()) setPreview(result);
     } catch (cause) {
+      if (!current()) return;
       setError(cause instanceof Error ? cause.message : '加载分享预览失败');
     } finally {
-      setPreviewing(false);
+      if (current()) setPreviewing(false);
     }
   };
 
@@ -110,17 +127,19 @@ export default function ShareCreateDialog({ draft, onClose }: { draft: ShareDraf
     <>
     <Modal
       open={draft !== null}
-      suspended={minimized}
-      onClose={onClose}
+      suspended={minimized || preview !== null}
+      onClose={close}
+      closeOnBackdrop={!submitting}
+      closeOnEscape={!submitting}
       labelledBy="share-create-title"
-      contentClassName="w-full max-w-lg rounded-2xl border border-[var(--color-overlay-border)] bg-[var(--color-overlay-surface)] p-4 shadow-[var(--color-overlay-shadow)]"
+      contentClassName="max-h-[calc(100dvh-2rem)] w-full max-w-lg overflow-y-auto rounded-2xl border border-[var(--color-overlay-border)] bg-[var(--color-overlay-surface)] p-4 shadow-[var(--color-overlay-shadow)]"
     >
       <div className="mb-3 flex items-start justify-between gap-3">
         <div>
           <h2 id="share-create-title" className="text-base font-semibold text-[var(--color-text)]">创建分享</h2>
           <p className="mt-1 text-xs text-[var(--color-text-secondary)]">创建后内容和有效期不可修改。</p>
         </div>
-        <div className="flex shrink-0 items-center gap-1"><IconActionButton label="最小化创建分享" variant="neutral" tooltip={false} className="h-8 w-8" onClick={() => setMinimized(true)}><svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 11.5h10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg></IconActionButton><IconActionButton label="关闭创建分享" variant="neutral" tooltip={false} className="h-8 w-8" onClick={onClose}><ClosePanelIcon /></IconActionButton></div>
+        <div className="flex shrink-0 items-center gap-1"><IconActionButton label="最小化创建分享" variant="neutral" tooltip={false} className="h-8 w-8" onClick={() => setMinimized(true)}><svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 11.5h10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg></IconActionButton><IconActionButton label="关闭创建分享" variant="neutral" tooltip={false} className="h-8 w-8" disabled={submitting} onClick={close}><ClosePanelIcon /></IconActionButton></div>
       </div>
 
       <div className="mb-3 flex items-center gap-2.5 rounded-xl border border-[var(--color-notice-info-border)] bg-[var(--color-notice-info-bg)] px-3 py-2.5">
@@ -136,8 +155,9 @@ export default function ShareCreateDialog({ draft, onClose }: { draft: ShareDraf
           <div className="break-all rounded-lg bg-[var(--color-bg-secondary)] p-2.5 text-xs text-[var(--color-text-secondary)]">{shareUrl}</div>
           <div className={formActionsClassName}>
             <button type="button" onClick={() => window.open(shareUrl, '_blank', 'noopener,noreferrer')} className={secondaryFormButtonClassName}>打开</button>
-            <button type="button" onClick={() => void copyToClipboard(shareUrl).then(() => setCopied(true))} className={primaryFormButtonClassName}>{copied ? '已复制' : '复制链接'}</button>
+            <button type="button" onClick={() => void copyLink()} className={primaryFormButtonClassName}>{copied ? '已复制' : '复制链接'}</button>
           </div>
+          <FormFeedback message={error} error />
         </div>
       ) : (
         <div className="space-y-3">
@@ -157,14 +177,14 @@ export default function ShareCreateDialog({ draft, onClose }: { draft: ShareDraf
           {caution && <div role="note" className="flex items-start gap-2 rounded-xl border border-[var(--color-notice-attention-border)] bg-[var(--color-notice-attention-bg)] p-2.5 text-xs leading-5 text-[var(--color-text-secondary)]"><svg className="mt-0.5 shrink-0 text-[var(--color-status-warning)]" width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 1.75a6.25 6.25 0 110 12.5 6.25 6.25 0 010-12.5zM8 4.75v3.7M8 10.9v.1" stroke="currentColor" strokeWidth="1.35" strokeLinecap="round"/></svg><span><strong className="block font-medium text-[var(--color-status-warning)]">{caution.title}</strong>{caution.message}</span></div>}
           <FormFeedback message={error} error />
           <div className={formActionsClassName}>
-            <button type="button" onClick={onClose} className={textFormButtonClassName}>取消</button>
+            <button type="button" disabled={submitting} onClick={close} className={textFormButtonClassName}>取消</button>
             <button type="button" disabled={previewing || submitting || !title.trim()} onClick={() => void openPreview()} className={secondaryFormButtonClassName}>{previewing ? '加载预览…' : '预览'}</button>
             <button type="button" disabled={submitting || previewing || !title.trim()} onClick={() => void submit()} className={primaryFormButtonClassName}>{submitting ? '创建中…' : '创建分享'}</button>
           </div>
         </div>
       )}
     </Modal>
-    <MinimizedPanelBar open={draft !== null && minimized} panelId="share-create-title" title="创建分享" description="分享设置已保留" onRestore={() => setMinimized(false)} onClose={onClose} closeDisabled={submitting} />
+    <MinimizedPanelBar open={draft !== null && minimized} panelId="share-create-title" title="创建分享" description="分享设置已保留" onRestore={() => setMinimized(false)} onClose={close} closeDisabled={submitting} />
     <SharePreviewDialog preview={preview} onClose={() => setPreview(null)} />
     </>
   );

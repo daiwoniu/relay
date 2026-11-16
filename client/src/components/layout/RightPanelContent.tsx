@@ -1,10 +1,9 @@
-import FailureNotice from '../ui/FailureNotice';
-import { lazy, Suspense, useEffect, useMemo, useState, type Dispatch, type RefObject, type SetStateAction } from 'react';
+import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState, type Dispatch, type RefObject, type SetStateAction } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
-import type { HtmlPreviewMode, RightPanelTab } from '../../stores/chat';
-import HoverCard from '../ui/HoverCard';
+import type { RightPanelTab } from '../../stores/chat';
+import Tooltip from '../ui/Tooltip';
 import IconActionButton from '../ui/IconActionButton';
 import Modal from '../ui/Modal';
 import FileTypeIcon from '../messages/FileTypeIcon';
@@ -12,6 +11,9 @@ import ProgressiveCodePreview from './ProgressiveCodePreview';
 import { formatGitDiffHunkHeader } from './git-diff-hunk';
 import { readFileGitDiff, type FileGitDiffResult } from '../../api/filesystem';
 import PreviewState from './PreviewState';
+import { getFilePreviewView, isMarkdownPreview, supportsRenderedPreview, type FilePreviewView } from './file-preview-view';
+import { attachPreviewScrollRestoration, type PreviewScrollPosition } from './preview-scroll-restoration';
+import { revealPreviewTab } from './preview-tab-scroll';
 import {
   buildCodePreviewMarkdown,
   buildPreviewLineNumbers,
@@ -28,6 +30,7 @@ import {
 const PdfDocumentPreview = lazy(() => import('./PdfDocumentPreview'));
 const WordDocumentPreview = lazy(() => import('./WordDocumentPreview'));
 const SpreadsheetPreview = lazy(() => import('./SpreadsheetPreview'));
+const MarkdownFilePreview = lazy(() => import('./MarkdownFilePreview'));
 
 type MobileInfo = 'force-access' | 'file-info' | null;
 
@@ -35,7 +38,7 @@ interface FileMetadataContentProps {
   filePath: string;
   metadata: RightPanelTab['fileMetadata'];
   loading?: boolean;
-  error?: string;
+  error?: RightPanelTab['fileMetadataError'];
   copiedPath: boolean;
   onCopyPath: (filePath: string) => void;
 }
@@ -47,8 +50,9 @@ export function getFileName(filePath: string): string {
 function FileMetadataContent({ filePath, metadata, loading, error, copiedPath, onCopyPath }: FileMetadataContentProps) {
   if (loading) return <PreviewState compact tone="loading" title="正在加载文件信息" />;
   if (!metadata) {
-    const errorTone = error?.includes('临时授权') ? 'warning' : 'danger';
-    return <PreviewState compact tone={errorTone} title="文件信息不可用" description={error || '暂时无法读取文件信息'} />;
+    const message = typeof error === 'string' ? error : error?.message;
+    const errorTone = message?.includes('临时授权') ? 'warning' : 'danger';
+    return <PreviewState compact tone={errorTone} title="文件信息不可用" error={error} description={message || '暂时无法读取文件信息'} />;
   }
   const resolvedPath = metadata.path || filePath;
   const fileName = getFileName(resolvedPath);
@@ -58,7 +62,7 @@ function FileMetadataContent({ filePath, metadata, loading, error, copiedPath, o
       <div className="flex min-w-0 items-center gap-2">
         <FileTypeIcon filePath={resolvedPath} size={18} className="shrink-0 text-[var(--color-text-secondary)]" />
         <div className="min-w-0">
-          <div className="truncate text-sm font-medium text-[var(--color-text)]" title={fileName}>{fileName}</div>
+          <div className="truncate text-sm font-medium text-[var(--color-text)]">{fileName}</div>
           <div className="mt-0.5 text-[11px] text-[var(--color-text-tertiary)]">
             {getFileMetadataTypeLabel(resolvedPath)} · {formatFileMetadataSize(metadata.size)}
           </div>
@@ -104,6 +108,7 @@ interface RightPanelContentProps {
   mobileInfo: MobileInfo;
   forceLoadingTabId: string | null;
   compressingTabId: string | null;
+  downloading?: boolean;
   isHtmlPreview: boolean;
   sandboxedHtmlDocument: string;
   htmlPreviewHeight: number;
@@ -120,7 +125,8 @@ interface RightPanelContentProps {
   onForceAccess: (tab: RightPanelTab) => void;
   onDownload: (tab: RightPanelTab) => void;
   onCompressedPreview: (tab: RightPanelTab) => void;
-  onHtmlPreviewMode: (mode: HtmlPreviewMode) => void;
+  onPreviewView: (mode: FilePreviewView) => void;
+  onRefresh: (tab: RightPanelTab) => void;
   onRequestHtmlScripts: () => void;
   setMobileInfo: Dispatch<SetStateAction<MobileInfo>>;
 }
@@ -136,6 +142,7 @@ export default function RightPanelContent({
   mobileInfo,
   forceLoadingTabId,
   compressingTabId,
+  downloading = false,
   isHtmlPreview,
   sandboxedHtmlDocument,
   htmlPreviewHeight,
@@ -152,14 +159,32 @@ export default function RightPanelContent({
   onForceAccess,
   onDownload,
   onCompressedPreview,
-  onHtmlPreviewMode,
+  onPreviewView,
+  onRefresh,
   onRequestHtmlScripts,
   setMobileInfo,
 }: RightPanelContentProps) {
   const hasTabs = tabs.length > 0;
+  const tabsScrollRef = useRef<HTMLDivElement>(null);
+  const selectedTabRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const container = tabsScrollRef.current;
+    const selected = selectedTabRef.current;
+    if (!activeTab || !container || !selected) return;
+    const reveal = () => revealPreviewTab(container, selected);
+    reveal();
+    const observer = new ResizeObserver(reveal);
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, [activeTab?.id, tabs.length]);
+  useLayoutEffect(() => {
+    // Reopening the already selected file starts a new load without changing its id.
+    if (activeTab?.loading && tabsScrollRef.current && selectedTabRef.current) revealPreviewTab(tabsScrollRef.current, selectedTabRef.current);
+  }, [activeTab?.id, activeTab?.loading]);
+  const previewView = activeTab ? getFilePreviewView(activeTab) : 'source';
   const largeCodePreview = Boolean(activeTab?.language && isLargeCodePreview(activeTab.contentSize));
   const htmlVisualizationEnabled = Boolean(
-    isHtmlPreview && activeTab && shouldUseHtmlVisualization(activeTab.contentSize, activeTab.htmlPreviewMode),
+    isHtmlPreview && activeTab && previewView === 'preview' && shouldUseHtmlVisualization(activeTab.contentSize, 'visualization'),
   );
   const codeMarkdown = useMemo(
     () => largeCodePreview ? '' : activeTab?.language ? buildCodePreviewMarkdown(activeTab.content, activeTab.language) : '',
@@ -171,92 +196,82 @@ export default function RightPanelContent({
   );
   const [gitDiffResult, setGitDiffResult] = useState<{ tabId: string; result: FileGitDiffResult } | null>(null);
   const [gitDiffError, setGitDiffError] = useState<{ tabId: string; message: string } | null>(null);
-  const [gitDiffTabId, setGitDiffTabId] = useState<string | null>(null);
   useEffect(() => {
     setGitDiffResult(null);
     setGitDiffError(null);
-    setGitDiffTabId(null);
     if (!activeTab || activeTab.loading || activeTab.previewError || !activeTab.language || activeTab.forceAccessAvailable || activeTab.textPreviewTruncated) return;
     const controller = new AbortController();
     const sourcePath = activeTab.sourcePath || activeTab.title;
     void readFileGitDiff(sourcePath, activeTab.fileAccessToken, { signal: controller.signal })
-      .then((result) => setGitDiffResult({ tabId: activeTab.id, result }))
+      .then((result) => { if (!controller.signal.aborted) setGitDiffResult({ tabId: activeTab.id, result }); })
       .catch((error: unknown) => {
         if (!controller.signal.aborted) setGitDiffError({ tabId: activeTab.id, message: error instanceof Error ? error.message : '读取失败' });
       });
     return () => controller.abort();
   }, [activeTab?.id, activeTab?.loading, activeTab?.previewError, activeTab?.language, activeTab?.forceAccessAvailable, activeTab?.textPreviewTruncated, activeTab?.fileAccessToken, activeTab?.sourcePath, activeTab?.title]);
   const gitDiff = gitDiffResult && gitDiffResult.tabId === activeTab?.id && gitDiffResult.result.changed ? gitDiffResult.result.diff : null;
-  const showGitDiff = gitDiff !== null && gitDiffTabId === activeTab?.id;
+  const showGitDiff = previewView === 'git-diff';
   const gitDiffLines = useMemo(() => {
     const start = gitDiff?.indexOf('\n@@') ?? -1;
     return start < 0 ? ['无逐行变更'] : gitDiff!.slice(start + 1).split('\n');
   }, [gitDiff]);
   const newFileDiff = gitDiff?.includes('\n--- /dev/null\n') ?? false;
-  const gitDiffModeControl = !isHtmlPreview && gitDiff !== null ? (
-    <div role="group" aria-label="文件预览模式" className={`flex shrink-0 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-0.5 ${isMobile ? 'w-full' : ''}`}>
-      {(['content', 'diff'] as const).map((mode) => {
-        const selected = mode === 'diff' ? showGitDiff : !showGitDiff;
-        return <button key={mode} type="button" aria-pressed={selected} onClick={() => setGitDiffTabId(mode === 'diff' ? activeTab!.id : null)} className={`rounded ${isMobile ? 'min-h-10 flex-1 px-3 py-2 text-xs' : 'px-2 py-0.5 text-xs'} ${selected ? 'bg-[var(--color-bg)] text-[var(--color-text)] shadow-sm' : 'text-[var(--color-text-tertiary)]'}`}>{mode === 'diff' ? 'Git 变更' : '内容'}</button>;
-      })}
+  const renderedPreview = Boolean(activeTab && supportsRenderedPreview(activeTab));
+  const hasText = Boolean(activeTab?.language && !activeTab.previewError && !activeTab.forceAccessAvailable);
+  const modes: FilePreviewView[] = [
+    ...(renderedPreview ? ['preview'] as const : []),
+    'source',
+    ...(gitDiff !== null || showGitDiff ? ['git-diff'] as const : []),
+  ];
+  const previewModeControl = hasText && modes.length > 1 ? (
+    <div className="workspace-preview-viewbar theme-region-section">
+      <div className="workspace-preview-modes" role="group" aria-label={isHtmlPreview ? 'HTML 预览模式' : '文件预览模式'}>
+        {modes.map((mode) => {
+          const disabled = mode === 'preview' && (largeCodePreview || activeTab?.textPreviewTruncated);
+          return <Tooltip key={mode} content="大文件或截断内容请使用源码视图" disabled={isMobile || !disabled} placement="bottom" className="workspace-preview-mode-hint"><button type="button" aria-pressed={previewView === mode} disabled={disabled} onClick={() => onPreviewView(mode)}>
+            {mode === 'preview' ? (isHtmlPreview ? '可视化' : '预览') : mode === 'source' ? (renderedPreview ? '源码' : '内容') : 'Git 变更'}
+          </button></Tooltip>;
+        })}
+      </div>
     </div>
   ) : null;
-  const htmlPreviewModeControl = isHtmlPreview && activeTab ? (
-    <div
-      className={`flex shrink-0 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-0.5 ${isMobile ? 'w-full' : ''}`}
-      role="group"
-      aria-label="HTML 预览模式"
-    >
-      {(['visualization', 'source', ...(gitDiff !== null ? ['git-diff'] as const : [])] as const).map((mode) => {
-        const selected = mode === 'git-diff' ? showGitDiff : !showGitDiff && (largeCodePreview ? mode === 'source' : (activeTab.htmlPreviewMode ?? 'source') === mode);
-        const disabled = largeCodePreview && mode === 'visualization';
-        return (
-          <button
-            key={mode}
-            type="button"
-            aria-pressed={selected}
-            disabled={disabled}
-            onClick={() => {
-              if (mode === 'git-diff') setGitDiffTabId(activeTab.id);
-              else { setGitDiffTabId(null); onHtmlPreviewMode(mode); }
-            }}
-            className={`rounded transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus-ring)] disabled:cursor-not-allowed disabled:opacity-40 ${isMobile ? 'min-h-10 flex-1 px-3 py-2 text-xs' : 'px-2 py-0.5 text-[11px]'} ${selected
-              ? 'bg-[var(--color-bg)] text-[var(--color-text)] shadow-sm'
-              : 'text-[var(--color-text-tertiary)] hover:text-[var(--color-text)]'}`}
-          >
-            {mode === 'visualization' ? '可视化' : mode === 'source' ? '源码' : 'Git 变更'}
-          </button>
-        );
-      })}
-    </div>
-  ) : null;
-  const previewModeControl = htmlPreviewModeControl ?? gitDiffModeControl;
+
+  // Keep the position of each file/view, including while hidden or refreshing.
+  const scrollPositions = useRef(new Map<string, PreviewScrollPosition>());
+  const scrollKey = activeTab ? `${activeTab.id}:${previewView}` : null;
+  useLayoutEffect(() => {
+    const element = htmlPreviewScrollRef.current;
+    if (!element || !scrollKey || activeTab?.loading) return;
+    return attachPreviewScrollRestoration(element, scrollPositions.current.get(scrollKey), (position) => scrollPositions.current.set(scrollKey, position));
+  }, [scrollKey, activeTab?.loading, htmlPreviewScrollRef]);
+  useEffect(() => {
+    const ids = new Set(tabs.map((tab) => tab.id));
+    for (const key of scrollPositions.current.keys()) {
+      if (!ids.has(key.slice(0, key.lastIndexOf(':')))) scrollPositions.current.delete(key);
+    }
+  }, [tabs]);
 
   return (
     <>
       <div className="workspace-preview-tabs">
-        <div className="workspace-preview-tabs__scroll scrollbar-thin">
+        <div ref={tabsScrollRef} className="workspace-preview-tabs__scroll scrollbar-thin" role="group" aria-label="已打开文件">
           {!hasTabs && (
             <div className="flex items-center px-3 text-sm font-medium text-[var(--color-text-secondary)] select-none">文件预览</div>
           )}
           {tabs.map((tab) => (
-            <HoverCard
-              key={tab.id}
-              className="workspace-preview-tab-wrap"
-              disabled={isMobile}
-              placement="bottom"
-              title="文件详情"
-              content={<div className="select-all break-all text-[var(--color-text-secondary)]">{tab.title}</div>}
-            >
+            <div key={tab.id} ref={tab.id === activeTabId ? selectedTabRef : undefined} className="workspace-preview-tab-wrap">
               <div className={`workspace-preview-tab group${tab.id === activeTabId ? ' is-active theme-region-section' : ''}`}>
+                <Tooltip content={getFileName(tab.title)} disabled={isMobile} placement="bottom" className="workspace-preview-tab-label">
                 <button
                   type="button"
+                  aria-pressed={tab.id === activeTabId}
                   onClick={() => onSelectTab(tab.id)}
                   className="workspace-preview-tab__trigger"
                 >
                   <FileTypeIcon filePath={tab.sourcePath || tab.title} size={12} className="shrink-0 text-[var(--color-text-tertiary)]" />
                   <span className="truncate">{tab.title.split(/[\\/]/).pop() || tab.title}</span>
                 </button>
+                </Tooltip>
                 <IconActionButton
                   label="关闭文件"
                   variant="neutral"
@@ -268,7 +283,7 @@ export default function RightPanelContent({
                 </IconActionButton>
                 {tab.id === activeTabId && <div className="workspace-preview-tab__indicator" />}
               </div>
-            </HoverCard>
+            </div>
           ))}
         </div>
         <div className="workspace-preview-panel-actions">
@@ -337,9 +352,15 @@ export default function RightPanelContent({
         ) : (
           <>
             <div className="workspace-preview-context theme-region-section">
-              <FileTypeIcon filePath={activeTab.sourcePath || activeTab.title} size={12} className="shrink-0 text-[var(--color-text-tertiary)]" />
-              <input type="text" readOnly value={activeTab.title} onFocus={(event) => event.currentTarget.select()} className="min-w-0 flex-1 rounded bg-transparent text-xs text-[var(--color-text-secondary)] outline-none selection:bg-[var(--color-sidebar-active)] focus-visible:ring-2 focus-visible:ring-[var(--color-focus-ring)]" aria-label="文件路径" />
-              {!isMobile && previewModeControl}
+              <div className="workspace-preview-identity">
+                <Tooltip content={activeTab.title} disabled={isMobile} placement="bottom" className="workspace-preview-path-hint">
+                <input type="text" readOnly value={activeTab.title} onFocus={(event) => event.currentTarget.select()} className="workspace-preview-path" aria-label="文件路径" />
+                </Tooltip>
+              </div>
+              <div className="workspace-preview-file-actions">
+              <IconActionButton label="刷新文件" variant="neutral" tooltip={!isMobile} onClick={() => onRefresh(activeTab)}>
+                <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M13 6a5.2 5.2 0 10.2 3M13 2.5V6H9.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" /></svg>
+              </IconActionButton>
               <IconActionButton label={copiedPath ? '路径已复制' : '复制文件路径'} variant="neutral" tooltip={!isMobile} onClick={() => onCopyPath(activeTab.title)} className={isMobile ? 'h-10 w-10' : 'h-7 w-7'}>
                 {copiedPath ? (
                   <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 8.5l3 3 7-7" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
@@ -347,11 +368,9 @@ export default function RightPanelContent({
                   <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="5" y="5" width="8" height="8" rx="1.5" stroke="currentColor" strokeWidth="1.3"/><path d="M3 10V4.5A1.5 1.5 0 014.5 3H10" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"/></svg>
                 )}
               </IconActionButton>
-              <HoverCard disabled={isMobile} placement="bottom" title="文件信息" content={<FileMetadataContent filePath={activeTab.sourcePath || activeTab.title} metadata={activeTab.fileMetadata} loading={activeTab.fileMetadataLoading} error={activeTab.forceAccessAvailable ? '临时授权后可查看文件信息' : activeTab.fileMetadataError} copiedPath={copiedPath} onCopyPath={onCopyPath} />}>
-                <IconActionButton label="文件信息" variant="neutral" tooltip={false} overlayIgnore={false} onClick={() => setMobileInfo('file-info')} className={isMobile ? 'h-10 w-10' : 'h-7 w-7'}>
+                <IconActionButton label="文件信息" variant="neutral" tooltip={!isMobile} onClick={() => setMobileInfo('file-info')} className={isMobile ? 'h-10 w-10' : 'h-7 w-7'}>
                   <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true" data-icon="file-metadata-info"><circle cx="8" cy="8" r="5.5" stroke="currentColor" strokeWidth="1.3"/><path d="M8 7v4M8 4.8v.2" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/></svg>
                 </IconActionButton>
-              </HoverCard>
               {activeTab.forceAccessAvailable ? (
                 <div className="flex shrink-0 items-center gap-1">
                   {isMobile && (
@@ -359,21 +378,22 @@ export default function RightPanelContent({
                       <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true" data-icon="file-access-info"><path d="M8 2.2l4.5 1.7v3.4c0 2.8-1.8 5.1-4.5 6.5-2.7-1.4-4.5-3.7-4.5-6.5V3.9L8 2.2z" stroke="currentColor" strokeWidth="1.25" strokeLinejoin="round"/><path d="M6.5 8l1 1 2-2" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round"/></svg>
                     </IconActionButton>
                   )}
-                  <HoverCard disabled={isMobile} placement="bottom" title="临时文件授权" content={<div className="text-[var(--color-text-secondary)]">权限仅适用于当前文件和本次打开，关闭标签后会撤销。</div>}>
+                  <Tooltip disabled={isMobile} placement="bottom" content="权限仅适用于当前文件和本次打开，关闭标签后会撤销。">
                     <button type="button" onClick={() => onForceAccess(activeTab)} disabled={forceLoadingTabId === activeTab.id} className={`shrink-0 rounded px-2 text-xs text-[var(--color-status-warning)] transition-colors hover:bg-[var(--color-warning-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus-ring)] disabled:opacity-50 ${isMobile ? 'min-h-10 py-2' : 'py-1'}`}>
                       {forceLoadingTabId === activeTab.id ? '授权中…' : '强制访问'}
                     </button>
-                  </HoverCard>
+                  </Tooltip>
                 </div>
               ) : (
-                <IconActionButton label="下载文件" variant="neutral" tooltip={!isMobile} onClick={() => onDownload(activeTab)} className={isMobile ? 'h-10 w-10' : 'h-7 w-7'}>
+                <IconActionButton label={downloading ? '正在下载文件' : '下载文件'} disabled={downloading || activeTab.loading} aria-busy={downloading} variant="neutral" tooltip={!isMobile} onClick={() => onDownload(activeTab)} className={isMobile ? 'h-10 w-10' : 'h-7 w-7'}>
                   <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 2v8m0 0L5 7m3 3l3-3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/><path d="M3 13h10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
                 </IconActionButton>
               )}
+              </div>
             </div>
-            {isMobile && previewModeControl && <div className="theme-region-section shrink-0 border-b border-[var(--color-border)] px-3 py-2">{previewModeControl}</div>}
-            {gitDiffError?.tabId === activeTab.id && <div className="workspace-preview-notice is-warning" role="status">Git 变更不可用：<FailureNotice error={gitDiffError.message} /></div>}
-            <div ref={htmlPreviewScrollRef} className="flex-1 min-h-0 overflow-auto">
+            {previewModeControl}
+            {!showGitDiff && gitDiffError?.tabId === activeTab.id && <div className="workspace-preview-git-status" role="status">Git 变更暂不可用<button type="button" onClick={() => onRefresh(activeTab)}>重试</button></div>}
+            <div ref={htmlPreviewScrollRef} className="workspace-preview-viewport flex-1 min-h-0 overflow-auto" role="region" aria-label="文件内容" tabIndex={0}>
               {activeTab.textPreviewTruncated && !activeTab.previewError && <div className="workspace-preview-notice is-warning is-compact" role="status">文件 {formatFileMetadataSize(activeTab.contentSize ?? activeTab.fileMetadata?.size ?? NaN)}，超过 3 MB；仅显示开头（最多 100 行 / 64 KB）。</div>}
               {activeTab.previewError ? (
                 <PreviewState
@@ -381,8 +401,15 @@ export default function RightPanelContent({
                   title="文件预览失败"
                   description={activeTab.previewError}
                 />
+              ) : showGitDiff && gitDiffError?.tabId === activeTab.id ? (
+                <PreviewState tone="danger" title="Git 变更不可用" description={gitDiffError.message} action={<button type="button" className="workspace-preview-state__button" onClick={() => onRefresh(activeTab)}>刷新重试</button>} />
+              ) : showGitDiff && gitDiffResult?.tabId !== activeTab.id ? (
+                <PreviewState tone="loading" title="正在读取 Git 变更" />
+              ) : showGitDiff && gitDiff === null ? (
+                <PreviewState title="相对 HEAD 没有变更" action={<button type="button" className="workspace-preview-state__button" onClick={() => onPreviewView(renderedPreview ? 'preview' : 'source')}>返回文件内容</button>} />
               ) : showGitDiff ? (
                 <div className="py-2 font-mono text-xs leading-5">
+                  <div className="workspace-preview-diff-caption">当前文件相对 HEAD 的变更</div>
                   {gitDiffLines.length > 4000 && <div className="workspace-preview-notice is-info">仅显示前 4000 行。</div>}
                   {gitDiffLines.slice(0, 4000).map((line, index) => {
                     const hunk = line[0] === '@';
@@ -390,9 +417,9 @@ export default function RightPanelContent({
                   })}
                 </div>
               ) : activeTab.documentPreview ? (
-                <Suspense fallback={<PreviewState tone="loading" title="正在加载文档预览" />}>
+              <Suspense fallback={<PreviewState tone="loading" title="正在加载文档预览" />}>
                   {activeTab.documentPreview.type === 'pdf-document' ? (
-                    <PdfDocumentPreview document={activeTab.documentPreview} onDownload={() => onDownload(activeTab)} />
+                  <PdfDocumentPreview document={activeTab.documentPreview} downloading={downloading} onDownload={() => onDownload(activeTab)} />
                   ) : activeTab.documentPreview.type === 'word-document' ? (
                     <WordDocumentPreview document={activeTab.documentPreview} />
                   ) : (
@@ -413,6 +440,10 @@ export default function RightPanelContent({
                       {compressingTabId === activeTab.id ? '压缩中…' : '压缩后预览'}
                   </button>}
                 />
+              ) : previewView === 'preview' && isMarkdownPreview(activeTab) ? (
+                <Suspense fallback={<PreviewState tone="loading" title="正在排版 Markdown" />}>
+                  <MarkdownFilePreview content={activeTab.content} sourcePath={activeTab.sourcePath || activeTab.title} />
+                </Suspense>
               ) : htmlVisualizationEnabled ? (
                 <div className="min-h-full bg-transparent">
                   {!activeTab.htmlPreviewScriptsEnabled && (
@@ -421,7 +452,7 @@ export default function RightPanelContent({
                       <button type="button" onClick={onRequestHtmlScripts} className="min-h-10 shrink-0 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 font-medium text-[var(--color-text)] transition-colors hover:bg-[var(--color-bg-tertiary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus-ring)]">启用脚本</button>
                     </div>
                   )}
-                  <iframe ref={htmlIframeRef} className="block min-h-[20rem] w-full border-0 bg-transparent" sandbox="allow-scripts" referrerPolicy="no-referrer" srcDoc={sandboxedHtmlDocument} style={{ height: `${htmlPreviewHeight}px` }} title={`HTML 可视化：${activeTab.title}`} />
+                  <iframe key={activeTab.id} ref={htmlIframeRef} className="block min-h-[20rem] w-full border-0 bg-transparent" sandbox="allow-scripts" referrerPolicy="no-referrer" srcDoc={sandboxedHtmlDocument} style={{ height: `${htmlPreviewHeight}px` }} aria-label={`HTML 可视化：${activeTab.title}`} />
                 </div>
               ) : activeTab.language ? (
                 <div className="right-panel-code-preview markdown-body">

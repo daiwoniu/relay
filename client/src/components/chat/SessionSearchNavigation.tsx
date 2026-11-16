@@ -1,3 +1,4 @@
+import Tooltip from '../ui/Tooltip';
 import IconActionButton from '../ui/IconActionButton';
 import { getSearchNavigationPosition } from './session-search-navigation';
 
@@ -21,7 +22,7 @@ export default function SessionSearchNavigation({
   const position = getSearchNavigationPosition(currentIndex, loadedMatchCount, totalMatches);
   const title = truncated ? `仅可导航最近 ${loadedMatchCount} 条匹配消息` : '搜索匹配消息';
   return (
-    <div className="flex shrink-0 items-center gap-0.5 rounded-lg bg-[var(--color-bg-secondary)] px-1 py-0.5" title={title} aria-label={title}>
+    <Tooltip content={title} asChild><div className="flex shrink-0 items-center gap-0.5 rounded-lg bg-[var(--color-bg-secondary)] px-1 py-0.5" aria-label={title}>
       <span className="min-w-[3.25rem] px-1 text-center text-xs tabular-nums text-[var(--color-text-secondary)]">
         {position}/{totalMatches}
       </span>
@@ -34,6 +35,6 @@ export default function SessionSearchNavigation({
       <IconActionButton label="关闭消息搜索" tooltipPlacement="bottom" className="h-7 w-7" onClick={onClose}>
         <span aria-hidden="true">×</span>
       </IconActionButton>
-    </div>
+    </div></Tooltip>
   );
 }

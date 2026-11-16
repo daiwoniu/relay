@@ -1,5 +1,6 @@
 import type { FileMetadataResult, FileReadResult } from '../../api/filesystem';
 import { readFileMetadata, readPdfPreviewSource } from '../../api/filesystem';
+import { ApiError } from '../../api/client';
 import type { RightPanelTab } from '../../stores/chat';
 
 export type FilePreviewUpdate = Partial<Omit<RightPanelTab, 'id' | 'title'>>;
@@ -30,7 +31,14 @@ export async function buildFileMetadataUpdate(
     return { fileMetadata, fileMetadataLoading: false, fileMetadataError: undefined };
   } catch (error) {
     if (signal?.aborted) throw error;
-    return { fileMetadata: undefined, fileMetadataLoading: false, fileMetadataError: '文件信息加载失败' };
+    return {
+      fileMetadata: undefined,
+      fileMetadataLoading: false,
+      fileMetadataError: {
+        message: error instanceof Error && error.message.trim() ? error.message : '文件信息加载失败',
+        ...(error instanceof ApiError ? { status: error.status, ...(error.data?.code ? { code: error.data.code } : {}) } : {}),
+      },
+    };
   }
 }
 

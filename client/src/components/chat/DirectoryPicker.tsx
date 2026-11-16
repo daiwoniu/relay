@@ -1,3 +1,4 @@
+import Tooltip from '../ui/Tooltip';
 import FailureNotice from '../ui/FailureNotice';
 import { useState, useEffect, useCallback, type FormEvent, type KeyboardEvent } from 'react';
 import { browseDirectory, createDirectory, type DirectoryEntry } from '../../api/filesystem';
@@ -130,7 +131,7 @@ export default function DirectoryPicker({ initialPath, onSelect, onCancel }: Pro
       widthClassName="w-[560px]"
       headerActions={
         <>
-          <button
+          <Tooltip content="新建文件夹" asChild><button
             type="button"
             onClick={() => {
               setIsCreatingDirectory(true);
@@ -138,18 +139,17 @@ export default function DirectoryPicker({ initialPath, onSelect, onCancel }: Pro
             }}
             disabled={!currentPath || Boolean(error) || loading || creating}
             aria-label="新建文件夹"
-            title="新建文件夹"
             className="inline-flex size-8 items-center justify-center rounded-lg text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus-ring)] disabled:cursor-not-allowed disabled:opacity-50"
           >
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
               <path d="M2 5a1 1 0 011-1h3l1.5 1.5H13a1 1 0 011 1V12a1 1 0 01-1 1H3a1 1 0 01-1-1V5z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
               <path d="M8 7.5v3M6.5 9h3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
             </svg>
-          </button>
+          </button></Tooltip>
           <FileBrowserSearchButton open={searchOpen} onToggle={toggleSearch} disabled={loading} />
         </>
       }
-      footer={<><span className="min-w-0 truncate text-xs text-[var(--color-text-tertiary)]" title={currentPath || undefined}>{currentPath ? `将选择：${currentPath}` : '单击进入目录'}</span><div className="flex shrink-0 items-center gap-2"><button onClick={onCancel} className="rounded-lg px-3 py-1.5 text-sm text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-hover)]">取消</button><button onClick={confirmSelection} disabled={!currentPath || Boolean(error) || loading || creating} className="rounded-lg bg-[var(--color-primary)] px-3 py-1.5 text-sm text-[var(--theme-on-primary)] disabled:cursor-not-allowed disabled:opacity-40">选择当前目录</button></div></>}
+      footer={<><Tooltip content={currentPath || undefined} asChild><span className="min-w-0 truncate text-xs text-[var(--color-text-tertiary)]">{currentPath ? `将选择：${currentPath}` : '单击进入目录'}</span></Tooltip><div className="flex shrink-0 items-center gap-2"><button onClick={onCancel} className="rounded-lg px-3 py-1.5 text-sm text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-hover)]">取消</button><button onClick={confirmSelection} disabled={!currentPath || Boolean(error) || loading || creating} className="rounded-lg bg-[var(--color-primary)] px-3 py-1.5 text-sm text-[var(--theme-on-primary)] disabled:cursor-not-allowed disabled:opacity-40">选择当前目录</button></div></>}
     >
         {isCreatingDirectory && (
           <form onSubmit={handleCreateDirectory} className="border-b border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3">

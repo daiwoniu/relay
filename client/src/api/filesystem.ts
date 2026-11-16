@@ -94,6 +94,14 @@ export function readFile(path: string, accessToken?: string, options: FileReques
   return requestJson(`/api/filesystem/read?${query.toString()}`, { signal: options.signal, timeoutMs: options.timeoutMs ?? 10_000 });
 }
 
+export function downloadFile(path: string, accessToken?: string, options: FileRequestOptions = {}): Promise<Blob> {
+  const query = new URLSearchParams({ path });
+  if (accessToken) query.set('accessToken', accessToken);
+  return requestBlob(`/api/filesystem/download?${query.toString()}`, {
+    signal: options.signal, timeoutMs: options.timeoutMs ?? 120_000, redirect: 'error',
+  });
+}
+
 export function readFileMetadata(path: string, accessToken?: string, options: FileRequestOptions = {}): Promise<FileMetadataResult> {
   const query = new URLSearchParams({ path });
   if (accessToken) query.set('accessToken', accessToken);

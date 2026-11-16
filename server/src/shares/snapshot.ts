@@ -36,6 +36,8 @@ const SAFE_PROCESS_DETAIL_KEYS = new Set([
   'agentName', 'agentPath', 'exitCode', 'durationMs', 'duration', 'message', 'reason',
   'fromModel', 'toModel', 'range', 'files', 'fileChanges', 'changes', 'commandActions',
   'planCount', 'plan', 'explanation',
+  'interactionKind', 'resolvedAction', 'decisionSource', 'effectiveScope', 'decidedAt',
+  'firstObservedAt', 'startedObservedAt', 'completedObservedAt',
 ]);
 
 const SAFE_NESTED_DETAIL_KEYS = new Set([
@@ -114,6 +116,7 @@ export function presentSharedMessage(message: Message, includeProcess: boolean, 
   const processTimeline = includeProcess ? sanitizeTimeline(presented.processTimeline, processItems) : undefined;
   return {
     id: presented.id,
+    ...(message.turn_id ? { turnId: message.turn_id } : {}),
     role: presented.role,
     content: presented.role === 'assistant'
       ? sanitizeCodexFileDirectives(presented.content)
@@ -164,7 +167,7 @@ export function buildShareSnapshot(
     return snapshotMessage ? [snapshotMessage] : [];
   });
   if (snapshotMessages.length === 0) throw new Error('没有可分享的消息');
-  return ShareSnapshotV1Schema.parse({ version: 1, sourceEngine: request.sourceEngine ?? 'codex', messages: snapshotMessages });
+  return ShareSnapshotV1Schema.parse({ version: 1, scope: request.scope, includeProcess: request.includeProcess, sourceEngine: request.sourceEngine ?? 'codex', messages: snapshotMessages });
 }
 
 export function readShareSnapshot(snapshotVersion: number, snapshotJson: string): ShareSnapshotV1 {

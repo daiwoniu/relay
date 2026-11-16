@@ -59,7 +59,7 @@ test('代码预览左侧不保留外层空白以便行号立即固定', () => {
 test('代码预览横向滚动由面板内容视口统一承载', () => {
   const styles = readStyleSource();
 
-  assert.match(panel, /className="flex-1 min-h-0 overflow-auto"/);
+  assert.match(panel, /className="workspace-preview-viewport flex-1 min-h-0 overflow-auto"/);
   assert.match(styles, /\.right-panel-code-preview\s*\{[^}]*width: max-content;/s);
   assert.match(styles, /\.right-panel-code-preview pre\s*\{[^}]*overflow: visible;/s);
 });

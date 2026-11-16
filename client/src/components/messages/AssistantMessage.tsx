@@ -9,6 +9,7 @@ import { shouldDimShareMessage } from '../sharing/share-selection';
 import ProcessSteps from './ProcessSteps';
 import { hasPendingInteraction } from './process-panel-state';
 import CopyIcon from '../icons/CopyIcon';
+import { MenuIcon } from '../icons/MenuIcon';
 import type { ChangedFileDto, ExecutionStage, MessageModelInfoDto, MessageOutcome, ProcessTimelineEntryDto, TokenUsageDto } from '../../generated/relay-contracts';
 import { getMessageStatusPresentation, shouldExpandProcessWithoutFinalReply, type MessageVisualState } from './message-status';
 import ExecutionStatusIcon from '../ui/ExecutionStatusIcon';
@@ -93,6 +94,7 @@ interface Props {
   readOnly?: boolean;
   full?: boolean;
   onShare?: () => void;
+  onSelectMessagesShare?: () => void;
   onFork?: () => void;
   forkPending?: boolean;
   selectionMode?: boolean;
@@ -285,7 +287,7 @@ function MarkdownLink({ href, children, projectPath, readOnly = false }: { href:
     const showText = linkText === fullPath || linkText.includes('\\') || linkText.includes('/')
       ? truncateDisplayPath(linkText)
       : linkText || displayPath;
-    if (readOnly) return <span className="md-link-file cursor-default" title={fullPath}>{showText}</span>;
+    if (readOnly) return <Tooltip content={fullPath} asChild><span className="md-link-file cursor-default">{showText}</span></Tooltip>;
     return (
       <Tooltip content={`点击预览文件：${fullPath}`} inline>
         <span
@@ -371,16 +373,16 @@ function createMarkdownComponents(readOnly: boolean, projectPath?: string) { ret
   a({ href, children }: any) {
     return <MarkdownLink href={href || ''} projectPath={projectPath} readOnly={readOnly}>{children}</MarkdownLink>;
   },
-  img({ src, alt, node: _node, ...props }: any) {
+  img({ src, alt, title, node: _node, ...props }: any) {
     if (shouldRenderMarkdownImageAsFileLink(src)) {
       const label = alt?.trim() || normalizeFilePath(src) || '图片文件';
       return <MarkdownLink href={src} readOnly={readOnly}>{label}</MarkdownLink>;
     }
     if (readOnly) {
       const label = alt?.trim() || src || '图片';
-      return <span className="md-link-file cursor-default" title={src || undefined}>[图片：{label}]</span>;
+      return <Tooltip content={src || undefined} asChild><span className="md-link-file cursor-default">[图片：{label} · 未包含图片内容]</span></Tooltip>;
     }
-    return <img {...props} src={src} alt={alt || ''} />;
+    return <Tooltip content={title} asChild><img {...props} src={src} alt={alt || ''} /></Tooltip>;
   },
   p({ children, node: _node, ...props }: any) {
     return <p {...props}>{linkifyTextChildren(children, readOnly)}</p>;
@@ -449,7 +451,7 @@ const MarkdownContent = memo(function MarkdownContent({ content, projectPath, re
   );
 });
 
-function AssistantMessage({ historicalRecords, historicalRecordCount, sessionId, content, isStreaming, isStopping, isAwaitingAction, pendingActionKind, isRecovering, duration, startTime, createdAt, items, processContent, processTimeline, changedFiles, changedFilesIncomplete = false, hasDetails = false, detailsLoaded = false, processItemCount = 0, asyncQuestionIds, processNarrativeCount = 0, changedFileCount = 0, onLoadDetails, deferMarkdown = false, optimizeContentVisibility = false, projectPath, mobile = false, streamingSteps, stopped, outcome, executionStage, waitingStage, errorCode, errorMessage, tokenUsage, modelInfo, onInteractionRespond, onAsyncQuestionAnswer, answeredAsyncQuestionIds, asyncQuestionAnswers, canAnswerAsyncQuestion, readOnly = false, full, onShare, onFork, forkPending = false, selectionMode = false, selected = false, selectable = true, onToggleSelection, messageId, searchTarget = false, searchTargetScope, searchTargetItemId, onResync, flowContext }: Props) {
+function AssistantMessage({ historicalRecords, historicalRecordCount, sessionId, content, isStreaming, isStopping, isAwaitingAction, pendingActionKind, isRecovering, duration, startTime, createdAt, items, processContent, processTimeline, changedFiles, changedFilesIncomplete = false, hasDetails = false, detailsLoaded = false, processItemCount = 0, asyncQuestionIds, processNarrativeCount = 0, changedFileCount = 0, onLoadDetails, deferMarkdown = false, optimizeContentVisibility = false, projectPath, mobile = false, streamingSteps, stopped, outcome, executionStage, waitingStage, errorCode, errorMessage, tokenUsage, modelInfo, onInteractionRespond, onAsyncQuestionAnswer, answeredAsyncQuestionIds, asyncQuestionAnswers, canAnswerAsyncQuestion, readOnly = false, full, onShare, onSelectMessagesShare, onFork, forkPending = false, selectionMode = false, selected = false, selectable = true, onToggleSelection, messageId, searchTarget = false, searchTargetScope, searchTargetItemId, onResync, flowContext }: Props) {
   const [copied, setCopied] = useState(false);
   const [showSource, setShowSource] = useState(false);
   const [detailsStatus, setDetailsStatus] = useState<'idle' | 'loading' | 'error'>('idle');
@@ -481,7 +483,7 @@ function AssistantMessage({ historicalRecords, historicalRecordCount, sessionId,
     : null;
   const processSteps = isStreaming ? streamingSteps || [] : items || flowContext?.steps || [];
   const effectiveProcessTimeline = processTimeline || flowContext?.timeline;
-  const hasVisibleProcess = hasVisibleProcessPresentation(processContent, processSteps);
+  const hasVisibleProcess = hasVisibleProcessPresentation(processContent, processSteps, effectiveProcessTimeline);
   const hasPriorityProcessItem = hasPendingInteraction(processSteps.filter((step) => !answeredAsyncQuestionIds?.has(step.id)));
   const displayContent = visualState === 'failed' && content === errorMessage ? '' : content;
   const safeToRetry = isMessageSafeToRetry({
@@ -535,19 +537,23 @@ function AssistantMessage({ historicalRecords, historicalRecordCount, sessionId,
       key: 'source',
       label: showSource ? '渲染显示' : '源码显示',
       onClick: () => setShowSource(!showSource),
-      icon: showSource ? (
-        <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M2 4l4 4-4 4M8 12h6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
-      ) : (
-        <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M5 4L1 8l4 4M11 4l4 4-4 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
-      ),
+      icon: <MenuIcon type={showSource ? 'render' : 'source'} />,
     });
   }
   if (!readOnly && onShare) {
     messageActionItems.push({
       key: 'share',
-      label: '分享',
+      label: '单消息分享',
       onClick: onShare,
-      icon: <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M6 4.5L8 2l2 2.5M8 2v8M3 7v6h10V7" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/></svg>,
+      icon: <MenuIcon type="share" />,
+    });
+  }
+  if (!readOnly && onSelectMessagesShare) {
+    messageActionItems.push({
+      key: 'share-selection',
+      label: '选择消息分享',
+      onClick: onSelectMessagesShare,
+      icon: <MenuIcon type="select" />,
     });
   }
   if (!readOnly && onFork) {
@@ -557,7 +563,7 @@ function AssistantMessage({ historicalRecords, historicalRecordCount, sessionId,
       onClick: onFork,
       disabled: forkPending,
       separatorBefore: messageActionItems.length > 0,
-      icon: <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M4 3v3.5A2.5 2.5 0 006.5 9H9M9 6l3 3-3 3M4 6.5V13" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/></svg>,
+      icon: <MenuIcon type="fork" />,
     });
   }
   const showDirectCopy = Boolean(displayContent) && (!mobile || readOnly);
@@ -598,7 +604,8 @@ function AssistantMessage({ historicalRecords, historicalRecordCount, sessionId,
         {(hasVisibleProcess || historicalRecords || flowContext) && (
           <ProcessSteps
             key={flowContext?.id || 'ordinary-process'}
-            flowContext={readOnly || selectionMode ? undefined : flowContext}
+            flowContext={selectionMode ? undefined : readOnly && !flowContext?.readOnly ? undefined : flowContext}
+            readOnly={readOnly}
             flowDetailsPending={!isStreaming && hasDetails && !hasLoadedDetails}
             onLoadFlowDetails={loadDetails}
             flowFinalContent={content}
@@ -713,7 +720,7 @@ function AssistantMessage({ historicalRecords, historicalRecordCount, sessionId,
             )}
             {modelInfo && <>
               {settledDurationPresentation && <span className="message-meta__separator shrink-0" aria-hidden="true">·</span>}
-              <MessageModelInfo modelInfo={modelInfo} mobile={mobile} />
+              <MessageModelInfo modelInfo={modelInfo} mobile={mobile} readOnly={readOnly} />
             </>}
             {showMessageActions && <div
               className="message-actions message-actions--compact flex items-center"

@@ -76,6 +76,7 @@ interface Props {
   selectedMessageIds?: Set<string>;
   onToggleShareSelection?: (messageId: string) => void;
   onShareMessage?: (messageId: string) => void;
+  onSelectMessagesShare?: (messageId: string) => void;
   onForkMessage?: (messageId: string) => void;
   forkingMessageId?: string | null;
   searchTargetMessageId?: string | null;
@@ -91,7 +92,7 @@ interface Props {
   onLoadMessageDetails?: (messageId: string) => Promise<void>;
 }
 
-export default function MessageList({ sessionId, messages, hasOlderMessages, onLoadOlder, streamingContent, streamingProcessContent, isWaiting, waitingStage, isStreaming, isStopping, isAwaitingAction, pendingActionKind, isRecovering, errorMessage, operationErrorMessage, streamingStartTime, streamingSteps, streamingBlocks, streamingProcessTimeline, streamingTokenUsage, onInteractionRespond, onAsyncQuestionAnswer, canAnswerAsyncQuestion, shareSelectionMode = false, selectableMessageIds = new Set(), selectedMessageIds = new Set(), onToggleShareSelection, onShareMessage, onForkMessage, forkingMessageId = null, searchTargetMessageId = null, searchQuery = '', searchTargetScope = 'message', searchTargetItemId, projectPath, mobile = false, wideLayout = false, onResync, latestMessagesRefreshStatus = 'idle', onRetryLatestMessages, onLoadMessageDetails, engine, projectName, followups = EMPTY_FOLLOWUPS, knownProjects }: Props) {
+export default function MessageList({ sessionId, messages, hasOlderMessages, onLoadOlder, streamingContent, streamingProcessContent, isWaiting, waitingStage, isStreaming, isStopping, isAwaitingAction, pendingActionKind, isRecovering, errorMessage, operationErrorMessage, streamingStartTime, streamingSteps, streamingBlocks, streamingProcessTimeline, streamingTokenUsage, onInteractionRespond, onAsyncQuestionAnswer, canAnswerAsyncQuestion, shareSelectionMode = false, selectableMessageIds = new Set(), selectedMessageIds = new Set(), onToggleShareSelection, onShareMessage, onSelectMessagesShare, onForkMessage, forkingMessageId = null, searchTargetMessageId = null, searchQuery = '', searchTargetScope = 'message', searchTargetItemId, projectPath, mobile = false, wideLayout = false, onResync, latestMessagesRefreshStatus = 'idle', onRetryLatestMessages, onLoadMessageDetails, engine, projectName, followups = EMPTY_FOLLOWUPS, knownProjects }: Props) {
   const answeredAsyncQuestionIds = useMemo(() => new Set(messages.flatMap((message) => message.replyToAsyncQuestionId ? [message.replyToAsyncQuestionId] : [])), [messages]);
   const asyncQuestionAnswers = useMemo(() => new Map(messages.flatMap((message) => message.replyToAsyncQuestionId
     ? [[message.replyToAsyncQuestionId, message.content] as const]
@@ -512,6 +513,7 @@ export default function MessageList({ sessionId, messages, hasOlderMessages, onL
                 selected={selectedMessageIds.has(msg.id)}
                 onToggleSelection={() => onToggleShareSelection?.(msg.id)}
                 onShare={!shareSelectionMode && selectableMessageIds.has(msg.id) ? () => onShareMessage?.(msg.id) : undefined}
+                onSelectMessagesShare={!shareSelectionMode && selectableMessageIds.has(msg.id) && onSelectMessagesShare ? () => onSelectMessagesShare(msg.id) : undefined}
                 onFork={!shareSelectionMode && onForkMessage && msg.turn_id && !msg.stopped && msg.outcome === 'completed'
                   ? () => onForkMessage(msg.id)
                   : undefined}

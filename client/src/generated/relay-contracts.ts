@@ -1149,6 +1149,7 @@ export interface WorkspaceConsoleTaskDto {
   taskDocumentPath: string | null;
   status: string | null;
   description?: string | null;
+  feishuPrimaryWorkItemId?: string | null;
   horizon: string | null;
   nextAction: string | null;
   waitingOn: string | null;
@@ -1323,6 +1324,7 @@ export interface WorkspaceConsoleDashboardDto {
     taskDocumentPath: string | null;
     status: string | null;
     description?: string | null;
+    feishuPrimaryWorkItemId?: string | null;
     horizon: string | null;
     nextAction: string | null;
     waitingOn: string | null;
@@ -1447,6 +1449,7 @@ export type CreateShareRequest = {
 
 export interface ShareSnapshotMessage {
   id: string;
+  turnId?: string;
   role: 'user' | 'assistant';
   content: string;
   createdAt: number;
@@ -1463,6 +1466,8 @@ export interface ShareSnapshotMessage {
 
 export interface ShareSnapshotV1 {
   version: 1;
+  scope?: ShareScope;
+  includeProcess?: boolean;
   sourceEngine?: EngineId;
   messages: ShareSnapshotMessage[];
 }
@@ -1476,6 +1481,7 @@ export interface ShareListItemDto {
   includeProcess: boolean;
   sourceSessionId: string | null;
   sourceSessionTitle: string | null;
+  sourceState?: 'available' | 'deleted' | 'unavailable';
   sourceEngine: EngineId;
   createdAt: number;
   expiresAt: number | null;

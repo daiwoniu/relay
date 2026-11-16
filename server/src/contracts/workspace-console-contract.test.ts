@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { WorkspaceConsoleDashboardDtoSchema, WorkspaceConsoleResponsibilityDtoSchema, WorkspaceSourceMetaDtoSchema } from './dto.js';
+import { WorkspaceConsoleDashboardDtoSchema, WorkspaceConsoleResponsibilityDtoSchema, WorkspaceSourceMetaDtoSchema, WorkspaceConsoleTaskDtoSchema } from './dto.js';
 
 test('workspace console contracts reject credentials and retain Project responsibility semantics', () => {
   const dashboard = { workspacePath: 'D:/demo/workspace', capturedAt: 1, registryGeneratedAt: null, counts: { total: 0, completed: 0, active: 0, runs: 0, sessions: 0 }, tasks: [], runs: [], unmatchedRuns: [], sessions: [], unlinkedSessions: [], errors: [], sourceAvailable: { registry: true, runs: true, sessions: true, links: true, activity: true } };
@@ -23,4 +23,14 @@ test('workspace source metadata describes a failed persisted snapshot without ex
   const meta = { state: 'failed_snapshot', lastSuccessAt: 1000, lastAttemptAt: 2000, error: '飞书暂时不可用' };
   assert.equal(WorkspaceSourceMetaDtoSchema.safeParse(meta).success, true);
   assert.equal(WorkspaceSourceMetaDtoSchema.safeParse({ ...meta, token: 'secret' }).success, false);
+});
+
+test('primary work item is optional for persisted old task snapshots', () => {
+  const task = { id: 'task', title: null, taskPath: null, taskDocumentPath: null, status: 'done', horizon: null,
+    nextAction: null, waitingOn: null, statusBasis: null, verification: null, lastVerifiedAt: null,
+    startedAt: null, completedAt: null, feishuWorkItemIds: ['9001000001'] };
+  assert(WorkspaceConsoleTaskDtoSchema.safeParse(task).success);
+  assert(WorkspaceConsoleTaskDtoSchema.safeParse({ ...task, feishuPrimaryWorkItemId: null }).success);
+  assert.equal(WorkspaceConsoleTaskDtoSchema.parse({ ...task, feishuPrimaryWorkItemId: '9001000001' }).feishuPrimaryWorkItemId, '9001000001');
+  assert.equal(WorkspaceConsoleTaskDtoSchema.safeParse({ ...task, feishuPrimaryWorkItemId: 'unknown' }).success, false);
 });

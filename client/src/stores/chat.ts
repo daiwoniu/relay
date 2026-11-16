@@ -86,8 +86,9 @@ export interface RightPanelTab {
   documentPreview?: RightPanelDocumentPreview;
   fileMetadata?: FileMetadataResult;
   fileMetadataLoading?: boolean;
-  fileMetadataError?: string;
+  fileMetadataError?: string | { message: string; code?: string; status?: number };
   htmlPreviewMode?: HtmlPreviewMode;
+  previewView?: 'preview' | 'source' | 'git-diff';
   htmlPreviewScriptsEnabled?: boolean;
 }
 

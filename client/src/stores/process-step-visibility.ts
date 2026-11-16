@@ -1,4 +1,4 @@
-import type { ProcessStep } from './chat';
+import type { ProcessStep, ProcessTimelineEntry } from './chat';
 
 const VISIBLE_TYPES = new Set([
   'commandExecution', 'webSearch', 'fileChange', 'reasoning',
@@ -99,6 +99,8 @@ export function hasVisibleProcessStep(step: ProcessStep): boolean {
 export function hasVisibleProcessPresentation(
   processContent?: string,
   steps: ProcessStep[] = [],
+  timeline: ProcessTimelineEntry[] = [],
 ): boolean {
-  return Boolean(processContent?.trim()) || steps.some(hasVisibleProcessStep);
+  return Boolean(processContent?.trim()) || steps.some(hasVisibleProcessStep)
+    || timeline.some(entry => entry.type === 'narrative' && Boolean(entry.content?.trim()));
 }

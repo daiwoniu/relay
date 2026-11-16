@@ -1,4 +1,5 @@
 import type { WorkspaceConsoleDashboardDto } from '../../generated/relay-contracts';
+import { primaryFeishuWorkItemId } from './workspace-task-identity.ts';
 
 const KEY = 'relay:workspace-task-launch';
 const MAX_AGE_MS = 30 * 60 * 1000;
@@ -43,10 +44,13 @@ export function clearWorkspaceTaskLaunch(storage: Pick<Storage, 'removeItem'>): 
 
 export function buildWorkspaceTaskDraft(task: {
   id: string; title: string | null; description?: string | null; statusBasis: string | null; nextAction: string | null; taskDocumentPath: string | null;
+  feishuPrimaryWorkItemId?: string | null; feishuWorkItemIds?: readonly string[];
 }, handoffSummary?: string | null): string {
+  const primary = primaryFeishuWorkItemId(task);
   const facts = [
     `请处理任务「${task.title || task.id}」（ID：${task.id}）。先核查实际台账与工作区状态，再确定下一步。`,
     ...(task.taskDocumentPath ? [`本地任务说明：${task.taskDocumentPath}`] : []),
+    ...(primary ? [`台账登记的主飞书工作项：${primary}。仅供定位，请核对实际责任及其他关联项。`] : []),
   ];
   if (handoffSummary?.trim()) facts.push(`上一会话交接摘要（仅供核查）：\n${handoffSummary.trim()}`);
   return facts.join('\n\n');

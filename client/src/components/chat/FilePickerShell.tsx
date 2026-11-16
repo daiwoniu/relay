@@ -1,3 +1,4 @@
+import Tooltip from '../ui/Tooltip';
 import { useState, type ReactNode } from 'react';
 import Modal from '../ui/Modal';
 import IconActionButton from '../ui/IconActionButton';
@@ -25,7 +26,7 @@ export default function FilePickerShell({ labelledBy, title, subtitle, onClose, 
           {onBack && <IconActionButton label="返回上一级" variant="neutral" onClick={onBack} disabled={backDisabled}><svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M10 4L6 8l4 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg></IconActionButton>}
           <div className="min-w-0">
             <h2 id={labelledBy} className="text-sm font-semibold text-[var(--color-text)]">{title}</h2>
-            {subtitle && <div className="mt-0.5 truncate text-xs text-[var(--color-text-tertiary)]" title={subtitle}>{subtitle}</div>}
+            {subtitle && <Tooltip content={subtitle} asChild><div className="mt-0.5 truncate text-xs text-[var(--color-text-tertiary)]">{subtitle}</div></Tooltip>}
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-1">

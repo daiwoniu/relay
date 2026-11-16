@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { runInNewContext } from 'node:vm';
 import { captureDocumentationScreenshots, redactDocumentationPage } from './lib/documentation-screenshots.mjs';
-import { installDocumentationFixture } from './lib/documentation-fixture.mjs';
+import { installDocumentationFixture, prepareDocumentationScene } from './lib/documentation-fixture.mjs';
 
 function browser({ projects = [{ name: 'Private Project', path: 'C:/private/work' }], route = '/', ready = true } = {}) {
   const nodes = ['Private Project', 'C:/private/work', 'Private Session', 'Private User', 'private-user', '工具集', '天气'].map((text) => ({ nodeValue: text, parentElement: { tagName: 'SPAN' } }));
@@ -71,13 +71,43 @@ test('documentation scenarios capture only fixed real pages after redaction and 
     prepareDocumentationScene: async (value) => { calls.push(['scene', value]); return { audit: { mode: 'browser-memory-example' }, clip: { x: 0, y: 0, width: 800, height: 600, scale: 1 } }; },
   };
   const results = await captureDocumentationScreenshots({ page, runtime: { runDir: '/synthetic/run' }, config: { origin: 'http://localhost:9081' } });
-  assert.deepEqual(results.map((item) => item.id), ['readme-desktop', 'readme-mobile', 'readme-tools', ...['assistant-list', 'assistant-time', 'assistant-category', 'preview-markdown', 'preview-git', 'html-visual', 'html-source', 'engine-maintenance'].map(scene => `readme-${scene}`)]);
+  assert.deepEqual(results.map((item) => item.id), ['readme-desktop', 'readme-mobile', 'readme-tools', ...['assistant-list', 'assistant-time', 'assistant-category', 'preview-markdown', 'preview-markdown-source', 'preview-git', 'html-visual', 'html-source', 'engine-maintenance'].map(scene => `readme-${scene}`)]);
   assert.deepEqual(calls.filter(([kind]) => kind === 'navigate').map(([, url]) => url), ['http://localhost:9081/', 'http://localhost:9081/', 'http://localhost:9081/tools', 'http://localhost:9081/?session=a1111111-1111-4111-8111-111111111111']);
   assert.ok(calls.every(([kind], index) => kind !== 'capture' || ['redact', 'scene'].includes(calls[index - 1][0])));
   page.prepareDocumentationScreenshot = async () => { throw new Error('redaction failed'); };
   calls.length = 0;
   await assert.rejects(captureDocumentationScreenshots({ page, runtime: { runDir: '/synthetic/run' }, config: { origin: 'http://localhost:9081' } }), /redaction failed/);
   assert.equal(calls.some(([kind]) => kind === 'capture'), false);
+});
+
+test('documentation previews explicitly select current reading, source and Git controls', async () => {
+  for (const [scene, label] of [
+    ['preview-markdown', '预览'], ['preview-markdown-source', '源码'],
+    ['preview-git', 'Git 变更'], ['html-visual', '可视化'], ['html-source', '源码'],
+  ]) {
+    const clicked = [];
+    const queried = [];
+    const buttons = ['预览', '源码', 'Git 变更', '可视化'].map(text => ({ textContent: text, click: () => clicked.push(text) }));
+    const fileLink = { getAttribute: () => `D:/relay-demo/${scene.startsWith('html-') ? 'preview.html' : 'README.md'}`, click: () => clicked.push('file') };
+    const context = {
+      window: { __relayDocumentation: { audit: { errors: [] } } },
+      innerWidth: 1600, innerHeight: 1100, setTimeout: fn => fn(),
+      document: {
+        fonts: { ready: Promise.resolve() },
+        querySelector: selector => {
+          queried.push(selector);
+          if (selector.startsWith('.process-timeline') || selector.startsWith('iframe[title')) return null;
+          return selector === '.workspace-preview-panel' ? { getBoundingClientRect: () => ({ left: 600, top: 0, right: 1600, bottom: 1000, width: 1000, height: 1000 }) } : {};
+        },
+        querySelectorAll: selector => selector === 'a,button,span[role="button"]' ? [fileLink] : buttons,
+      },
+    };
+    const result = await runInNewContext(`(${prepareDocumentationScene.toString()})(${JSON.stringify(scene)})`, context);
+    assert.deepEqual(clicked, ['file', label]);
+    assert.equal(result.ready, true);
+    assert.ok(result.clip.width > 0 && result.clip.height > 0);
+    if (scene === 'html-visual') assert.ok(queried.includes('iframe[aria-label^="HTML 可视化："]'));
+  }
 });
 
 test('browser example isolates all API writes and transports, with no native business reads', async () => {

@@ -1,3 +1,4 @@
+import Tooltip from '../ui/Tooltip';
 import FailureNotice from '../ui/FailureNotice';
 import { useEffect, useState } from 'react';
 import { useAuth } from '../../auth/AuthContext';
@@ -19,9 +20,9 @@ const operationLabel: Record<EngineMaintenanceAction, string> = { install: 'æ­£å
 const engineConfigLabel = (engineId: EngineMaintenanceStatusDto['engineId']) => engineLabel(engineId);
 
 function MaintenanceActionButton({ action, primary = false, disabled, onAction, className = '' }: { action: EngineMaintenanceActionDto; primary?: boolean; disabled: boolean; onAction(action: EngineMaintenanceAction): void; className?: string }) {
-  return <button type="button" disabled={disabled || !action.enabled} onClick={() => onAction(action.action)} title={action.reason || undefined} className={`${primary ? 'engine-maintenance-primary' : 'engine-maintenance-control'} min-h-11 rounded-lg px-3 py-2 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-45 ${className}`}>
+  return <Tooltip content={action.reason || undefined} asChild><button type="button" disabled={disabled || !action.enabled} onClick={() => onAction(action.action)} className={`${primary ? 'engine-maintenance-primary' : 'engine-maintenance-control'} min-h-11 rounded-lg px-3 py-2 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-45 ${className}`}>
     {action.label}{action.reason && !action.enabled && <span className="mt-0.5 block text-[11px] font-normal opacity-75">{action.reason}</span>}
-  </button>;
+  </button></Tooltip>;
 }
 
 function ReleaseOverviewCard({ engine, releaseTime, releaseDateTime }: { engine: EngineMaintenanceStatusDto; releaseTime: string | null; releaseDateTime: string | null }) {

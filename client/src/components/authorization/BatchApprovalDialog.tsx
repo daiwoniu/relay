@@ -1,3 +1,4 @@
+import Tooltip from '../ui/Tooltip';
 import type { BatchApprovalState } from '../../stores/pending-approvals';
 import IconActionButton from '../ui/IconActionButton';
 import Modal from '../ui/Modal';
@@ -57,18 +58,18 @@ export default function BatchApprovalDialog({ batch, onClose, onConfirm }: Props
           <section key={group.sessionId} className="batch-approval-dialog__group">
             <div className="batch-approval-dialog__group-header">
               <div className="batch-approval-dialog__session-mark" aria-hidden="true"><span /></div>
-              <div className="batch-approval-dialog__session-title" title={group.sessionTitle}>{group.sessionTitle}</div>
+              <Tooltip content={group.sessionTitle} asChild><div className="batch-approval-dialog__session-title">{group.sessionTitle}</div></Tooltip>
               <div className="batch-approval-dialog__group-count">{group.items.length} 项</div>
             </div>
             <div className="batch-approval-dialog__requests">
               {group.items.map((item, index) => (
-                <article key={item.approvalKey} className="batch-approval-dialog__request" title={`${item.purpose} · ${item.summary}`}>
+                <Tooltip key={item.approvalKey} content={`${item.purpose} · ${item.summary}`} asChild><article className="batch-approval-dialog__request">
                   <span className="batch-approval-dialog__request-index" aria-hidden="true">{index + 1}</span>
                   <span className="batch-approval-dialog__request-copy">
                     <span className="batch-approval-dialog__request-title">{item.purpose}</span>
                     <span className="batch-approval-dialog__request-summary">{item.typeLabel} · {item.summary}</span>
                   </span>
-                </article>
+                </article></Tooltip>
               ))}
             </div>
           </section>

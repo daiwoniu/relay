@@ -69,6 +69,7 @@ export default defineConfig(({ command, mode }) => {
     },
     plugins: [createPublicAccessPlugin(relayConfig), createFrontendStatusPlugin(), react(), tailwindcss()],
     build: {
+      manifest: true,
       target: 'es2022',
       minify: 'terser',
       terserOptions: {

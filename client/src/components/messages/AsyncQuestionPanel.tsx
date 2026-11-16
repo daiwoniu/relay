@@ -1,3 +1,4 @@
+import Tooltip from '../ui/Tooltip';
 import FailureNotice from '../ui/FailureNotice';
 import { useEffect, useState } from 'react';
 import type { ProcessStep } from '../../stores/chat';
@@ -102,7 +103,7 @@ export default function AsyncQuestionPanel({ step, sessionId, answered, answerCo
           : !canAnswer && <p className="text-xs text-[var(--color-text-secondary)]">当前无法回答</p>}
         {error && <p role="alert" className="interaction-error text-xs text-[var(--color-status-danger)]"><FailureNotice error={error} /></p>}
         {onAnswer && <div className="interaction-card__actions flex justify-end gap-2">
-          {onRespond && <button type="button" disabled={submitting || !canAnswer} onClick={() => void submit(true)} title="所有设备关闭，不再提醒" className="interaction-action interaction-action--secondary rounded-lg px-3 py-1.5 text-xs text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-hover)]">关闭问题</button>}
+          {onRespond && <Tooltip content="所有设备关闭，不再提醒" asChild><button type="button" disabled={submitting || !canAnswer} onClick={() => void submit(true)} className="interaction-action interaction-action--secondary rounded-lg px-3 py-1.5 text-xs text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-hover)]">关闭问题</button></Tooltip>}
           <button type="button" disabled={!canAnswer || submitting || answers.some((answer) => !answer.trim())} onClick={() => void submit()} className="interaction-action interaction-action--primary rounded-lg bg-[var(--color-text)] px-3 py-1.5 text-xs text-[var(--color-bg)] disabled:opacity-40">{submitting ? '提交中…' : '提交回答'}</button>
         </div>}
       </div>}

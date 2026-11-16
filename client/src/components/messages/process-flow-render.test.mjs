@@ -99,7 +99,7 @@ test('单次对象一层展开即显示正文，多次才有逐次行，文件�
   const context=makeContext([{id:'single-file',type:'fileChange',status:'completed',details:{path:'D:/relay/src/Widget.tsx',kind:'update'}}]);
   context.ui.categoryOpen={action:'category:file'};
   const closed=render(context,{mode:'category',expandOccurrences:false});
-  assert.match(closed,/<strong title="Widget.tsx"/); assert.match(closed,/Relay · src/); assert.match(closed,/修改 1次/);
+  assert.match(closed,/<strong aria-description="Widget.tsx"/); assert.match(closed,/Relay · src/); assert.match(closed,/修改 1次/);
   assert(!closed.includes('D:/relay')); assert(!closed.includes('detail:single-file'));
   const opened=render(context,{mode:'category'});
   assert.match(opened,/detail:single-file/); assert(!opened.includes('flow-node__summary'));
@@ -122,11 +122,11 @@ test('通道和项目先展开能力类别，类别未展开时不挂载对象�
     const outer=groups.find(group=>group.nodes.some(node=>node.id==='rule-nested'));
     context.ui.categoryOpen={[grouping]:outer.id};
     const closed=render(context,{mode:'category',expandOccurrences:false});
-    assert.match(closed,/flow-category-grid/); assert.match(closed,/title="规则"/); assert.match(closed,/title="文件操作"/);
-    assert(!closed.includes('<strong title="AGENTS.md"')); assert(!closed.includes('detail:rule-nested'));
+    assert.match(closed,/flow-category-grid/); assert.match(closed,/aria-description="规则"/); assert.match(closed,/aria-description="文件操作"/);
+    assert(!closed.includes('<strong aria-description="AGENTS.md"')); assert(!closed.includes('detail:rule-nested'));
     context.ui.expanded[`subgroup:${outer.id}:category:rule`]=true;
     const rules=render(context,{mode:'category',expandOccurrences:false});
-    assert.match(rules,/<strong title="AGENTS.md"/); assert(!rules.includes('<strong title="a.ts"'));
+    assert.match(rules,/<strong aria-description="AGENTS.md"/); assert(!rules.includes('<strong aria-description="a.ts"'));
     assert(!rules.includes('detail:rule-nested'));
     const full=render(context,{mode:'category'});
     assert.equal((full.match(/data-flow-node="rule-nested"/g)||[]).length,1);
@@ -152,8 +152,8 @@ test('助手通道不再嵌套助手类别，摘要省略且展开保留完整�
   const content='核查每个事件的原始字段、身份和分类。'.repeat(20);
   const timeline=[{type:'narrative',itemId:'long-progress',content}];
   const closed=render(context,{mode:'category',timeline,expandOccurrences:false});
-  assert(!closed.includes('flow-category-grid')); assert.equal((closed.match(/title="助手消息"/g)||[]).length,1);
-  assert.match(closed,/<strong title="进度说明"/); assert(!closed.includes(content));
+  assert(!closed.includes('flow-category-grid')); assert.equal((closed.match(/aria-description="助手消息"/g)||[]).length,1);
+  assert.match(closed,/<strong aria-description="进度说明"/); assert(!closed.includes(content));
   const opened=render(context,{mode:'category',timeline}); assert(opened.includes(content));
   const css=readFileSync(new URL('../../styles/process-flow.css',import.meta.url),'utf8');
   assert.match(css,/\.flow-capability__identity small\s*\{[^}]*overflow:\s*hidden[^}]*white-space:\s*nowrap[^}]*text-overflow:\s*ellipsis/);
@@ -180,7 +180,7 @@ test('时间流与分类流的文件事件色调一致，读取修改删除的�
     const html=render(context,{mode});
     for(const [id,icon] of [['tone-read','file'],['tone-edit','edit'],['tone-delete','remove']]) {
       const card=html.match(new RegExp(`<article[^>]*data-flow-node="${id}"[\\s\\S]*?<\/article>`))[0];
-      assert.match(card,/data-flow-style="file"/); assert.match(card,new RegExp(`data-process-icon="${icon}"`)); assert.match(card,/flow-node__icon" title="文件操作"/);
+      assert.match(card,/data-flow-style="file"/); assert.match(card,new RegExp(`data-process-icon="${icon}"`)); assert.match(card,/flow-node__icon" aria-description="文件操作"/);
     }
   }
 });
@@ -204,7 +204,7 @@ test('技能在三种分类视角均先按所属技能汇总，再按具体能�
     const group=groupFlowNodes(buildFlowNodes(context,context.steps,[],{streaming:true}),'category',grouping).find(group=>group.nodes.some(node=>node.id==='first'));
     context.ui.categoryOpen={[grouping]:group.id};
     const html=render(context,{mode:'category'});
-    assert.match(html,/title="Db · Relay · ai\/skills"/);assert.match(html,/query · db.py/);assert.match(html,/write · db.py/);assert.match(html,/读取 · SKILL.md/);assert.match(html,/2 次执行/);
+    assert.match(html,/aria-description="Db · Relay · ai\/skills"/);assert.match(html,/query · db.py/);assert.match(html,/write · db.py/);assert.match(html,/读取 · SKILL.md/);assert.match(html,/2 次执行/);
     assert(!html.includes('脚本与代码'));assert(!html.includes('flow-node__time'));
     for(const id of ['skill-doc','first','second','skill-write'])assert.equal((html.match(new RegExp(`data-flow-node="${id}"`,'g'))||[]).length,1);
   }
@@ -224,7 +224,7 @@ test('大量技能对象仍按四十项分段，选中较后技能能穿透所�
   const context=makeContext(Array.from({length:80},(_,index)=>({id:`skill-owner-${index}`,type:'commandExecution',status:'completed',details:{command:`python ai/skills/Tool${index}/scripts/run.py query`}})));
   context.ui.categoryOpen={action:'category:skill'};context.ui.selectedNodeId='skill-owner-70';
   const html=render(context,{mode:'category',expandOccurrences:false});
-  assert.equal((html.match(/class="flow-branch__name" title="Tool/g)||[]).length,40);assert.match(html,/detail:skill-owner-70/);assert(!html.includes('title="Tool0 ·'));
+  assert.equal((html.match(/class="flow-branch__name" aria-description="Tool/g)||[]).length,40);assert.match(html,/detail:skill-owner-70/);assert(!html.includes('aria-description="Tool0 ·'));
   assert.match(html,/展开此前汇总项/);assert.match(html,/展开后续汇总项/);
 });
 
@@ -235,8 +235,8 @@ test('手动展开较后技能后没有选中记录，仍保留其所在分页�
   const owner=getFlowCategoryGroups(group,'action').find(owner=>owner.nodes.some(node=>node.id==='manual-owner-68'));
   context.ui.expanded[`subgroup:${group.id}:${owner.id}`]=true;
   const html=render(context,{mode:'category',expandOccurrences:false});
-  assert.match(html,/title="Tool68 · Relay/);assert.match(html,/query · run.py/);assert(!html.includes('title="Tool0 ·'));
-  assert(!html.includes('detail:manual-owner-68'));assert.equal((html.match(/class="flow-branch__name" title="Tool/g)||[]).length,40);
+  assert.match(html,/aria-description="Tool68 · Relay/);assert.match(html,/query · run.py/);assert(!html.includes('aria-description="Tool0 ·'));
+  assert(!html.includes('detail:manual-owner-68'));assert.equal((html.match(/class="flow-branch__name" aria-description="Tool/g)||[]).length,40);
 });
 
 test('普通步骤保留原头部，分类详情只显示正文和完整文件清单，无假折叠或耗时', () => {
@@ -273,7 +273,7 @@ test('重复技能归并为一张默认收起的对象卡，展开保留每次�
   context.ui.categoryOpen={action:'category:skill'};
   const closed=render(context,{mode:'category',expandOccurrences:false});
   assert.equal((closed.match(/class="flow-capability"/g)||[]).length,0);
-  assert.match(closed,/title="pdf · Relay · ai\/skills"/); assert.match(closed,/2 条记录/); assert.match(closed,/1 项失败/);
+  assert.match(closed,/aria-description="pdf · Relay · ai\/skills"/); assert.match(closed,/2 条记录/); assert.match(closed,/1 项失败/);
   assert(!closed.includes('data-flow-node='));
   const opened=render(context,{mode:'category'});
   assert.match(opened,/2 次读取/); assert.equal((opened.match(/class="flow-capability__heading"/g)||[]).length,1);
@@ -315,8 +315,8 @@ test('展开重复调用时优先展示较早的待处理记录，不被末尾�
   const later=makeContext(Array.from({length:100},(_,i)=>({id:`later-${i}`,type:'commandExecution',status:i===99?'in_progress':'completed',details:{command:`node scripts/${i}.mjs`}})));
   later.ui.categoryOpen={action:'category:script'};
   const buckets=render(later,{mode:'category',expandOccurrences:false});
-  assert.match(buckets,/<strong title="99.mjs"/); assert.match(buckets,/Relay · scripts/);
-  assert(!buckets.includes('<strong title="0.mjs"'));
+  assert.match(buckets,/<strong aria-description="99.mjs"/); assert.match(buckets,/Relay · scripts/);
+  assert(!buckets.includes('<strong aria-description="0.mjs"'));
   assert.equal((buckets.match(/class="flow-capability"/g)||[]).length,40);
 });
 
@@ -349,16 +349,16 @@ test('六个摘要位置实际渲染分离动作、身份、条件、状态与�
     {id:'auth-layout',type:'interaction',status:'completed',details:{interactionKind:'command_approval',command:'node scripts/check.mjs',decisionSource:'project_trust',resolvedAction:'accept'}},
   ]);
   const html=render(context);
-  assert.match(html,/flow-node__title" title="搜索元数据"/);
-  assert.match(html,/flow-node__subtitle" title="meta_data.search"/);
-  assert.match(html,/flow-node__hint" title="数据库：analytics · 关键词：orders · 上限 20"/);
-  assert.match(html,/flow-node__source" title="xinshu · MCP"/);
+  assert.match(html,/flow-node__title" aria-description="搜索元数据"/);
+  assert.match(html,/flow-node__subtitle" aria-description="meta_data.search"/);
+  assert.match(html,/flow-node__hint" aria-description="数据库：analytics · 关键词：orders · 上限 20"/);
+  assert.match(html,/flow-node__source" aria-description="xinshu · MCP"/);
   assert.match(html,/flow-node__duration[^>]*>1\.25 秒/);
-  assert.match(html,/flow-node__title" title="请求授权"/);
-  assert.match(html,/flow-node__subtitle" title="node scripts\/check.mjs"/);
-  assert.match(html,/flow-node__hint" title="决策：项目规则"/);
-  assert.match(html,/已允许/); assert.match(html,/flow-node__source" title="引擎"/);
-  assert(!html.includes('flow-node__source" title="信任规则"'));
+  assert.match(html,/flow-node__title" aria-description="请求授权"/);
+  assert.match(html,/flow-node__subtitle" aria-description="node scripts\/check.mjs"/);
+  assert.match(html,/flow-node__hint" aria-description="决策：项目规则"/);
+  assert.match(html,/已允许/); assert.match(html,/flow-node__source" aria-description="引擎"/);
+  assert(!html.includes('flow-node__source" aria-description="信任规则"'));
 });
 
 test('结束说明不挤占身份行，已回答标记不把失败卡片改成成功', () => {
@@ -367,8 +367,8 @@ test('结束说明不挤占身份行，已回答标记不把失败卡片改成�
     {id:'failed-answer',type:'interaction',status:'incomplete',details:{interactionKind:'async_question',questions:[{title:'确认结果'}]}},
   ]);
   const html=render(context,{streaming:false,outcome:'completed',answeredIds:new Set(['failed-answer'])});
-  assert.match(html,/flow-node__subtitle" title="scripts\/check.mjs"/);
-  assert.match(html,/flow-node__hint" title="node · 本次执行已结束，此步骤结果未确认"/);
+  assert.match(html,/flow-node__subtitle" aria-description="scripts\/check.mjs"/);
+  assert.match(html,/flow-node__hint" aria-description="node · 本次执行已结束，此步骤结果未确认"/);
   const failed=html.match(/<article[^>]*data-flow-node="failed-answer"[\s\S]*?<\/article>/)[0];
   assert.match(failed,/flow-node--failed/); assert.match(failed,/失败/); assert(!failed.includes('已回答'));
 });
@@ -382,26 +382,26 @@ test('网页打开和查找、文件删除在流程及普通列表保留实际�
   for(const html of [flow,list]) {
     assert.match(html,/打开网页/); assert.match(html,/页内查找/); assert.match(html,/删除文件/); assert.match(html,/https:\/\/example\.test\/doc/);
   }
-  assert.match(flow,/flow-node__subtitle" title="needle"/);
-  assert.match(flow,/flow-node__hint" title="网页：https:\/\/example.test\/doc"/);
+  assert.match(flow,/flow-node__subtitle" aria-description="needle"/);
+  assert.match(flow,/flow-node__hint" aria-description="网页：https:\/\/example.test\/doc"/);
   assert.match(flow,/data-process-icon="web"/);
 });
 
 test('命令身份实际渲染保留脚本和语法检查名称，普通命令不重复第三行', () => {
   const plain=render(makeContext([{id:'plain',type:'commandExecution',status:'completed',details:{command:'Get-ChildItem src --token private-value'}}]));
-  assert.match(plain,/title="执行命令"/); assert.match(plain,/flow-node__subtitle" title="Get-ChildItem"/);
+  assert.match(plain,/aria-description="执行命令"/); assert.match(plain,/flow-node__subtitle" aria-description="Get-ChildItem"/);
   assert(!plain.includes('flow-node__hint')); assert(!plain.includes('private-value'));
   const script=render(makeContext([{id:'script',type:'commandExecution',status:'completed',details:{command:'node -c scripts/check.js'}}]));
-  assert.match(script,/title="检查脚本语法"/); assert.match(script,/flow-node__subtitle" title="scripts\/check.js"/);
-  assert.match(script,/flow-node__hint" title="node"/);
+  assert.match(script,/aria-description="检查脚本语法"/); assert.match(script,/flow-node__subtitle" aria-description="scripts\/check.js"/);
+  assert.match(script,/flow-node__hint" aria-description="node"/);
 });
 
 test('折叠摘要真正显示结构化第三行，MCP关键词不在两行间重复', () => {
   const context=makeContext([{id:'plan-progress',type:'plan',status:'completed',details:{plan:[{status:'completed'},{status:'in_progress'}]}},{id:'tool-target',type:'mcpToolCall',status:'completed',details:{server:'remote',tool:'meta_data.search',arguments:{db_name:'analytics',keyword:'orders',limit:8}}}]);
   const html=render(context);
-  assert.match(html,/flow-node__hint" title="已完成 1\/2 项 · 1 项进行中"/);
-  assert.match(html,/flow-node__subtitle" title="meta_data.search"/);
-  assert.match(html,/flow-node__hint" title="数据库：analytics · 关键词：orders · 上限 8"/);
+  assert.match(html,/flow-node__hint" aria-description="已完成 1\/2 项 · 1 项进行中"/);
+  assert.match(html,/flow-node__subtitle" aria-description="meta_data.search"/);
+  assert.match(html,/flow-node__hint" aria-description="数据库：analytics · 关键词：orders · 上限 8"/);
   const toolCard=html.slice(html.indexOf('data-flow-node="tool-target"'));
   assert(!toolCard.includes('meta_data.search · orders'));
 });
@@ -414,7 +414,7 @@ test('历史用户输入在独立记录中保留实际时间与定位提示，�
   assert.match(html,/按消息记录时间排列/); assert(!html.includes('flow-node__turn'));
   const read=makeContext([{id:'ranged',type:'commandExecution',status:'completed',details:{command:'Get-Content app.ts -TotalCount 180',firstObservedAt:1000,startedObservedAt:1000,completedObservedAt:2500}}]);
   const card=render(read);
-  assert.match(card,/flow-node__hint" title="前 180 行"/);
+  assert.match(card,/flow-node__hint" aria-description="前 180 行"/);
   assert.match(card,/flow-node__duration[^>]*>1\.50 秒/);
 });
 
@@ -496,8 +496,8 @@ test('展开分类组保留整组边框和标题关联，汇总之间不画顺�
 test('处理状态整行保留最近已报告事件信息，操作节点不隐藏引擎来源', () => {
   const context=makeContext([{id:'plan-source',type:'plan',status:'completed',details:{plan:[]}}]);
   const html=render(context);
-  assert.match(html,/process-flow__activity-detail[^>]*title="最近记录：更新执行计划/);
-  assert.match(html,/flow-node__source[^>]*title="引擎"/);
+  assert.match(html,/process-flow__activity-detail[^>]*aria-description="最近记录：更新执行计划/);
+  assert.match(html,/flow-node__source[^>]*aria-description="引擎"/);
 });
 
 test('旧运行字段已有成功或失败回执时，普通详情与流程卡片使用同一终态', () => {
@@ -534,7 +534,7 @@ test('双列卡片详情只在自己的卡片内展开，旁边卡片保持折�
   const cards=html.split('<section class="flow-capability"').slice(1);
   assert.equal(cards.length,2);assert.match(cards[0],/aria-expanded="true"/);assert.match(cards[0],/detail:first/);
   assert.match(cards[1],/aria-expanded="false"/);assert(!cards[1].includes('flow-capability__occurrences'));
-  assert(html.indexOf(`title="${buckets[1].label}"`)>html.indexOf('detail:first'));
+  assert(html.indexOf(`aria-description="${buckets[1].label}"`)>html.indexOf('detail:first'));
   assert.equal((html.match(/detail:first/g)||[]).length,1);assert(!html.includes('detail:second'));
 });
 
@@ -558,7 +558,7 @@ test('多记录汇总组在下一整行显示记录，记录自己的详情仍�
   context.ui.expanded[`capability:test:${buckets[0].id}`]=true;context.ui.details.first=true;
   const html=renderToStaticMarkup(React.createElement(compiled.exports.FlowCapabilityGrid,{buckets,groupId:'test',columns:2,context,renderDetail:step=>`detail:${step.id}`}));
   assert.match(html,/flow-capability--group-body/);assert.match(html,/flow-branch--full/);
-  assert(html.indexOf('title="other.mjs"')<html.indexOf('data-flow-node="first"'));
+  assert(html.indexOf('aria-description="other.mjs"')<html.indexOf('data-flow-node="first"'));
   const first=html.match(/<article[^>]*data-flow-node="first"[\s\S]*?<\/article>/)[0],second=html.match(/<article[^>]*data-flow-node="second"[\s\S]*?<\/article>/)[0];
   assert.match(first,/detail:first/);assert.match(second,/aria-expanded="false"/);assert(!second.includes('detail:second'));
   assert.equal((html.match(/data-flow-node="first"/g)||[]).length,1);assert(!html.includes('data-flow-node="other"'));
@@ -671,8 +671,8 @@ test('分类组展开只挂载一份全行内容，并保留其他类别标题',
 test('消息身份不重复充当工具标签，真实文件操作保留来源', () => {
   const context=makeContext([{id:'change',type:'fileChange',status:'completed',details:{path:'a.ts'}}]);
   const html=render(context,{streaming:false});
-  assert(!html.includes('flow-node__category')); assert.match(html,/flow-node__source[^>]*title="引擎"/);
-  assert.match(html,/已完成/); assert.match(html,/title="文件操作"/);
+  assert(!html.includes('flow-node__category')); assert.match(html,/flow-node__source[^>]*aria-description="引擎"/);
+  assert.match(html,/已完成/); assert.match(html,/aria-description="文件操作"/);
 });
 
 test('终端技能MCP来源在节点保留，包括按工具分组的节点', () => {
@@ -681,7 +681,7 @@ test('终端技能MCP来源在节点保留，包括按工具分组的节点', ()
     {id:'skill',type:'commandExecution',status:'completed',details:{command:'cat C:/Users/a/.codex/skills/.system/pdf/SKILL.md'}},
     {id:'mcp',type:'mcpToolCall',status:'completed',details:{serverName:'Figma',tool:'get_design_context'}},
   ]);
-  const html=render(context); assert.match(html,/flow-node__source[^>]*title="终端"/); assert.match(html,/系统技能/); assert.match(html,/Figma · MCP/);
+  const html=render(context); assert.match(html,/flow-node__source[^>]*aria-description="终端"/); assert.match(html,/系统技能/); assert.match(html,/Figma · MCP/);
   context.ui.grouping='tool';
   context.ui.categoryOpen={tool:groupFlowNodes(buildFlowNodes(context,context.steps,[],{streaming:true}),'category','tool').find(group=>group.title.includes('Figma')).id};
   const toolHtml=render(context,{mode:'category'}); assert(!toolHtml.includes('flow-node__source')); assert.match(toolHtml,/Figma · MCP/); assert.match(toolHtml,/读取设计稿/);
@@ -837,7 +837,7 @@ test('终态不保留运行中动效，明确提示缺少完成结果；类型�
   const html=render(context,{streaming:false});
   assert(!html.includes('flow-node--running')); assert(!html.includes('process-flow__live-dot'));
   assert.match(html,/结果未确认/); assert.match(html,/请查看原始记录/); assert.match(html,/data-flow-category="execution"/);
-  assert.match(html,/title="脚本与代码"/); assert(!html.includes('flow-node__category'));
+  assert.match(html,/aria-description="脚本与代码"/); assert(!html.includes('flow-node__category'));
 });
 
 test('离屏暂停仅作用于持续动效，不再把淡入内容冻结在半透明状态', () => {

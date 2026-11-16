@@ -211,10 +211,10 @@
 .workspace-workbench__header-meta { grid-area: meta; order: 1; flex: 1 1 16rem; min-width: 0; }
 .workspace-workbench__header-counts { display: flex; flex-wrap: wrap; gap: .25rem 1rem; }
 .workspace-workbench__header-counts > span { white-space: nowrap; }
-.workspace-workbench__header-times { display: flex; align-items: baseline; gap: .25rem .5rem; }
-.workspace-workbench__header-times > span { flex-shrink: 0; }
-.workspace-workbench__header-times > div { display: flex; flex-wrap: wrap; gap: .25rem .75rem; min-width: 0; }
-.workspace-workbench__header-times > div > span { overflow-wrap: anywhere; }
+.workspace-workbench__source-times { display: flex; flex-wrap: wrap; align-items: flex-start; gap: .75rem 2rem; margin-top: .75rem; }
+.workspace-workbench__source-time { display: grid; grid-template-columns: max-content minmax(0, 1fr); align-items: baseline; gap: .75rem; min-width: 0; max-width: 100%; }
+.workspace-workbench__source-time dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: .25rem .5rem; min-width: 0; margin: 0; }
+.workspace-workbench__source-time dd { min-width: 0; margin: 0; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
 
 .workspace-workbench__theme-trigger {
   display: inline-flex;
@@ -299,7 +299,7 @@
   .workspace-workbench__header-toolbar .workspace-workbench__theme-menu { right: 0; left: auto; max-width: min(100%, calc(100vw - 4rem)); }
   .workspace-workbench__header-meta { margin-top: .25rem; border-top: 1px solid var(--wb-border); padding-top: .75rem; }
   .workspace-workbench__header-counts { gap: .25rem .75rem; }
-  .workspace-workbench__header-times > div { display: grid; gap: .25rem; }
+  .workspace-workbench__source-times { flex-direction: column; }
 }
 
 @media (max-width: 639px) {

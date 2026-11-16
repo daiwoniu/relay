@@ -50,7 +50,7 @@ export function prepareShare(db:DB,actor:Actor,raw:unknown,availability:Attachme
     if(!message)continue;bytes+=Buffer.byteLength(JSON.stringify(message))+1;if(bytes>SHARE_SNAPSHOT_BYTES_MAX)deny('PAYLOAD_TOO_LARGE');messages.push(message);
   }
   if(!messages.length)deny('INVALID_ARGUMENT');
-  const snapshot=ShareSnapshotV1Schema.parse({version:1,sourceEngine:source.engine_bound?EngineIdSchema.parse(source.engine):'codex',messages});
+  const snapshot=ShareSnapshotV1Schema.parse({version:1,scope:request.scope,includeProcess:request.includeProcess,sourceEngine:source.engine_bound?EngineIdSchema.parse(source.engine):'codex',messages});
   const snapshotJson=JSON.stringify(snapshot);if(Buffer.byteLength(snapshotJson)>SHARE_SNAPSHOT_BYTES_MAX)deny('PAYLOAD_TOO_LARGE');
   let expiresAt:number|null;try{expiresAt=resolveShareExpiry(request.expiry,now);}catch{deny('INVALID_ARGUMENT');}
   return {source,request,sourceDigest:hash.digest('hex'),snapshotJson,availability:[...states] as Array<[string,boolean]>,
@@ -79,13 +79,15 @@ export function executeShare(db:DB,actor:Actor,command:Extract<CoreCommand,{name
 export function listShares(db:DB,actor:Actor,limit:number,offset:number):Awaited<ReturnType<CoreStoragePort['listShares']>>{
   const params=actor.role==='admin'?[]:[actor.id],where=actor.role==='admin'?'':'WHERE r.owner_user_id=?';
   const rows=db.all(`SELECT r.id,r.public_token,r.title,r.scope,r.message_count,r.include_process,r.source_session_id,r.created_at,r.expires_at,r.revoked_at,
-    s.title AS source_title,s.engine AS source_engine,s.owner_user_id AS source_owner_user_id,json_valid(r.snapshot_json) AS valid_snapshot,
+    s.id AS source_id,s.deleted_at AS source_deleted_at,s.title AS source_title,s.engine AS source_engine,s.owner_user_id AS source_owner_user_id,json_valid(r.snapshot_json) AS valid_snapshot,
     CASE WHEN json_valid(r.snapshot_json) THEN json_extract(r.snapshot_json,'$.sourceEngine') ELSE NULL END AS saved_engine
     FROM shared_records r LEFT JOIN sessions s ON s.id=r.source_session_id ${where} ORDER BY r.created_at DESC,r.id DESC LIMIT ? OFFSET ?`,[...params,limit,offset]);
   return ShareListResponseDtoSchema.parse({items:rows.map((r)=>{const visible=actor.role==='admin'||r.source_owner_user_id===actor.id||r.source_session_id&&visibleResource(db,actor,{kind:'session',id:r.source_session_id});
-    const engine=visible?r.source_engine??r.saved_engine:r.saved_engine;
+    const engine=r.saved_engine??(visible?r.source_engine:null);
     return {id:r.id,publicToken:r.public_token,title:r.title,scope:r.scope,messageCount:r.message_count,includeProcess:r.include_process===1,
-    sourceSessionId:r.source_session_id,sourceSessionTitle:visible?r.source_title??null:null,sourceEngine:EngineIdSchema.safeParse(engine).success?engine:'codex',createdAt:r.created_at,
+    sourceSessionId:r.source_session_id,sourceSessionTitle:visible?r.source_title??null:null,
+    sourceState:!r.source_id?'deleted':!visible?'unavailable':r.source_deleted_at!==null?'deleted':'available',
+    sourceEngine:EngineIdSchema.safeParse(engine).success?engine:'codex',createdAt:r.created_at,
     expiresAt:r.expires_at,revokedAt:r.revoked_at,status:getShareManagementStatus({expiresAt:r.expires_at,revokedAt:r.revoked_at},Date.now())};}),
     total:Number(db.get(`SELECT count(*) AS count FROM shared_records r ${where}`,params)?.count)});
 }

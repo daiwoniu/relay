@@ -1,3 +1,4 @@
+import Tooltip from '../ui/Tooltip';
 import FailureNotice from '../ui/FailureNotice';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { TrashImpactDto, TrashProjectDto, TrashSessionDto } from '../../generated/relay-contracts';
@@ -377,7 +378,7 @@ export default function TrashDialog({ open, admin, onClose, onChanged }: {
         {tab === 'sessions' && <label className="trash-dialog__project-filter"><span className="sr-only">按项目筛选会话</span><select value={projectId} onChange={(event) => changeProject(event.target.value)} aria-label="按项目筛选会话"><option value="">全部项目</option>{projectOptions.map((project) => <option key={project.id} value={project.id}>{project.name} · {project.path}</option>)}</select></label>}
         <div className="trash-dialog__search-field"><input type="search" value={draftQuery[tab]} onChange={(event) => setDraftQuery((value) => ({ ...value, [tab]: event.target.value }))} placeholder={tab === 'sessions' ? '搜索标题或消息内容' : '搜索项目、会话或消息'} aria-label="回收站关键词" enterKeyHint="search" />
           {draftQuery[tab] && <button type="button" className="trash-dialog__search-clear" aria-label="清除关键词" onClick={clearKeyword}>×</button>}
-          <button type="submit" className="trash-dialog__search-submit" aria-label="搜索回收站" title="搜索"><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><circle cx="7" cy="7" r="5" stroke="currentColor" strokeWidth="1.5" /><path d="M11 11l3 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" /></svg></button>
+          <Tooltip content="搜索" asChild><button type="submit" className="trash-dialog__search-submit" aria-label="搜索回收站"><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><circle cx="7" cy="7" r="5" stroke="currentColor" strokeWidth="1.5" /><path d="M11 11l3 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" /></svg></button></Tooltip>
         </div>
       </form>
       {filterActive && <div className="trash-dialog__result-summary">筛选结果 {currentTotal} 条</div>}

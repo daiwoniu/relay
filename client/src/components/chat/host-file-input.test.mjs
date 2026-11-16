@@ -75,7 +75,7 @@ test('文件选择器复用类型图标并用整行标签选择文件', () => {
   assert.match(pickerSource, /typeof entry\.modifiedAt === 'number' && Number\.isFinite\(entry\.modifiedAt\)/);
   assert.match(pickerSource, /修改于 \{formatFileBrowserModifiedTime\(entry\.modifiedAt\)\}/);
   assert.match(pickerSource, /<label key=\{entry\.path\}/);
-  assert.match(pickerSource, /title=\{entry\.name\}>\{entry\.name\}<\/span>/);
+  assert.match(pickerSource, /content=\{entry\.name\} asChild><span[^>]*>\{entry\.name\}<\/span>/);
   assert.doesNotMatch(pickerSource, /type="text"/);
 });
 

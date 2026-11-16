@@ -1,0 +1,72 @@
+{
+  "schemaVersion": 1,
+  "source": {
+    "commit": "88526b182102d34d0aa242a3475c07d1bf0dcede",
+    "version": "0.52.3"
+  },
+  "totals": {
+    "jsBytes": 1829052,
+    "jsGzipBytes": 559358,
+    "cssBytes": 342842,
+    "cssGzipBytes": 55478,
+    "offlineScriptBytes": 2869,
+    "jsFiles": 39,
+    "cssFiles": 7
+  },
+  "routes": {
+    "bootstrap": {
+      "jsBytes": 317156,
+      "jsGzipBytes": 100265,
+      "cssBytes": 291221,
+      "cssGzipBytes": 43542
+    },
+    "login": {
+      "jsBytes": 329907,
+      "jsGzipBytes": 106498,
+      "cssBytes": 291221,
+      "cssGzipBytes": 43542
+    },
+    "chat": {
+      "jsBytes": 1475536,
+      "jsGzipBytes": 442252,
+      "cssBytes": 292531,
+      "cssGzipBytes": 44154
+    },
+    "share": {
+      "jsBytes": 813743,
+      "jsGzipBytes": 245910,
+      "cssBytes": 292531,
+      "cssGzipBytes": 44154
+    },
+    "workbench": {
+      "jsBytes": 1368322,
+      "jsGzipBytes": 407601,
+      "cssBytes": 324891,
+      "cssGzipBytes": 50985
+    },
+    "news": {
+      "jsBytes": 338075,
+      "jsGzipBytes": 107856,
+      "cssBytes": 302257,
+      "cssGzipBytes": 46375
+    },
+    "tools": {
+      "jsBytes": 347723,
+      "jsGzipBytes": 113233,
+      "cssBytes": 291221,
+      "cssGzipBytes": 43542
+    },
+    "newsAdmin": {
+      "jsBytes": 339514,
+      "jsGzipBytes": 107355,
+      "cssBytes": 305352,
+      "cssGzipBytes": 46873
+    },
+    "passwordChange": {
+      "jsBytes": 321773,
+      "jsGzipBytes": 102679,
+      "cssBytes": 291221,
+      "cssGzipBytes": 43542
+    }
+  }
+}

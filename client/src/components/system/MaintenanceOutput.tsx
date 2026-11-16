@@ -1,3 +1,4 @@
+import Tooltip from '../ui/Tooltip';
 import type { MaintenanceOutputSnapshotDto } from '../../generated/relay-contracts.ts';
 import { getMaintenanceOutputRows } from './maintenance-output-presentation';
 
@@ -20,11 +21,9 @@ export default function MaintenanceOutput({ snapshot, disconnected = false, clas
       </span>
     </div>
     <div className="maintenance-output__screen">
-      {rows.map((line, index) => <div
-        key={`${snapshot?.operationId ?? 'waiting'}-${snapshot?.sequence ?? 0}-${index}`}
+      {rows.map((line, index) => <Tooltip key={`${snapshot?.operationId ?? 'waiting'}-${snapshot?.sequence ?? 0}-${index}`} content={line ?? undefined} asChild><div
         className={`maintenance-output__line ${index === 1 ? 'maintenance-output__line--current' : 'maintenance-output__line--previous'} ${line ? '' : 'is-empty'}`}
-        title={line ?? undefined}
-      >{line ?? '\u00a0'}</div>)}
+      >{line ?? '\u00a0'}</div></Tooltip>)}
     </div>
   </section>;
 }

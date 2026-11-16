@@ -7,6 +7,8 @@ import { StorageWorkerClient } from '../storage/worker-client.js';
 import { FileAccessGrants } from '../file-access.js';
 import { StoredFilesystem } from './stored-filesystem.js';
 import { hashSessionToken } from '../auth/session.js';
+import { Hono } from 'hono';
+import { createStoredFilesystemRouter } from '../routes/stored-filesystem.js';
 
 test('Native filesystem Worker preserves previews and host grants with current account/project fences',async()=>{
   const f=fixture(),project=path.join(f.directory,'project'),host=path.join(f.directory,'host.txt');await fs.mkdir(project);await fs.writeFile(path.join(project,'inside.txt'),'synthetic text');await fs.writeFile(host,'host text');
@@ -21,6 +23,24 @@ test('Native filesystem Worker preserves previews and host grants with current a
     assert.ok((await port.readFrontendAccess({principal:owner,resource:null}))?.allowed);
     assert.ok((await port.listProjects({principal:owner,scope:'mine'})).some(value=>value.path===project));
     const text=await service.request(owner,read(path.join(project,'inside.txt')),'GET');assert.equal(text.status,200);assert.equal((await text.json() as any).content,'synthetic text');
+    const missing=path.join(project,'ChatView-old.js');
+    await assert.rejects(service.request(owner,read(missing),'GET'),{code:'NOT_FOUND'});
+    await assert.rejects(service.request(owner,'/metadata?'+new URLSearchParams({path:missing}),'GET'),{code:'NOT_FOUND'});
+    await assert.rejects(service.request(owner,read(path.join(project,'inside.txt','nested.js')),'GET'),{code:'NOT_FOUND'});
+    const app=new Hono().route('/api/filesystem',createStoredFilesystemRouter({port,service}));
+    const notFound=await app.request('/api/filesystem'+read(missing),{headers:{cookie:'relay_session=synthetic-files-owner'}});
+    assert.equal(notFound.status,404);
+    assert.equal(notFound.headers.get('Cache-Control'),'private, no-store');
+    const errorText=JSON.stringify(await notFound.json());
+    assert.match(errorText,/文件不存在或已被移动/);
+    assert.match(errorText,/NOT_FOUND/);
+    assert.equal(errorText.includes(f.directory),false);
+    assert.equal(errorText.includes('ChatView-old.js'),false);
+    const currentJs=path.join(project,'ChatView-current.js'),jsContent='const payload="'+'x'.repeat(300*1024)+'";';
+    await fs.writeFile(currentJs,jsContent);
+    const jsResult=await service.request(owner,read(currentJs),'GET');
+    assert.equal(jsResult.status,200);
+    assert.equal((await jsResult.json() as any).content,jsContent);
     const denied=await service.request(owner,read(host),'GET');assert.equal(denied.status,403);
     const journal=path.join(project,'.relay_upload','.promotions','intent.json');await fs.mkdir(path.dirname(journal),{recursive:true});await fs.writeFile(journal,'private');
     const journalToken=grants.grant(journal,'owner');await assert.rejects(service.request(owner,read(journal,journalToken),'GET'),{code:'FORBIDDEN'});

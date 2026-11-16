@@ -37,6 +37,8 @@ async function prepared(){
 test('share preview is read-only, immutable output is bounded to the completed cutoff and filesystem-free in the transaction',async()=>{
   const p=await prepared();try{
     const preview=await p.service.preview(principal(),request);assert.equal(preview.messageCount,2);assert.equal(p.f.scalar('SELECT count(*) FROM shared_records'),0);
+    assert.equal(preview.snapshot.scope,'session');assert.equal(preview.snapshot.includeProcess,true);
+    assert.equal(preview.snapshot.messages[1]!.processItems?.[0]?.details.command,'echo synthetic');
     const text=JSON.stringify(preview);assert.equal(text.includes(p.filename),false);assert.equal(text.includes('must-not-publish'),false);assert.equal(text.includes('D:/private'),false);assert.equal(text.includes('future input'),false);
     assert.equal(preview.snapshot.messages[0]!.attachments?.[0]?.kind==='uploaded_file'&&(preview.snapshot.messages[0]!.attachments?.[0] as any).available,true);
     const prepared=await p.port.previewShare({principal:principal(),request});await p.port.close();
@@ -52,6 +54,7 @@ test('share snapshots survive source edits and soft deletion, and same-key retri
     const key=randomUUID(),saved=await p.create(request,key);assert.match(saved.publicToken,/^[a-f0-9]{64}$/);
     p.f.mutate(`UPDATE messages SET content='new content' WHERE id='${last}';UPDATE sessions SET deleted_at=1 WHERE id='${session}'`);
     const publicValue=await p.port.readPublicShare({token:saved.publicToken});assert.equal(publicValue.state,'active');if(publicValue.state==='active')assert.equal(publicValue.snapshot.messages.at(-1)?.content,'answer');
+    assert.equal((await p.port.listShares({principal:principal(),limit:50,offset:0})).items[0]!.sourceState,'deleted');
     assert.deepEqual(await p.create(request,key),saved);assert.equal(p.f.scalar('SELECT count(*) FROM shared_records'),1);
     await assert.rejects(p.service.create(principal(),{...request,title:'changed intent'},key),{code:'CONFLICT'});
   }finally{await p.cleanup();}
@@ -124,6 +127,7 @@ test('a former admin may manage their immutable share but cannot learn new priva
     const saved=await p.create(request,randomUUID(),principal('admin'));
     p.f.mutate(`UPDATE users SET role='member' WHERE id='admin';UPDATE sessions SET title='new private title' WHERE id='${session}'`);
     const listed=await p.port.listShares({principal:principal('admin'),limit:50,offset:0});assert.equal(listed.items[0]!.sourceSessionTitle,null);
+    assert.equal(listed.items[0]!.sourceState,'unavailable');
     assert.equal(JSON.stringify(listed).includes('new private title'),false);
     assert.equal((await p.service.mutate(principal('admin'),'share.revoke',saved.id,randomUUID())).state,'committed');
   }finally{await p.cleanup();}

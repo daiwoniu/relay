@@ -27,25 +27,34 @@ function listFilesRecursive(directory) {
 export function getFrontendFingerprintFiles(root) {
   const client = path.join(root, 'client');
   const candidates = [
-    ...listFilesRecursive(path.join(client, 'src')),
+    ...listFilesRecursive(path.join(client, 'src')).filter((file) => !/(?:^|[/\\])__tests__(?:[/\\]|$)|\.(?:test|spec)\.[cm]?[jt]sx?$/.test(file)),
     ...listFilesRecursive(path.join(client, 'public')),
     ...['index.html', 'vite.config.ts', 'vite-public-access.mjs', 'package.json', 'package-lock.json', 'tsconfig.json', 'tsconfig.app.json', 'tsconfig.node.json'].map((file) => path.join(client, file)),
     path.join(root, 'package.json'),
-    path.join(client, 'scripts', 'check-build-budget.mjs'),
     path.join(root, 'scripts', 'lib', 'frontend-access.mjs'),
   ];
   return [...new Set(candidates.filter(fs.existsSync).map((file) => path.resolve(file)))].sort();
 }
 
-export function computeFrontendFingerprint(root) {
+function fingerprintFiles(root, files) {
   const hash = crypto.createHash('sha256');
-  for (const file of getFrontendFingerprintFiles(root)) {
+  for (const file of files) {
     hash.update(path.relative(root, file).replaceAll('\\', '/'));
     hash.update('\0');
     hash.update(fs.readFileSync(file));
     hash.update('\0');
   }
   return hash.digest('hex');
+}
+
+export function computeFrontendFingerprint(root) {
+  return fingerprintFiles(root, getFrontendFingerprintFiles(root));
+}
+
+export function computeFrontendBudgetFingerprint(root) {
+  const files = ['check-build-budget.mjs', 'build-budget.mjs', 'build-budget-baseline.json']
+    .map((file) => path.join(root, 'client', 'scripts', file)).filter(fs.existsSync).sort();
+  return fingerprintFiles(root, files);
 }
 
 export function createEmptyFrontendBuildState() {
@@ -169,11 +178,18 @@ export function prepareFrontendBuild({ root, run = defaultRun, now = Date.now, o
   onProgress('正在检查前端是否需要更新...');
   const paths = getFrontendBuildPaths(root);
   const fingerprint = computeFrontendFingerprint(root);
+  const budgetFingerprint = computeFrontendBudgetFingerprint(root);
   const buildId = fingerprint.slice(0, 12);
   const releasePath = path.join(paths.releases, buildId);
   const state = readFrontendBuildState(paths.state);
   if (state.builds?.[buildId]?.fingerprint === fingerprint && isCompleteFrontendRelease(releasePath)) {
-    const nextState = { ...state, preparedBuildId: buildId };
+    // The source/policy fingerprints do not prove that lazy resources still exist.
+    // Recheck the release on reuse without running typecheck or Vite again.
+    onProgress(state.builds[buildId].budgetFingerprint !== budgetFingerprint
+      ? '正在复核已有前端构建的体积规则...' : '正在校验已有前端构建的完整性和体积...');
+    run('node', ['scripts/check-build-budget.mjs', releasePath], { cwd: path.join(root, 'client'), timeoutMs: 60_000, captureOutput: true, onOutput });
+    const nextState = { ...state, preparedBuildId: buildId,
+      builds: { ...state.builds, [buildId]: { ...state.builds[buildId], budgetFingerprint } } };
     writeFrontendBuildState(paths.state, nextState);
     return { buildId, buildLabel: getFrontendBuildLabel(nextState, buildId), fingerprint, releasePath, reused: true, state: nextState };
   }
@@ -197,7 +213,7 @@ export function prepareFrontendBuild({ root, run = defaultRun, now = Date.now, o
     }
     promoteFrontendRelease({ distPath, releasePath });
     fs.rmSync(stagingRoot, { recursive: true, force: true });
-    const nextState = { ...state, preparedBuildId: buildId, builds: { ...state.builds, [buildId]: { fingerprint, createdAt: now() } } };
+    const nextState = { ...state, preparedBuildId: buildId, builds: { ...state.builds, [buildId]: { fingerprint, budgetFingerprint, createdAt: now() } } };
     writeFrontendBuildState(paths.state, nextState);
     return { buildId, buildLabel: getFrontendBuildLabel(nextState, buildId), fingerprint, releasePath, reused: false, state: nextState };
   } catch (error) {

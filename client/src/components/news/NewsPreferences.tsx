@@ -1,3 +1,4 @@
+import Tooltip from '../ui/Tooltip';
 import FailureNotice from '../ui/FailureNotice';
 import { useState, type FormEvent } from 'react';
 import type { NewsPersonalPreferencesDto, NewsPersonalRuleDto } from '../../generated/relay-contracts';
@@ -39,7 +40,7 @@ export default function NewsPreferences({ preferences, options, matchStats, busy
         {preferences.rules.length ? preferences.rules.map((rule) => <div className="news-preferences-rule" key={rule.id}>
           <span className={rule.kind === 'follow' ? 'follow' : 'mute'}>{rule.kind === 'follow' ? '关注' : '屏蔽'}</span>
           <span>{FIELDS.filter(([key]) => rule[key]).map(([key]) => `${fieldLabel[key]} ${labelFor(key, rule[key]!)}`).join(' + ')}</span>
-          <span title="最近 48 小时匹配的事件数">{matchStats ? `${matchStats.truncated ? '至少 ' : ''}${matchStats.counts[rule.id] ?? 0} 条` : '统计中'}</span>
+          <Tooltip content="最近 48 小时匹配的事件数" asChild><span>{matchStats ? `${matchStats.truncated ? '至少 ' : ''}${matchStats.counts[rule.id] ?? 0} 条` : '统计中'}</span></Tooltip>
           <button type="button" disabled={busy} onClick={() => { setEditingId(rule.id); setKind(rule.kind); setFields({ category: rule.category ?? '', topic: rule.topic ?? '', entity: rule.entity ?? '', source: rule.source ?? '', eventType: rule.eventType ?? '' }); setError(''); }}>编辑</button>
           <button type="button" disabled={busy} onClick={() => void onSave({ rules: preferences.rules.filter((entry) => entry.id !== rule.id) })}>移除</button>
         </div>) : <p className="news-preferences-empty">还没有规则。添加一条关注后，“我的关注”才会出现内容。</p>}

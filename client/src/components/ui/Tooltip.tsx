@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from 'react';
+import { cloneElement, isValidElement, useCallback, useEffect, useId, useRef, useState, type HTMLAttributes, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { computeFloatingPosition, type FloatingPlacement } from './floating-position';
 import { useOverlay } from './OverlayProvider';
+import { tooltipTriggerProps } from './tooltip-trigger';
 
 interface TooltipProps {
-  content: string;
+  content?: string | null;
   children: ReactNode;
   delay?: number;
   disabled?: boolean;
@@ -12,16 +13,17 @@ interface TooltipProps {
   className?: string;
   inline?: boolean;
   coexist?: boolean;
+  asChild?: boolean;
 }
 
 function supportsHover() {
   return typeof window !== 'undefined' && window.matchMedia('(hover: hover) and (pointer: fine)').matches;
 }
 
-export default function Tooltip({ content, children, delay = 300, disabled = false, placement = 'top', className = '', inline = false, coexist = false }: TooltipProps) {
+export default function Tooltip({ content, children, delay = 300, disabled = false, placement = 'top', className = '', inline = false, coexist = false, asChild = false }: TooltipProps) {
   const tooltipId = useId();
   const overlayId = `tooltip-${tooltipId}`;
-  const triggerRef = useRef<HTMLSpanElement>(null);
+  const triggerRef = useRef<HTMLElement | null>(null);
   const tooltipRef = useRef<HTMLSpanElement>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [position, setPosition] = useState({ left: 0, top: 0 });
@@ -61,7 +63,7 @@ export default function Tooltip({ content, children, delay = 300, disabled = fal
   }, [placement]);
 
   const show = (immediate = false) => {
-    if (disabled) return;
+    if (disabled || !content) return;
     clearTimer();
     if (immediate) {
       setPositioned(false);
@@ -87,29 +89,50 @@ export default function Tooltip({ content, children, delay = 300, disabled = fal
   }, [closeOverlay, coexist, overlayId]);
 
   useEffect(() => {
+    if (disabled || !content) hide();
+  }, [disabled, content]);
+
+  useEffect(() => {
     if (!visible) return;
+    const dismissOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      event.stopPropagation();
+      hide();
+    };
     const frame = requestAnimationFrame(updatePosition);
+    document.addEventListener('keydown', dismissOnEscape, true);
     window.addEventListener('resize', updatePosition);
     window.addEventListener('scroll', updatePosition, true);
     return () => {
       cancelAnimationFrame(frame);
+      document.removeEventListener('keydown', dismissOnEscape, true);
       window.removeEventListener('resize', updatePosition);
       window.removeEventListener('scroll', updatePosition, true);
     };
-  }, [updatePosition, visible]);
+  }, [updatePosition, visible, content]);
 
-  return (
-    <span
-      ref={triggerRef}
-      className={`${inline ? 'inline' : 'inline-flex'} ${className}`}
-      aria-describedby={visible ? tooltipId : undefined}
-      onMouseEnter={() => { if (supportsHover()) show(); }}
-      onMouseLeave={hide}
-      onFocus={(event) => { if ((event.target as HTMLElement).matches(':focus-visible')) show(true); }}
-      onBlur={hide}
-    >
-      {children}
-      {visible && typeof document !== 'undefined' && createPortal(
+  const trigger = asChild && isValidElement<HTMLAttributes<HTMLElement>>(children) && typeof children.type === 'string'
+    ? cloneElement(children, tooltipTriggerProps(children.props, {
+      enter(event) { triggerRef.current = event.currentTarget; if (event.pointerType !== 'touch' && supportsHover()) show(); },
+      focus(event) { triggerRef.current = event.currentTarget; if ((event.target as HTMLElement).matches(':focus-visible')) show(true); },
+      hide,
+    }, visible ? tooltipId : undefined, content))
+    : <span
+        ref={(element) => { triggerRef.current = element; }}
+        className={`${inline ? 'inline' : 'inline-flex'} ${className}`}
+        aria-describedby={visible ? tooltipId : undefined}
+        onPointerEnter={(event) => { if (event.pointerType !== 'touch' && supportsHover()) show(); }}
+        onPointerLeave={hide}
+        onPointerCancel={hide}
+        onFocus={(event) => { if ((event.target as HTMLElement).matches(':focus-visible')) show(true); }}
+        onBlur={hide}
+        onPointerDown={hide}
+      >{children}</span>;
+
+  return <>
+      {trigger}
+      {visible && content && typeof document !== 'undefined' && createPortal(
         <span
           ref={tooltipRef}
           id={tooltipId}
@@ -121,6 +144,5 @@ export default function Tooltip({ content, children, delay = 300, disabled = fal
         </span>,
         document.body,
       )}
-    </span>
-  );
+    </>;
 }

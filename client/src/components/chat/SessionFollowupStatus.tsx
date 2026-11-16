@@ -1,3 +1,4 @@
+import Tooltip from '../ui/Tooltip';
 import { useState } from 'react';
 import type { SessionFollowupDto } from '../../generated/relay-contracts';
 import { canCancelFollowup } from '../../stores/session-followups';
@@ -29,12 +30,12 @@ export function SessionFollowupStatus({ followups, onCancel, onResume }: {
       <MessageAttachmentList attachments={item.attachments} />
       <div className="whitespace-pre-wrap break-words text-[var(--color-text)]">{item.content || '附件消息'}</div>
       <div className="mt-1 text-xs text-[var(--color-text-secondary)]">{labels[item.state]}</div>
-      {canCancelFollowup(item.state) && onCancel && <button type="button" onClick={() => {
+      {canCancelFollowup(item.state) && onCancel && <Tooltip content={item.state === 'uncertain' ? '核对后移除此消息' : '取消并删除待发送消息'} asChild><button type="button" onClick={() => {
         if (item.state === 'uncertain') { setConfirmCancelId(item.id); return; }
         onCancel(item.id);
-      }} className="absolute right-2 top-2 flex h-7 w-7 items-center justify-center rounded-lg text-[var(--color-text-tertiary)] transition-colors hover:bg-[var(--color-danger-hover)] hover:text-[var(--color-status-danger)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus-ring)]" aria-label={item.state === 'uncertain' ? '核对后移除此消息' : '取消并删除待发送消息'} title={item.state === 'uncertain' ? '核对后移除此消息' : '取消并删除待发送消息'}>
+      }} className="absolute right-2 top-2 flex h-7 w-7 items-center justify-center rounded-lg text-[var(--color-text-tertiary)] transition-colors hover:bg-[var(--color-danger-hover)] hover:text-[var(--color-status-danger)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus-ring)]" aria-label={item.state === 'uncertain' ? '核对后移除此消息' : '取消并删除待发送消息'}>
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" /></svg>
-      </button>}
+      </button></Tooltip>}
       {item.state === 'paused' && onResume && <button type="button" onClick={onResume} className="mt-1 text-xs text-[var(--color-primary)]">继续排队</button>}
     </div>)}
   </div><ConfirmDialog

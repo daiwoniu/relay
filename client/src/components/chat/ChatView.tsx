@@ -1052,7 +1052,9 @@ export default function ChatView() {
       setShareUnavailableOpen(true);
       return;
     }
-    if (shareDraft?.sessionId === currentSession.id && shareDraft.scope === scope && restoreMinimizedPanel('share-create-title')) { setTitleMenuAnchor(null); return; }
+    if (shareDraft?.sessionId === currentSession.id && shareDraft.scope === scope
+      && (scope === 'session' || shareDraft.messageIds?.join(',') === messageIds?.join(','))
+      && restoreMinimizedPanel('share-create-title')) { setTitleMenuAnchor(null); return; }
     setShareDraft({ sessionId: currentSession.id, scope, messageIds, defaultTitle: currentSession.title });
     setTitleMenuAnchor(null);
   };
@@ -1066,6 +1068,16 @@ export default function ChatView() {
     });
   };
 
+  const startShareSelection = (messageId?: string) => {
+    setTitleMenuAnchor(null);
+    if (selectableShareMessageIds.size === 0 || (messageId && !selectableShareMessageIds.has(messageId))) {
+      setShareUnavailableOpen(true);
+      return;
+    }
+    setShareSelectionMode(true);
+    setSelectedShareMessageIds(new Set(messageId ? [messageId] : []));
+  };
+
   const titleMenuItems = currentSession ? createSessionMenuItems({
     session: currentSession,
     capabilities: currentCapabilities,
@@ -1076,16 +1088,7 @@ export default function ChatView() {
     onCopyId: handleTitleCopyId,
     onFork: currentSession.can_fork ? () => requestCreateSessionFromContext() : undefined,
     forkPending: forkingTarget === 'tail',
-    onSelectMessages: () => {
-      if (selectableShareMessageIds.size === 0) {
-        setTitleMenuAnchor(null);
-        setShareUnavailableOpen(true);
-        return;
-      }
-      setShareSelectionMode(true);
-      setSelectedShareMessageIds(new Set());
-      setTitleMenuAnchor(null);
-    },
+    onSelectMessages: () => startShareSelection(),
     onShareSession: () => openShareDraft('session'),
     onUnarchive: currentSession.codex_archived ? handleTitleUnarchive : undefined,
     onDelete: handleTitleDelete,
@@ -1225,6 +1228,7 @@ export default function ChatView() {
           selectedMessageIds: selectedShareMessageIds,
           onToggleShareSelection: toggleShareSelection,
           onShareMessage: (messageId) => openShareDraft('single', [messageId]),
+          onSelectMessagesShare: (messageId) => startShareSelection(messageId),
           onForkMessage: currentSession?.can_fork
             ? (messageId) => requestCreateSessionFromContext(messageId)
             : undefined,

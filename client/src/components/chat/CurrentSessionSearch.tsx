@@ -1,3 +1,4 @@
+import Tooltip from '../ui/Tooltip';
 import { useEffect, useRef, useState } from 'react';
 import IconActionButton from '../ui/IconActionButton';
 import FailureNotice from '../ui/FailureNotice';
@@ -128,13 +129,12 @@ export default function CurrentSessionSearch(props: Props) {
           <path d="M2.5 4h11M4.5 8h7M6.5 12h3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
         </svg>
       </IconActionButton>
-      <span
+      <Tooltip content={props.historyStatus === 'loading' ? '正在加载目标消息之前的历史记录' : props.historyStatus === 'error' ? '历史消息加载失败，请重试' : props.truncated ? truncatedTitle : props.error || undefined} asChild><span
         className={`shrink-0 text-center text-[11px] tabular-nums ${props.historyStatus === 'idle' ? (props.mobile ? 'min-w-[3rem]' : 'min-w-[5rem]') : 'min-w-[4.5rem]'} ${(props.status === 'error' || props.historyStatus === 'error') ? 'text-[var(--color-status-danger)]' : 'text-[var(--color-text-secondary)]'}`}
         aria-label={countAriaLabel}
-        title={props.historyStatus === 'loading' ? '正在加载目标消息之前的历史记录' : props.historyStatus === 'error' ? '历史消息加载失败，请重试' : props.truncated ? truncatedTitle : props.error || undefined}
       >
         {countLabel}
-      </span>
+      </span></Tooltip>
       {props.status === 'error' && (
         <IconActionButton label="重试搜索" variant="neutral" tooltipPlacement="bottom" onClick={props.onRetry}>
           <span aria-hidden="true">↻</span>

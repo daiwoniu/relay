@@ -1,3 +1,4 @@
+import Tooltip from '../ui/Tooltip';
 import type { EngineId } from '../../generated/relay-contracts';
 import { getEnginePresentation } from '../../engine/catalog';
 
@@ -12,12 +13,11 @@ export default function SessionEngineBadge({ engine, size = 'compact' }: { engin
     ? 'font-bold tracking-normal'
     : 'font-semibold tracking-tight shadow-sm';
   return (
-    <span
-      title={presentation.label}
+    <Tooltip content={presentation.label} asChild><span
       className={`inline-flex shrink-0 items-center justify-center border border-white/25 leading-none text-white ${sizeClass} ${textClass}`}
       style={{ backgroundColor: presentation.badgeColor }}
     >
       {presentation.shortName}
-    </span>
+    </span></Tooltip>
   );
 }

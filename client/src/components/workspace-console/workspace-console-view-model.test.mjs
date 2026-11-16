@@ -3,6 +3,57 @@ import test from 'node:test';
 import * as viewModel from './workspace-console-view-model.ts';
 const { buildWorkspaceConsoleView, buildWorkspaceSummary, buildTaskEntries, filterTaskEntries, filterTaskLanesByStatus, groupTaskEntriesByLane, selectFocusTasks, selectTaskAction, runsForTask, projectItemsForTask, formatObservedDuration, projectTaskCardDetails } = viewModel;
 
+test('primary item sorts verified links without losing other associations or changing grouping and filters', () => {
+  const original = { ...task('multi', 'waiting', ['9001000001', '9001000002']), feishuWorkItemUrls: {
+    '9001000001': 'https://project.feishu.cn/demo/story/detail/9001000001',
+    '9001000002': 'https://project.feishu.cn/demo/issue/detail/9001000002',
+  } };
+  const primary = { ...original, feishuPrimaryWorkItemId: '9001000002' };
+  const before = JSON.stringify(primary);
+  assert.deepEqual(viewModel.feishuLinksForTask(primary, null).map(link => link.workItemId), ['9001000002', '9001000001']);
+  assert.match(viewModel.feishuLinksForTask(primary, null)[0].title, /^主任务 · /);
+  assert.equal(JSON.stringify(primary), before);
+  for (const value of [null, 'unknown', '9001000003']) {
+    assert.deepEqual(viewModel.feishuLinksForTask({ ...original, feishuPrimaryWorkItemId: value }, null), viewModel.feishuLinksForTask(original, null));
+  }
+  const entries = entry => viewModel.groupTaskEntries(buildTaskEntries(buildWorkspaceConsoleView({ ...dashboard, tasks: [entry] }, null)));
+  for (const filter of ['all', 'waiting', 'unfinished', 'completed']) {
+    assert.deepEqual(filterTaskEntries(entries(primary), filter, '').map(e => [e.key, viewModel.taskEntryLane(e)]),
+      filterTaskEntries(entries(original), filter, '').map(e => [e.key, viewModel.taskEntryLane(e)]));
+  }
+  assert.deepEqual(filterTaskEntries(entries(primary), 'all', '9001000001').map(e => e.key), ['local:multi']);
+  const report = workbenchReport([parent('9001000001', 'u'), parent('9001000002', 'u')]);
+  const grouped = entry => viewModel.groupTaskEntries(buildTaskEntries(buildWorkspaceConsoleView({ ...dashboard, tasks: [entry] }, report)));
+  assert.deepEqual(grouped(primary).map(e => [e.key, viewModel.taskEntryLane(e)]), grouped(original).map(e => [e.key, viewModel.taskEntryLane(e)]));
+  assert(grouped(primary).some(e => e.key === 'local:multi'), 'primary hint must not resolve ambiguous membership into a chosen group');
+});
+
+test('completion notices distinguish role inference, old snapshots, ledger records, child results and role conflicts without moving lanes', () => {
+  const inferred = { ...responsibility.items[0], workItemId: '9001000001', typeName: '缺陷',
+    actionability: 'state_responsibility', statusName: '已修复，待验收', personalSubtasks: [], localTaskIds: [],
+    myRoleKeys: ['operator'], baseOwnerIsMe: false };
+  const notice = (item, tasks = []) => viewModel.personalIssueCompletionNotice(item, tasks);
+  assert.match(notice(inferred), /推断/);
+  const { myRoleKeys, baseOwnerIsMe, ...legacy } = inferred;
+  assert.match(notice(legacy), /旧报表缺少本人责任/);
+  const ledger = task('local-completed', 'done', [inferred.workItemId]);
+  assert.match(notice(inferred, [ledger]), /台账登记/);
+  assert.match(notice({ ...inferred, personalSubtasks: [{ id: 'child', name: '修复', passed: true }] }), /子任务已完成/);
+  assert.match(notice({ ...inferred, myRoleKeys: ['operator', 'acceptor'] }, [ledger]), /请核对本轮责任范围/);
+  assert.equal(notice({ ...inferred, myRoleKeys: ['operator', 'acceptor'] }), null);
+  assert.equal(notice(inferred, [{ ...ledger, status: 'waiting' }]), null);
+  const snapshot = { ...responsibility, items: [inferred], workbenchItems: [], localAssociated: [] };
+  const entries = buildTaskEntries(buildWorkspaceConsoleView({ ...dashboard, tasks: [] }, snapshot));
+  assert.equal(viewModel.taskEntryLane(entries[0]), 'completed');
+  assert.deepEqual(filterTaskEntries(entries, 'completed', '').map(e => e.key), ['project:9001000001']);
+  assert.deepEqual(viewModel.trackedOpenFeishuItems(snapshot).map(e => e.item.workItemId), [inferred.workItemId]);
+  const fresh = { ...snapshot, items: [{ ...inferred, myRoleKeys: ['operator', 'acceptor'] }] };
+  const afterRefresh = buildTaskEntries(buildWorkspaceConsoleView({ ...dashboard, tasks: [] }, fresh));
+  assert.equal(viewModel.taskEntryLane(afterRefresh[0]), 'unstarted');
+  assert.equal(notice(fresh.items[0]), null);
+  assert.deepEqual(viewModel.trackedOpenFeishuItems(fresh), []);
+});
+
 test('each lane status filter is independent and groups synonymous statuses', () => {
   const lanes = groupTaskEntriesByLane([
     { kind: 'local', key: 'todo', task: task('todo', 'todo') },

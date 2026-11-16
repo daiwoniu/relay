@@ -9,6 +9,9 @@ test('分享管理状态决定来源文案与允许操作', () => {
   assert.equal(presentShareManagementItem({ ...base, status: 'active', expiresAt: null }, 1000).statusLabel, '永久有效');
   assert.deepEqual(presentShareManagementItem({ ...base, status: 'expired', sourceSessionId: null, sourceSessionTitle: null }, 6000), { statusLabel: '已过期', sourceLabel: '来源已删除', canRevoke: false, canDelete: true });
   assert.equal(presentShareManagementItem({ ...base, status: 'revoked', revokedAt: 2000 }, 3000).canDelete, true);
+  assert.equal(presentShareManagementItem({ ...base, status: 'active' }, 6000).statusLabel, '已过期');
+  assert.equal(presentShareManagementItem({ ...base, status: 'active', sourceState: 'unavailable', sourceSessionTitle: null }, 1000).sourceLabel, '来源不可访问');
+  assert.equal(presentShareManagementItem({ ...base, status: 'active', sourceState: 'deleted' }, 1000).sourceLabel, '来源已删除');
 });
 
 test('分享管理分页计算偏移和边界', () => {

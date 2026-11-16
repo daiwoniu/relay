@@ -19,10 +19,11 @@ export function getSharePagination(total: number, requestedPage: number, pageSiz
 }
 
 export function presentShareManagementItem(item: ShareListItemDto, now = Date.now()) {
+  const status = item.status === 'active' && item.expiresAt !== null && item.expiresAt <= now ? 'expired' : item.status;
   return {
-    statusLabel: getShareStatusLabel(item.status, item.expiresAt, now),
-    sourceLabel: item.sourceSessionTitle || '来源已删除',
-    canRevoke: item.status === 'active',
-    canDelete: item.status === 'expired' || item.status === 'revoked',
+    statusLabel: getShareStatusLabel(status, item.expiresAt, now),
+    sourceLabel: item.sourceState === 'unavailable' ? '来源不可访问' : item.sourceState === 'deleted' || item.sourceSessionId === null ? '来源已删除' : item.sourceSessionTitle || '来源不可访问或标题未记录',
+    canRevoke: status === 'active',
+    canDelete: status === 'expired' || status === 'revoked',
   };
 }

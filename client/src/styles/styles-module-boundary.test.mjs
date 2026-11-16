@@ -7,6 +7,7 @@ const expectedImports = [
   '@import "tailwindcss";',
   '@import "./theme-foundation.css";',
   '@import "./global-base.css";',
+  '@import "./file-preview.css";',
   '@import "./markdown-foundation.css";',
   '@import "./auth.css";',
   '@import "./notification-settings.css";',

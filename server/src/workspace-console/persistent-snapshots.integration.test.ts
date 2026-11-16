@@ -23,7 +23,7 @@ test('all workspace sources survive database reopen and external read failures',
     const task = { id: 'task-a', title: 'Stored task', description: null, taskPath: null,
       taskDocumentPath: null, status: 'doing', horizon: null, nextAction: null,
       waitingOn: null, statusBasis: null, verification: null, lastVerifiedAt: null,
-      startedAt: null, completedAt: null, deliveryMatrix: [], feishuWorkItemIds: [] };
+      startedAt: null, completedAt: null, deliveryMatrix: [], feishuWorkItemIds: ['9001000001', '9001000002'], feishuPrimaryWorkItemId: '9001000002' };
     const dashboard = new WorkspaceConsoleService({ database, now: () => 1000,
       registry: async () => ({ schemaVersion: 1, generatedAt: null, tasks: [task] }),
       listRuns: async () => [], listSessions: () => [], listLinks: () => [],
@@ -67,6 +67,8 @@ test('all workspace sources survive database reopen and external read failures',
     const oldFeishu = await failedFeishu.get(true);
     const oldCodex = await failedCodex.getSnapshot(true);
     assert.equal(oldDashboard.tasks[0]?.id, 'task-a');
+    assert.equal(oldDashboard.tasks[0]?.feishuPrimaryWorkItemId, '9001000002');
+    assert.deepEqual(oldDashboard.tasks[0]?.feishuWorkItemIds, ['9001000001', '9001000002']);
     assert.equal(oldFeishu.items[0]?.workItemId, '123');
     assert.equal(oldCodex.usage?.lifetimeTokens, 1234);
     for (const value of [oldDashboard, oldFeishu, oldCodex]) {

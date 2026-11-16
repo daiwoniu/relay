@@ -98,7 +98,7 @@ test('警告和错误不会被同时存在的处理中状态遮住', () => {
 test('展示组件保持单行截断、可查看完整内容并支持手动关闭', async () => {
   const source = await readFile(new URL('./ComposerStatusNotice.tsx', import.meta.url), 'utf8');
   assert.match(source, /min-w-0 flex-1 truncate rounded-sm text-left leading-5/);
-  assert.match(source, /title=\{notice\.message\}/);
+  assert.match(source, /content=\{notice\.message\}/);
   assert.doesNotMatch(source, /-webkit-line-clamp|setExpanded|ResizeObserver/);
   assert.match(source, /aria-label=\{`查看完整提示：\$\{notice\.message\}`\}/);
   assert.match(source, /<DetailsDialog open=\{openedNotices !== null\}/);

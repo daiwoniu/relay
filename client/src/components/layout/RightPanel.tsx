@@ -1,15 +1,20 @@
 import { useEffect, useRef, useMemo, useCallback, useState } from 'react';
-import type { HtmlPreviewMode, RightPanelTab } from '../../stores/chat';
+import type { RightPanelTab } from '../../stores/chat';
 import { useChatStore } from '../../stores/chat';
 import { authorizeFile, readFile, readImagePreviewSource, revokeFile } from '../../api/filesystem';
 import ConfirmDialog from '../ui/ConfirmDialog';
+import FailureNotice from '../ui/FailureNotice';
 import Tooltip from '../ui/Tooltip';
 import { useOverlay } from '../ui/OverlayProvider';
 import { copyToClipboard } from '../../utils/clipboard';
 import { compressImageForPreview } from '../../utils/image-preview';
-import { buildFileMetadataUpdate, buildFilePreviewUpdate, disposeFilePreviewUpdate } from './file-preview-state';
+import { buildFileMetadataUpdate, buildFilePreviewUpdate, disposeFilePreviewUpdate, EMPTY_FILE_PREVIEW_MODES } from './file-preview-state';
+import { ApiError } from '../../api/client';
+import { getFilePreviewView, type FilePreviewView } from './file-preview-view';
 import { filePreviewRequestManager } from './file-preview-request-manager';
+import { completePreviewOperation, currentPreviewOperationTab, type PreviewOperationState } from './preview-operation-state';
 import { buildForceAccessFailureUpdate } from './file-preview-failure';
+import { downloadPreviewFile } from './file-preview-download';
 import { useTheme } from '../../hooks/useTheme';
 import RightPanelContent, { getFileName } from './RightPanelContent';
 import { shouldUseHtmlVisualization } from './file-preview-lines';
@@ -75,11 +80,38 @@ export default function RightPanel({ tabs, activeTabId, panelVisible, width, onC
   const { closeAllOverlays, closeOverlay, openOverlay } = useOverlay();
   const [isDragging, setIsDragging] = useState(false);
   const [isMaximized, setIsMaximized] = useState(false);
-  const [forceLoadingTabId, setForceLoadingTabId] = useState<string | null>(null);
-  const [compressingTabId, setCompressingTabId] = useState<string | null>(null);
+  const [forceOperations, setForceOperations] = useState<PreviewOperationState>({});
+  const [compressOperations, setCompressOperations] = useState<PreviewOperationState>({});
+  const downloadRequests = useRef(new Map<string, AbortController>());
+  const [downloadStates, setDownloadStates] = useState<Record<string, { busy: boolean; error?: unknown }>>({});
+  const cancelDownload = useCallback((tabId: string) => {
+    downloadRequests.current.get(tabId)?.abort();
+    downloadRequests.current.delete(tabId);
+    setDownloadStates(state => {
+      if (!(tabId in state)) return state;
+      const next = { ...state }; delete next[tabId]; return next;
+    });
+  }, []);
+  useEffect(() => {
+    const ids = new Set(tabs.map(tab => tab.id));
+    for (const id of downloadRequests.current.keys()) if (!ids.has(id)) cancelDownload(id);
+    setDownloadStates(state => {
+      const stale = Object.keys(state).filter(id => !ids.has(id));
+      if (!stale.length) return state;
+      const next = { ...state }; for (const id of stale) delete next[id]; return next;
+    });
+  }, [tabs, cancelDownload]);
+  useEffect(() => () => {
+    for (const request of downloadRequests.current.values()) request.abort();
+    downloadRequests.current.clear();
+  }, []);
+  const requestIsCurrent = (tabId: string, generation: number) => filePreviewRequestManager.isCurrent(tabId, generation);
+  const forceLoadingTabId = currentPreviewOperationTab(forceOperations, activeTabId, requestIsCurrent);
+  const compressingTabId = currentPreviewOperationTab(compressOperations, activeTabId, requestIsCurrent);
   const [copiedPath, setCopiedPath] = useState(false);
   const [mobileInfo, setMobileInfo] = useState<'force-access' | 'file-info' | null>(null);
-  const [htmlPreviewHeight, setHtmlPreviewHeight] = useState(320);
+  const [htmlPreviewSize, setHtmlPreviewSize] = useState({ tabId: '', height: 320 });
+  const htmlPreviewHeight = htmlPreviewSize.tabId === activeTabId ? htmlPreviewSize.height : 320;
   const [htmlScriptConfirmationOpen, setHtmlScriptConfirmationOpen] = useState(false);
   const [visualizationTheme, setVisualizationTheme] = useState<VisualizationThemeVariables>({});
   const dragStartX = useRef(0);
@@ -99,9 +131,17 @@ export default function RightPanel({ tabs, activeTabId, panelVisible, width, onC
   const isOpen = panelVisible;
   const effectiveWidth = isOpen ? (isMobile || isMaximized ? '100%' : `${width}px`) : '0px';
   const activeTab = tabs.find((t) => t.id === activeTabId);
+  const downloadError = activeTab ? downloadStates[activeTab.id]?.error : undefined;
+  const dismissDownloadFailure = useCallback(() => {
+    if (!activeTabId) return;
+    setDownloadStates(state => {
+      if (!state[activeTabId]?.error) return state;
+      return { ...state, [activeTabId]: { ...state[activeTabId], error: undefined } };
+    });
+  }, [activeTabId]);
   const isHtmlPreview = activeTab?.language === 'html' || activeTab?.language === 'htm';
   const htmlVisualizationEnabled = Boolean(
-    isHtmlPreview && activeTab && shouldUseHtmlVisualization(activeTab.contentSize, activeTab.htmlPreviewMode),
+    isHtmlPreview && activeTab && getFilePreviewView(activeTab) === 'preview' && shouldUseHtmlVisualization(activeTab.contentSize, 'visualization'),
   );
 
   useEffect(() => {
@@ -116,10 +156,6 @@ export default function RightPanel({ tabs, activeTabId, panelVisible, width, onC
     setMobileInfo(null);
     setHtmlScriptConfirmationOpen(false);
   }, [activeTabId, panelVisible]);
-
-  useEffect(() => {
-    setHtmlPreviewHeight(320);
-  }, [activeTabId]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -141,7 +177,7 @@ export default function RightPanel({ tabs, activeTabId, panelVisible, width, onC
       if (event.data.type === HTML_PREVIEW_HEIGHT_MESSAGE) {
         const height = Number(event.data.height);
         if (!Number.isFinite(height)) return;
-        setHtmlPreviewHeight(Math.min(20_000, Math.max(320, Math.ceil(height))));
+        setHtmlPreviewSize({ tabId: activeTabId ?? '', height: Math.min(20_000, Math.max(320, Math.ceil(height))) });
         return;
       }
       if (event.data.type !== HTML_PREVIEW_ANCHOR_MESSAGE) return;
@@ -156,11 +192,11 @@ export default function RightPanel({ tabs, activeTabId, panelVisible, width, onC
     };
     window.addEventListener('message', handlePreviewMessage);
     return () => window.removeEventListener('message', handlePreviewMessage);
-  }, []);
+  }, [activeTabId]);
 
   useEffect(() => {
     const handleEscape = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape' || !isOpen) return;
+      if (e.key !== 'Escape' || !isOpen || downloadError) return;
       if (isMaximized) {
         setIsMaximized(false);
         return;
@@ -169,7 +205,7 @@ export default function RightPanel({ tabs, activeTabId, panelVisible, width, onC
     };
     window.addEventListener('keydown', handleEscape);
     return () => window.removeEventListener('keydown', handleEscape);
-  }, [hideRightPanel, isMaximized, isOpen]);
+  }, [hideRightPanel, isMaximized, isOpen, downloadError]);
 
   // 拖拽调整宽度
   const handleDragStart = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
@@ -226,13 +262,43 @@ export default function RightPanel({ tabs, activeTabId, panelVisible, width, onC
       nonce: createHtmlPreviewNonce(),
       allowUserScripts: activeTab.htmlPreviewScriptsEnabled === true,
     }) : ''
-  ), [activeTab, htmlVisualizationEnabled, isOpen, visualizationTheme]);
+  ), [activeTab?.id, activeTab?.content, activeTab?.htmlPreviewScriptsEnabled, htmlVisualizationEnabled, isOpen, visualizationTheme]);
 
-  const handleHtmlPreviewMode = useCallback((mode: HtmlPreviewMode) => {
-    if (!activeTab || !isHtmlPreview) return;
-    if (mode === 'visualization' && !shouldUseHtmlVisualization(activeTab.contentSize, mode)) return;
-    updateRightPanelTab(activeTab.id, { htmlPreviewMode: mode });
+  const handlePreviewView = useCallback((mode: FilePreviewView) => {
+    if (!activeTab) return;
+    updateRightPanelTab(activeTab.id, {
+      previewView: mode,
+      ...(isHtmlPreview && mode !== 'git-diff' ? { htmlPreviewMode: mode === 'preview' ? 'visualization' as const : 'source' as const } : {}),
+    });
   }, [activeTab, isHtmlPreview, updateRightPanelTab]);
+
+  const handleRefresh = useCallback(async (tab: RightPanelTab) => {
+    cancelDownload(tab.id);
+    const sourcePath = tab.sourcePath || tab.title;
+    setHtmlPreviewSize({ tabId: tab.id, height: 320 });
+    const request = filePreviewRequestManager.begin(tab.id, { retainAccessToken: true });
+    if (tab.fileAccessToken) filePreviewRequestManager.trackAccessToken(tab.id, request.generation, tab.fileAccessToken);
+    updateRightPanelTab(tab.id, { ...EMPTY_FILE_PREVIEW_MODES, loading: true, fileMetadataLoading: true });
+    void buildFileMetadataUpdate(sourcePath, tab.fileAccessToken, request.signal).then((update) => {
+      if (filePreviewRequestManager.isCurrent(tab.id, request.generation)) updateRightPanelTab(tab.id, update);
+    }).catch(() => undefined);
+    try {
+      const data = await readFile(sourcePath, tab.fileAccessToken, { signal: request.signal });
+      const update = await buildFilePreviewUpdate(data, sourcePath, tab.fileAccessToken, request.signal);
+      if (!filePreviewRequestManager.isCurrent(tab.id, request.generation) || !updateRightPanelTab(tab.id, update)) {
+        disposeFilePreviewUpdate(update);
+        return;
+      }
+      if (update.documentPreview?.type === 'pdf-document') filePreviewRequestManager.trackObjectUrl(tab.id, request.generation, update.documentPreview.previewUrl);
+    } catch (error) {
+      if (!filePreviewRequestManager.isCurrent(tab.id, request.generation)) return;
+      const message = error instanceof ApiError ? error.data?.error || '刷新文件失败' : '刷新文件失败，请重试';
+      updateRightPanelTab(tab.id, {
+        ...EMPTY_FILE_PREVIEW_MODES, loading: false, content: message, previewError: message,
+        forceAccessAvailable: error instanceof ApiError && error.status === 403 && error.data?.code === 'PATH_NOT_ALLOWED' && error.data?.canForceAccess === true,
+      });
+    }
+  }, [updateRightPanelTab, cancelDownload]);
 
 
   const enableHtmlScripts = useCallback(() => {
@@ -241,54 +307,49 @@ export default function RightPanel({ tabs, activeTabId, panelVisible, width, onC
     setHtmlScriptConfirmationOpen(false);
   }, [activeTab, isHtmlPreview, updateRightPanelTab]);
 
-  // 下载文件
-  const handleDownload = useCallback((tab: RightPanelTab) => {
-    const fileName = tab.title.split(/[\\/]/).pop() || tab.title;
-    const isAbsolutePath = /^[A-Za-z]:[\\/]/.test(tab.title) || tab.title.startsWith('/') || tab.title.startsWith('~/');
-    if (isAbsolutePath) {
-      const query = new URLSearchParams({ path: tab.sourcePath || tab.title });
-      if (tab.fileAccessToken) query.set('accessToken', tab.fileAccessToken);
-      const a = document.createElement('a');
-      a.href = `/api/filesystem/download?${query.toString()}`;
-      a.download = fileName;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-    } else if (tab.isImage && tab.imageUrl) {
-      // 图片：直接用 data URL 下载
-      const a = document.createElement('a');
-      a.href = tab.imageUrl;
-      a.download = fileName;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-    } else {
-      // 文本：创建 blob 下载
-      const blob = new Blob([tab.content], { type: 'text/plain;charset=utf-8' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = fileName;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
+  const handleDownload = useCallback(async (tab: RightPanelTab) => {
+    if (downloadRequests.current.has(tab.id) || !useChatStore.getState().rightPanelTabs.some(item => item.id === tab.id)) return;
+    const request = new AbortController();
+    downloadRequests.current.set(tab.id, request);
+    const previewSignal = filePreviewRequestManager.getSignal(tab.id);
+    const onPreviewReplaced = () => cancelDownload(tab.id);
+    if (previewSignal?.aborted) { cancelDownload(tab.id); return; }
+    previewSignal?.addEventListener('abort', onPreviewReplaced, { once: true });
+    const current = () => downloadRequests.current.get(tab.id) === request
+      && !request.signal.aborted && useChatStore.getState().rightPanelTabs.some(item => item.id === tab.id);
+    setDownloadStates(state => ({ ...state, [tab.id]: { busy: true } }));
+    try {
+      await downloadPreviewFile(tab, request.signal, current);
+    } catch (error) {
+      if (current()) setDownloadStates(state => ({ ...state, [tab.id]: { busy: false, error } }));
+    } finally {
+      previewSignal?.removeEventListener('abort', onPreviewReplaced);
+      if (downloadRequests.current.get(tab.id) === request) {
+        downloadRequests.current.delete(tab.id);
+        setDownloadStates(state => ({ ...state, [tab.id]: { ...state[tab.id], busy: false } }));
+      }
     }
-  }, []);
+  }, [cancelDownload]);
 
   const handleCloseTab = useCallback((tab: RightPanelTab) => {
+    cancelDownload(tab.id);
+    setForceOperations((state) => completePreviewOperation(state, tab.id));
+    setCompressOperations((state) => completePreviewOperation(state, tab.id));
     onCloseTab(tab.id);
-  }, [onCloseTab]);
+  }, [onCloseTab, cancelDownload]);
 
   const handleCloseAllTabs = useCallback(() => {
+    for (const id of downloadRequests.current.keys()) cancelDownload(id);
+    setForceOperations({});
+    setCompressOperations({});
     closeAllRightPanelTabs();
-  }, [closeAllRightPanelTabs]);
+  }, [closeAllRightPanelTabs, cancelDownload]);
 
   const handleForceAccess = useCallback(async (tab: RightPanelTab) => {
     const sourcePath = tab.sourcePath || tab.title;
     const request = filePreviewRequestManager.begin(tab.id);
     let authorizedAccessToken: string | undefined;
-    setForceLoadingTabId(tab.id);
+    setForceOperations((state) => ({ ...state, [tab.id]: request.generation }));
     try {
       const authorization = await authorizeFile(sourcePath, { signal: request.signal });
       if (!filePreviewRequestManager.trackAccessToken(tab.id, request.generation, authorization.accessToken)) {
@@ -319,14 +380,14 @@ export default function RightPanel({ tabs, activeTabId, panelVisible, width, onC
       if (request.signal.aborted || !filePreviewRequestManager.isCurrent(tab.id, request.generation)) return;
       updateRightPanelTab(tab.id, buildForceAccessFailureUpdate(err, authorizedAccessToken));
     } finally {
-      if (filePreviewRequestManager.isCurrent(tab.id, request.generation)) setForceLoadingTabId(null);
+      setForceOperations((state) => completePreviewOperation(state, tab.id, request.generation));
     }
   }, [updateRightPanelTab]);
 
   const handleCompressedPreview = useCallback(async (tab: RightPanelTab) => {
     const request = filePreviewRequestManager.begin(tab.id, { retainAccessToken: true });
     if (tab.fileAccessToken && !filePreviewRequestManager.trackAccessToken(tab.id, request.generation, tab.fileAccessToken)) return;
-    setCompressingTabId(tab.id);
+    setCompressOperations((state) => ({ ...state, [tab.id]: request.generation }));
     try {
       const source = await readImagePreviewSource(tab.sourcePath || tab.title, tab.fileAccessToken, { signal: request.signal });
       const imageUrl = await compressImageForPreview(source, request.signal);
@@ -347,7 +408,7 @@ export default function RightPanel({ tabs, activeTabId, panelVisible, width, onC
         compressedPreviewAvailable: true,
       });
     } finally {
-      if (filePreviewRequestManager.isCurrent(tab.id, request.generation)) setCompressingTabId(null);
+      setCompressOperations((state) => completePreviewOperation(state, tab.id, request.generation));
     }
   }, [updateRightPanelTab]);
 
@@ -371,6 +432,9 @@ export default function RightPanel({ tabs, activeTabId, panelVisible, width, onC
       <aside
         ref={panelRef}
         data-right-panel
+        aria-label="文件预览"
+        aria-hidden={!isOpen}
+        inert={!isOpen}
         className={`workspace-preview-panel theme-surface${isOpen ? ' is-open' : ''}${isMobile ? ' is-mobile' : ''}${isMaximized ? ' is-maximized' : ''}${isDragging ? ' is-resizing' : ''}`}
         style={{ width: effectiveWidth }}
       >
@@ -405,6 +469,7 @@ export default function RightPanel({ tabs, activeTabId, panelVisible, width, onC
           mobileInfo={mobileInfo}
           forceLoadingTabId={forceLoadingTabId}
           compressingTabId={compressingTabId}
+          downloading={Boolean(activeTab && downloadStates[activeTab.id]?.busy)}
           isHtmlPreview={isHtmlPreview}
           sandboxedHtmlDocument={sandboxedHtmlDocument}
           htmlPreviewHeight={htmlPreviewHeight}
@@ -419,15 +484,29 @@ export default function RightPanel({ tabs, activeTabId, panelVisible, width, onC
           onCloseAllTabs={handleCloseAllTabs}
           onCopyPath={(filePath) => void handleCopyPath(filePath)}
           onForceAccess={(tab) => void handleForceAccess(tab)}
-          onDownload={handleDownload}
+          onDownload={(tab) => void handleDownload(tab)}
           onCompressedPreview={(tab) => void handleCompressedPreview(tab)}
-          onHtmlPreviewMode={handleHtmlPreviewMode}
+          onPreviewView={handlePreviewView}
+          onRefresh={(tab) => void handleRefresh(tab)}
           onRequestHtmlScripts={() => setHtmlScriptConfirmationOpen(true)}
           setMobileInfo={setMobileInfo}
         />
 
       </aside>
 
+
+      <ConfirmDialog
+        open={Boolean(downloadError)}
+        eyebrow="下载提示"
+        title="文件下载失败"
+        description={<FailureNotice error={downloadError} />}
+        subject={activeTab ? { label: '文件', value: getFileName(activeTab.title) } : undefined}
+        cancelLabel={null}
+        confirmLabel="知道了"
+        onConfirm={dismissDownloadFailure}
+        onCancel={dismissDownloadFailure}
+        tone="danger"
+      />
 
       <ConfirmDialog
         open={htmlScriptConfirmationOpen}

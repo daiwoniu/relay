@@ -4,6 +4,15 @@ import test from 'node:test';
 import { getFailurePresentation } from './failure-presentation.ts';
 import { getMessageErrorGuidance } from '../messages/message-error-guidance.ts';
 
+test('文件预览只保留错误文本时仍解释缺失路径，而不是退回未知操作异常', () => {
+  const raw = '文件不存在或已被移动，请确认路径并重新选择文件。';
+  const result = getFailurePresentation(raw);
+  assert.equal(result.raw, raw);
+  assert.match(result.description, /文件或目录已不存在/);
+  assert.match(result.suggestion, /重新选择有效的文件/);
+  assert.doesNotMatch(result.description, /未提供可识别/);
+});
+
 test('原始异常完整保留，友好说明与建议独立生成', () => {
   const raw = '{"error":{"message":"gateway auth failed","details":"provider original details\\nline 2"}}';
   const result = getFailurePresentation(raw);

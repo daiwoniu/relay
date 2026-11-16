@@ -40,3 +40,23 @@ test('标签 dispose 后复用仍提升 generation', () => {
   assert.equal(second.generation, first.generation + 1);
   assert.equal(manager.isCurrent('tab-1', first.generation), false);
 });
+
+test('刷新保留文件授权、释放旧预览并拒绝关闭后的迟到结果', () => {
+  const tokens = [];
+  const urls = [];
+  const manager = new FilePreviewRequestManager((value) => tokens.push(value), (value) => urls.push(value));
+  const initial = manager.begin('file');
+  manager.trackAccessToken('file', initial.generation, 'file-token');
+  manager.trackObjectUrl('file', initial.generation, 'blob:old');
+  const refresh = manager.begin('file', { retainAccessToken: true });
+  assert.equal(initial.signal.aborted, true);
+  assert.deepEqual(tokens, []);
+  assert.deepEqual(urls, ['blob:old']);
+  manager.trackObjectUrl('file', refresh.generation, 'blob:new');
+  manager.dispose('file');
+  assert.equal(refresh.signal.aborted, true);
+  assert.equal(manager.isCurrent('file', refresh.generation), false);
+  assert.equal(manager.trackObjectUrl('file', refresh.generation, 'blob:late'), false);
+  assert.deepEqual(tokens, ['file-token']);
+  assert.deepEqual(urls, ['blob:old', 'blob:new']);
+});

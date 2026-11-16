@@ -1,3 +1,4 @@
+import Tooltip from '../ui/Tooltip';
 import FailureNotice from '../ui/FailureNotice';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react';
 import { getChinaCalendarMonth, getChinaWeatherRange, type ChinaCalendarMonthData, type ChinaWeatherRangeData } from '../../api/china-day';
@@ -132,8 +133,8 @@ export function WorkspaceCalendarPanel({ today, anchorRef, onClose, placement }:
         const background = holiday?.isOffDay ? 'bg-emerald-300/10' : holiday ? 'bg-amber-300/10' : weekend ? 'bg-sky-300/[0.07]' : 'bg-white/[0.03]';
         return <button key={day.date} type="button" onClick={() => setSelectedDate(day.date)} aria-label={`${displayDate(day.date)}，农历${shortLunar(day.lunarDate)}${occasion ? `，${occasion}` : ''}${holiday ? holiday.isOffDay ? '，休假' : '，调休上班' : weekend ? '，周末休息' : ''}`} aria-pressed={active} className={`flex aspect-square min-w-0 flex-col items-center justify-center rounded-lg border p-1 text-center text-[11px] leading-tight hover:shadow-sm ${border} ${background} ${day.inMonth ? '' : 'opacity-50'}`}>
           <span className="relative flex w-full justify-center"><strong className={`text-base font-semibold leading-6 ${day.date === today ? 'text-cyan-300' : 'text-slate-100'}`}>{Number(day.date.slice(-2))}</strong>{holiday && <span className={`absolute right-0 top-0 text-[10px] ${holiday.isOffDay ? 'text-emerald-300' : 'text-amber-300'}`}>{holiday.isOffDay ? '休' : '班'}</span>}</span>
-          <span className="w-full truncate text-slate-400" title={day.lunarDate}>{shortLunar(day.lunarDate)}</span>
-          {occasion && <span className={`w-full truncate ${day.solarTerm ? 'text-violet-300' : festival ? 'text-rose-300' : 'text-emerald-300'}`} title={occasion}>{occasion}</span>}
+          <Tooltip content={day.lunarDate} asChild><span className="w-full truncate text-slate-400">{shortLunar(day.lunarDate)}</span></Tooltip>
+          {occasion && <Tooltip content={occasion} asChild><span className={`w-full truncate ${day.solarTerm ? 'text-violet-300' : festival ? 'text-rose-300' : 'text-emerald-300'}`}>{occasion}</span></Tooltip>}
         </button>;
       })}</div>
       {selected && <div className="mt-4 rounded-xl border border-white/10 bg-white/5 p-4 text-sm"><p className="font-medium">{displayDate(selected.date)}</p><p className="mt-1 text-slate-300">农历 {selected.lunarDate}</p><div className="mt-2 flex flex-wrap gap-2 text-xs">{selected.solarTerm && <span className="rounded bg-cyan-300/10 px-2 py-1 text-cyan-200">节气 · {selected.solarTerm}</span>}{[...selected.solarFestivals, ...selected.lunarFestivals].map((name) => <span key={name} className="rounded bg-white/10 px-2 py-1">{name}</span>)}{selected.holidayArrangement && <span className={`rounded px-2 py-1 ${selected.holidayArrangement.isOffDay ? 'bg-emerald-300/10 text-emerald-200' : 'bg-amber-300/10 text-amber-200'}`}>{selected.holidayArrangement.name} · {selected.holidayArrangement.isOffDay ? '休假' : '调休上班'}</span>}</div></div>}

@@ -1,3 +1,4 @@
+import Tooltip from '../ui/Tooltip';
 import FailureNotice from '../ui/FailureNotice';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
@@ -47,8 +48,8 @@ function NewsCard({ item, category, authenticated, canTranslate, onFollow, onMut
       <span>{item.sourceName}</span>
       {item.sourceId.startsWith('social-') && item.originalPublisher && <><span aria-hidden="true">·</span><span>作者 {item.originalPublisher}</span></>}
       <span aria-hidden="true">·</span>
-      <time dateTime={new Date(item.publishedAt).toISOString()} title={new Date(item.publishedAt).toLocaleString('zh-CN')}>{relativeNewsTime(item.publishedAt)}</time>
-      {item.timeIsFallback && <span title="来源未提供准确发布时间">时间待核对</span>}
+      <Tooltip content={new Date(item.publishedAt).toLocaleString('zh-CN')} asChild><time dateTime={new Date(item.publishedAt).toISOString()}>{relativeNewsTime(item.publishedAt)}</time></Tooltip>
+      {item.timeIsFallback && <Tooltip content="来源未提供准确发布时间" asChild><span>时间待核对</span></Tooltip>}
     </div>
     <h3><a href={item.url} target="_blank" rel="noopener noreferrer">{visible.title}</a></h3>
     {visible.description && <p className="news-card-description">{visible.description}</p>}

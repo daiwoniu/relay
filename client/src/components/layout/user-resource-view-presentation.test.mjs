@@ -42,7 +42,7 @@ test('管理视图没有选中会话时只提供浏览空态且不能创建会�
 test('全部用户视图在资源栏提供显示全部项目开关且仅该视图显示', () => {
   assert.match(sidebar, /const visibleProjects = accountScope === 'all' && !ownerFilterId && !showAllProjects/);
   assert.match(sidebar, /showAllProjectsToggle=\{resourceViewType === 'all' \? \{ checked: showAllProjects, onToggle: toggleShowAllProjects \} : null\}/);
-  assert.match(workbench, /showAllProjectsToggle && <button/);
+  assert.match(workbench, /showAllProjectsToggle && <Tooltip/);
   assert.match(workbench, /aria-pressed=\{showAllProjectsToggle\.checked\}/);
   assert.match(workbench, /aria-label="显示全部项目"/);
 });

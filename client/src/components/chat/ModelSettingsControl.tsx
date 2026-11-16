@@ -1,3 +1,4 @@
+import Tooltip from '../ui/Tooltip';
 import { useRef, useState } from 'react';
 import type { EngineId, EngineModelDto } from '../../generated/relay-contracts';
 import Popover from '../ui/Popover';
@@ -66,7 +67,7 @@ export default function ModelSettingsControl({ models, modelId, reasoningEffort,
     <>
       <button ref={buttonRef} type="button" onClick={show} aria-haspopup="dialog" aria-expanded={open} aria-label={`切换模型，当前${label}${isFast ? '，快速模式' : ''}`} className="composer-compact-trigger model-settings-trigger group">
         <span className="min-w-0 truncate whitespace-nowrap font-medium">{loading && !models.length ? '模型加载中…' : label}</span>
-        {isFast && <span className="model-settings-speed-indicator" title="快速模式" aria-hidden="true">⚡</span>}
+        {isFast && <Tooltip content="快速模式" asChild><span className="model-settings-speed-indicator" aria-hidden="true">⚡</span></Tooltip>}
         <svg width="10" height="10" viewBox="0 0 12 12" fill="none" className="model-settings-chevron" aria-hidden="true">
           <path d="M3 4.5l3 3 3-3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
         </svg>

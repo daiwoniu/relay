@@ -6,6 +6,7 @@ export type PreviewStateTone = 'empty' | 'loading' | 'warning' | 'danger';
 export default function PreviewState({
   title,
   description,
+  error,
   tone = 'empty',
   action,
   hidden = false,
@@ -13,6 +14,7 @@ export default function PreviewState({
 }: {
   title: string;
   description?: string;
+  error?: unknown;
   tone?: PreviewStateTone;
   action?: ReactNode;
   hidden?: boolean;
@@ -34,7 +36,7 @@ export default function PreviewState({
       </span>
       <div className="workspace-preview-state__copy">
         <div className="workspace-preview-state__title">{title}</div>
-        {description && <div className="workspace-preview-state__description">{tone === 'danger' ? <FailureNotice error={description} /> : description}</div>}
+        {Boolean(description || error) && <div className="workspace-preview-state__description">{tone === 'danger' ? <FailureNotice error={error ?? description} /> : description}</div>}
       </div>
       {action && <div className="workspace-preview-state__action">{action}</div>}
     </div>

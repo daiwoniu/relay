@@ -43,6 +43,7 @@ export interface FlowInput {
 }
 export interface FlowUiState { expanded: Record<string, boolean>; details: Record<string, boolean>; panelExpanded?: boolean; panelSettled?: boolean; selectedNodeId?: string; grouping?: FlowGrouping; categoryOpen?: Partial<Record<FlowGrouping, string>>; view?: ProcessView }
 export interface ProcessFlowContext {
+  readOnly?: boolean;
   id: string;
   sessionId: string;
   turnId: string;

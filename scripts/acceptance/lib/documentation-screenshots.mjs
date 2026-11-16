@@ -24,7 +24,7 @@ export async function captureDocumentationScreenshots({ page, runtime, config })
   await page.setViewport({ width: 1600, height: 1100, deviceScaleFactor: 1 }, { mobile: false });
   await page.navigate(`${config.origin}/?session=a1111111-1111-4111-8111-111111111111`);
   await page.waitForStable({ timeoutMs: config.timeouts?.navigationMs });
-  for (const scene of ['assistant-list', 'assistant-time', 'assistant-category', 'preview-markdown', 'preview-git', 'html-visual', 'html-source', 'engine-maintenance']) {
+  for (const scene of ['assistant-list', 'assistant-time', 'assistant-category', 'preview-markdown', 'preview-markdown-source', 'preview-git', 'html-visual', 'html-source', 'engine-maintenance']) {
     // Close the preview before opening maintenance, through the real UI.
     let prepared;
     try { prepared = await page.prepareDocumentationScene(scene); }

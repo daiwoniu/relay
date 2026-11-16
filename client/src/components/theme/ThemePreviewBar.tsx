@@ -1,3 +1,4 @@
+import Tooltip from '../ui/Tooltip';
 import { useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { ClosePanelIcon, RestorePanelIcon } from '../ui/MinimizedPanelBar';
@@ -46,8 +47,8 @@ export default function ThemePreviewBar({ open, mobile = false, saving = false, 
         </div>
         <div className="minimized-panel-bar__actions">
           <button type="button" onClick={onSave} disabled={saving || saveDisabled} className="minimized-panel-bar__primary text-[var(--theme-on-primary)]">{saving ? '保存中…' : '保存主题'}</button>
-          <button ref={restoreButtonRef} type="button" onClick={onRestore} aria-label="返回编辑" title="返回编辑"><RestorePanelIcon /></button>
-          <button type="button" onClick={onCancel} disabled={saving} aria-label="关闭主题预览" title="关闭主题预览" className="minimized-panel-bar__close"><ClosePanelIcon /></button>
+          <Tooltip content="返回编辑" asChild><button ref={restoreButtonRef} type="button" onClick={onRestore} aria-label="返回编辑"><RestorePanelIcon /></button></Tooltip>
+          <Tooltip content="关闭主题预览" asChild><button type="button" onClick={onCancel} disabled={saving} aria-label="关闭主题预览" className="minimized-panel-bar__close"><ClosePanelIcon /></button></Tooltip>
         </div>
     </div>,
     slot,

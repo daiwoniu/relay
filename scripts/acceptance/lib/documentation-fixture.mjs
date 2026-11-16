@@ -115,9 +115,10 @@ export async function prepareDocumentationScene(scene) {
     const link = await until(() => [...document.querySelectorAll('a,button,span[role="button"]')].find(el => el.getAttribute('href') === path || (el.textContent.trim() === `打开 ${html ? 'preview.html' : 'README.md'}` && el.getAttribute('role') === 'button')));
     link.click();
     await until(() => document.querySelector('input[aria-label="文件路径"]'));
-    const label = scene === 'preview-git' ? 'Git 变更' : scene === 'html-visual' ? '可视化' : scene === 'html-source' ? '源码' : '内容';
+    const label = { 'preview-markdown': '预览', 'preview-markdown-source': '源码', 'preview-git': 'Git 变更', 'html-visual': '可视化', 'html-source': '源码' }[scene];
+    if (!label) throw new Error('Unsupported documentation preview scene');
     await clickText('[aria-label="文件预览模式"] button, [aria-label="HTML 预览模式"] button', label);
-    if (html && scene === 'html-visual') await until(() => document.querySelector('iframe[title^="HTML 可视化："]'));
+    if (html && scene === 'html-visual') await until(() => document.querySelector('iframe[aria-label^="HTML 可视化："]'));
   }
   await sleep(700);
   await document.fonts.ready;

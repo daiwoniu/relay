@@ -1,3 +1,4 @@
+import Tooltip from '../ui/Tooltip';
 import { useCallback, useState } from 'react';
 import type { EngineId, EngineStatusDto } from '../../generated/relay-contracts';
 import Popover from '../ui/Popover';
@@ -33,12 +34,11 @@ export default function EngineSelector({ value, statuses, locked, mobile = false
 
   return (
     <div className={`relative flex min-w-0 items-center gap-1.5 whitespace-nowrap max-w-[45%] overflow-hidden ${mobile ? 'shrink-0' : 'shrink'}`}>
-      <button
+      <Tooltip content={fallbackNotice || (locked ? '查看会话引擎' : '选择新会话引擎')} asChild><button
         type="button"
         aria-haspopup="dialog"
         aria-expanded={anchorRect !== null}
         aria-label={locked && value ? `查看 ${engineLabel(value)} 引擎详情` : '选择 AI 引擎'}
-        title={fallbackNotice || (locked ? '查看会话引擎' : '选择新会话引擎')}
         onClick={(event) => {
           const next = event.currentTarget.getBoundingClientRect();
           setAnchorRect((current) => current ? null : next);
@@ -52,7 +52,7 @@ export default function EngineSelector({ value, statuses, locked, mobile = false
             <path d="M3 4.5l3 3 3-3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
         )}
-      </button>
+      </button></Tooltip>
       {fallbackNotice && <span className="hidden text-[11px] text-[var(--color-status-warning)] sm:inline">已临时回退</span>}
 
       <Popover

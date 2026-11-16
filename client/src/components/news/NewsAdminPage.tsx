@@ -1,3 +1,4 @@
+import Tooltip from '../ui/Tooltip';
 import { useEffect, useState, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
 import FailureNotice from '../ui/FailureNotice';
@@ -129,10 +130,10 @@ export default function NewsAdminPage() {
             <div>
               <strong>{entry.name}</strong>
               <span>{entry.enabled ? '启用' : '停用'} · {entry.region === 'cn' ? '国内' : '海外'} · {sourceKindLabels[entry.kind]} · 每 {entry.intervalMinutes} 分钟</span>
-              <small title="上次采集是最近一次采集尝试处理的条目数，失败或内容未变化时为 0；不是一段时间内的新增数">
+              <Tooltip content="上次采集是最近一次采集尝试处理的条目数，失败或内容未变化时为 0；不是一段时间内的新增数" asChild><small>
                 {entry.state?.lastCheckedAt == null ? '尚未采集' : `上次采集 ${entry.state.lastFetchedCount ?? 0} 条（单次 · ${new Date(entry.state.lastCheckedAt).toLocaleString('zh-CN')}）`}
                 {' · '}总采集 {entry.totalItemCount} 条（累计入库）
-              </small>
+              </small></Tooltip>
               {entry.state?.lastError && <small>最近错误：{entry.state.lastError}</small>}
             </div>
             <div className="news-admin-actions"><button type="button" onClick={() => selectSource(entry)}>编辑</button><button type="button" disabled={busy || !entry.enabled} onClick={() => void run(() => refreshAdminNewsSource(entry.id), '已提交采集请求')}>立即采集</button></div>

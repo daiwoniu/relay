@@ -4,6 +4,17 @@ import * as taskLaunch from './workspace-task-launch.ts';
 import { workbenchActionCompleted } from './workspace-console-view-model.ts';
 const { buildWorkspaceTaskDraft, clearWorkspaceTaskLaunch, prepareWorkspaceTaskLaunch, readWorkspaceTaskLaunch } = taskLaunch;
 
+test('task draft uses only an explicitly registered primary item as a positioning hint', () => {
+  const task = { id: 'local-task', title: '任务', statusBasis: null, nextAction: null, taskDocumentPath: null,
+    feishuWorkItemIds: ['9001000001', '9001000002'], feishuPrimaryWorkItemId: '9001000002' };
+  const draft = buildWorkspaceTaskDraft(task);
+  assert.match(draft, /台账登记的主飞书工作项：9001000002/);
+  assert.match(draft, /请核对实际责任及其他关联项/);
+  for (const primary of [undefined, null, 'unknown', '9001000003']) {
+    assert.doesNotMatch(buildWorkspaceTaskDraft({ ...task, feishuPrimaryWorkItemId: primary }), /主飞书工作项/);
+  }
+});
+
 test('flow tracking continues an existing session even when personal work is completed but the whole workflow remains open', () => {
   const item={workItemId:'9001000037',flowFinished:false,stateKey:'doing',isArchivedState:false,myNodes:[{id:'n',phase:'completed'}],mySubtasks:[],currentNodeNames:['生产验收']};
   const entry={kind:'parent',key:'parent:9001000037',item};

@@ -10,10 +10,10 @@ import UserAvatar from '../account/UserAvatar';
 import Popover from '../ui/Popover';
 import Tooltip from '../ui/Tooltip';
 import { selectSidebarCodexQuota } from './sidebar-codex-quota';
+import { MenuIcon } from '../icons/MenuIcon';
 
 function MenuGlyph({ type }: { type: 'share' | 'trash' | 'accounts' | 'server' | 'logout' }) {
-  if (type === 'share') return <svg viewBox="0 0 18 18" fill="none" aria-hidden="true"><circle cx="5" cy="9" r="2" stroke="currentColor" strokeWidth="1.4"/><circle cx="13" cy="5" r="2" stroke="currentColor" strokeWidth="1.4"/><circle cx="13" cy="13" r="2" stroke="currentColor" strokeWidth="1.4"/><path d="m6.8 8.1 4.4-2.2M6.8 9.9l4.4 2.2" stroke="currentColor" strokeWidth="1.4"/></svg>;
-  if (type === 'trash') return <svg viewBox="0 0 18 18" fill="none" aria-hidden="true"><path d="M4 5h10M7 3h4l.5 2h-5L7 3Zm-1.5 4 .6 7h5.8l.6-7M8 8v4M10 8v4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/></svg>;
+  if (type === 'share' || type === 'trash') return <MenuIcon type={type} size={18} />;
   if (type === 'accounts') return <svg viewBox="0 0 18 18" fill="none" aria-hidden="true"><circle cx="6.8" cy="5.7" r="2.2" stroke="currentColor" strokeWidth="1.4"/><path d="M2.8 13.7c.5-2.8 1.8-4.2 4-4.2 1.3 0 2.3.5 3 1.4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/><circle cx="13.3" cy="12.7" r="2.1" stroke="currentColor" strokeWidth="1.2"/><path d="M13.3 9.7v.9m0 4.2v.9m3-3h-.9m-4.2 0h-.9m5.1-2.1-.6.6m-3 3-.6.6m4.2 0-.6-.6m-3-3-.6-.6" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round"/></svg>;
   if (type === 'server') return <svg viewBox="0 0 18 18" fill="none" aria-hidden="true"><rect x="3" y="3" width="12" height="4.5" rx="1.2" stroke="currentColor" strokeWidth="1.4"/><rect x="3" y="10.5" width="12" height="4.5" rx="1.2" stroke="currentColor" strokeWidth="1.4"/><path d="M5.5 5.25h.01M8 5.25h4.5M5.5 12.75h.01M8 12.75h4.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/></svg>;
   return <svg viewBox="0 0 18 18" fill="none" aria-hidden="true"><path d="M7.5 3.5H4.8A1.3 1.3 0 0 0 3.5 4.8v8.4a1.3 1.3 0 0 0 1.3 1.3h2.7M11 6l3 3-3 3M14 9H7" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/></svg>;
@@ -177,10 +177,10 @@ export default function UserMenu({
           {user ? <UserAvatar user={user} size="sm" /> : <span className="user-menu__trigger-avatar">A</span>}
           <span className="min-w-0 flex-1 truncate text-xs font-medium text-[var(--color-text)]">{user?.displayName || user?.username || 'admin'}</span>
           {quota.length > 0 ? <span className="user-menu__quota-pills" aria-label="Codex 剩余额度">
-            {quota.map((item) => <span key={item.key} className={`user-menu__quota-pill${item.remaining <= 20 ? ' user-menu__quota-pill--low' : ''}${item.remaining === 0 ? ' user-menu__quota-pill--empty' : ''}`} role="meter" aria-label={`${item.window}剩余额度`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={item.remaining} aria-valuetext={`剩余 ${item.remaining}%`} title={`Codex ${item.window}：剩余 ${item.remaining}%。${item.reset || '重置时间未提供'}${item.reason ? `；${item.reason}` : ''}`}>
+            {quota.map((item) => <Tooltip key={item.key} content={`Codex ${item.window}：剩余 ${item.remaining}%。${item.reset || '重置时间未提供'}${item.reason ? `；${item.reason}` : ''}`} asChild><span className={`user-menu__quota-pill${item.remaining <= 20 ? ' user-menu__quota-pill--low' : ''}${item.remaining === 0 ? ' user-menu__quota-pill--empty' : ''}`} role="meter" aria-label={`${item.window}剩余额度`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={item.remaining} aria-valuetext={`剩余 ${item.remaining}%`}>
               <span className="user-menu__quota-fill" style={{ width: `${item.remaining}%` }} />
               <span className="user-menu__quota-content"><span>{item.label}</span><strong>{item.remaining}%</strong></span>
-            </span>)}
+            </span></Tooltip>)}
           </span> : <svg className={`shrink-0 transition-transform ${anchorRect ? 'rotate-180' : ''}`} width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="m4 6 4 4 4-4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/></svg>}
         </button>
         {quotaWarning && <Tooltip content={warningText} coexist><button type="button" className="user-menu__quota-warning" aria-label="Codex 额度更新失败，查看提醒" onMouseDown={(event) => event.stopPropagation()} onClick={(event) => { onClose(); setWarningAnchor(warningAnchor ? null : event.currentTarget.getBoundingClientRect()); }}><svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 2.2 14.3 13H1.7L8 2.2Z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round"/><path d="M8 6v3.4M8 11.4h.01" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/></svg></button></Tooltip>}

@@ -16,7 +16,6 @@ const store = fs.readFileSync(new URL('../../stores/chat.ts', import.meta.url), 
 const requestManager = fs.readFileSync(new URL('file-preview-request-manager.ts', import.meta.url), 'utf8');
 const metadata = fs.readFileSync(new URL('file-preview-metadata.ts', import.meta.url), 'utf8');
 const iconActionButton = fs.readFileSync(new URL('../ui/IconActionButton.tsx', import.meta.url), 'utf8');
-const hoverCard = fs.readFileSync(new URL('../ui/HoverCard.tsx', import.meta.url), 'utf8');
 
 test('路径栏支持选择和独立复制且不再使用文件路径悬浮卡', () => {
   assert.match(panel, /readOnly[\s\S]*value=\{activeTab\.title\}/);
@@ -27,18 +26,17 @@ test('路径栏支持选择和独立复制且不再使用文件路径悬浮卡',
   assert.doesNotMatch(panel, /title="文件路径"/);
 });
 
-test('文件信息在桌面悬停卡与跨端点击弹窗中共用同一内容', () => {
+test('文件信息仅使用简短悬停提示并通过点击弹窗查看详情', () => {
   assert.match(panel, /label="文件信息"/);
-  assert.match(panel, /<HoverCard[\s\S]*title="文件信息"/);
+  assert.doesNotMatch(panel, /title="文件信息"/);
   assert.match(panel, /disabled=\{isMobile\}/);
   assert.match(panel, /setMobileInfo\('file-info'\)/);
   assert.match(panel, /<FileMetadataContent[\s\S]*metadata=\{activeTab\.fileMetadata\}/);
   assert.match(panel, /mobileInfo === 'file-info'/);
   assert.match(panel, /containerClassName=\{isMobile \? '!items-end !p-0'/);
-  assert.match(panel, /label="文件信息"[\s\S]*overlayIgnore=\{false\}/);
+  assert.match(panel, /label="文件信息"[^\n]*tooltip=\{!isMobile\}/);
   assert.match(iconActionButton, /overlayIgnore = true/);
   assert.match(iconActionButton, /data-overlay-ignore=\{overlayIgnore \? true : undefined\}/);
-  assert.match(hoverCard, /target\.closest\('\[data-overlay-ignore\]'\)/);
   assert.match(metadata, /formatFileMetadataSize/);
   assert.match(metadata, /formatFileMetadataTime/);
   assert.match(metadata, /getFileMetadataTypeLabel/);
@@ -59,9 +57,8 @@ test('移动端文件信息与临时授权说明使用不同图标', () => {
   assert.match(panel, /data-icon="file-access-info"/);
 });
 
-test('预览标签和路径栏使用实际文件类型图标', () => {
+test('预览标签使用实际文件类型图标', () => {
   assert.match(panel, /<FileTypeIcon filePath=\{tab\.sourcePath \|\| tab\.title\} size=\{12\}/);
-  assert.match(panel, /<FileTypeIcon filePath=\{activeTab\.sourcePath \|\| activeTab\.title\} size=\{12\}/);
 });
 
 test('文本预览显示不可选中的独立行号栏且不改变高亮内容', () => {
@@ -84,7 +81,7 @@ test('大代码文件跳过同步高亮和行号并使用可取消的分帧纯�
   assert.match(panel, /largeCodePreview \? \[\] : activeTab\?\.language \? buildPreviewLineNumbers/);
   assert.match(panel, /<ProgressiveCodePreview key=\{activeTab\.id\} content=\{activeTab\.content\}/);
   assert.match(panel, /大文件已关闭语法高亮和行号/);
-  assert.match(panel, /shouldUseHtmlVisualization\(activeTab\.contentSize, activeTab\.htmlPreviewMode\)/);
+  assert.match(panel, /getFilePreviewView\(activeTab\) === 'preview'/);
   assert.match(panel, /activeTab=\{isOpen \? activeTab : undefined\}/);
   const progressivePreview = fs.readFileSync(new URL('ProgressiveCodePreview.tsx', import.meta.url), 'utf8');
   assert.match(progressivePreview, /return startProgressiveTextPreview/);

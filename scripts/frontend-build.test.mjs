@@ -10,6 +10,7 @@ import {
   getFrontendBuildStatus,
   promoteFrontendRelease,
   prepareFrontendBuild,
+  computeFrontendFingerprint,
   prepareFrontendBuildInWorker,
   readFrontendBuildState,
   resolveFrontendBuildForLaunch,
@@ -20,6 +21,7 @@ import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import { createServiceFileLogger } from './lib/service-file-logging.mjs';
 import { createLauncherOutputWriter } from './lib/launcher-core.mjs';
+import { collectBuildBudget } from '../client/scripts/build-budget.mjs';
 
 test('生产构建标签使用紧凑本地时间与七位短 ID', () => {
   const createdAt = new Date(2026, 7, 9, 14, 10).getTime();
@@ -148,15 +150,113 @@ test('版本化前端构建准备、复用、激活并检测源码陈旧', () =>
     assert.equal(getFrontendBuildStatus(root).activeBuildLabel, first.buildLabel);
     assert.equal(getFrontendBuildStatus(root).fresh, true);
     progress.length=0;
-    const second = prepareFrontendBuild({ root, onProgress: line => progress.push(line), run: () => assert.fail('完整 release 不应重复构建') });
+    const second = prepareFrontendBuild({ root, onProgress: line => progress.push(line), run: (command, args) => {
+      assert.equal(command, 'node'); assert.deepEqual(args, ['scripts/check-build-budget.mjs', first.releasePath]);
+    } });
     assert.equal(second.reused, true);
-    assert.deepEqual(progress,['正在检查前端是否需要更新...'],'cache reuse must not claim a new build is running');
+    assert.deepEqual(progress,['正在检查前端是否需要更新...', '正在校验已有前端构建的完整性和体积...'],'cache reuse validates without claiming a new build');
     fs.appendFileSync(path.join(root, 'client', 'src', 'main.tsx'), '\nexport const changed = true;');
     assert.equal(getFrontendBuildStatus(root).fresh, false);
     assert.equal(getFrontendBuildStatus(root).reason, '前端源码较活动构建更新');
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
+});
+
+test('仅修改测试不改变产物指纹，也不重复打包', () => {
+  const root = createRoot();
+  try {
+    const first = prepareFrontendBuild({ root, run: successfulRunner });
+    activatePreparedFrontendBuild(root);
+    const fingerprint = computeFrontendFingerprint(root);
+    fs.writeFileSync(path.join(root, 'client', 'src', 'main.test.mjs'), 'test only');
+    fs.mkdirSync(path.join(root, 'client', 'src', '__tests__'));
+    fs.writeFileSync(path.join(root, 'client', 'src', '__tests__', 'fixture.ts'), 'test fixture');
+    assert.equal(computeFrontendFingerprint(root), fingerprint);
+    assert.equal(getFrontendBuildStatus(root).fresh, true);
+    const reused = prepareFrontendBuild({ root, run: (command, args) => {
+      assert.equal(command, 'node'); assert.deepEqual(args, ['scripts/check-build-budget.mjs', first.releasePath]);
+    } });
+    assert.equal(reused.buildId, first.buildId);
+    assert.equal(reused.reused, true);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('预算脚本、策略与基线变更仅复核旧产物，不能跳过门禁或重新打包', () => {
+  const root = createRoot();
+  try {
+    const first = prepareFrontendBuild({ root, run: successfulRunner });
+    const fingerprint = computeFrontendFingerprint(root);
+    for (const name of ['check-build-budget.mjs', 'build-budget.mjs', 'build-budget-baseline.json']) {
+      fs.writeFileSync(path.join(root, 'client', 'scripts', name), `changed ${name}`);
+      assert.equal(computeFrontendFingerprint(root), fingerprint);
+      const calls = [], progress = [];
+      const reused = prepareFrontendBuild({ root, onProgress: line => progress.push(line), run: (command, args, options) => {
+        calls.push({ command, args }); assert.equal(options.captureOutput, true);
+      } });
+      assert.deepEqual(calls, [{ command: 'node', args: ['scripts/check-build-budget.mjs', first.releasePath] }]);
+      assert.match(progress.at(-1), /复核已有前端构建/);
+      assert.equal(reused.buildId, first.buildId);
+      assert.equal(reused.reused, true);
+      prepareFrontendBuild({ root, run: (command, args) => {
+        assert.equal(command, 'node'); assert.deepEqual(args, ['scripts/check-build-budget.mjs', first.releasePath]);
+      } });
+    }
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('缓存预算复核失败不修改活动指针或删除已有release', () => {
+  const root = createRoot();
+  try {
+    const first = prepareFrontendBuild({ root, run: successfulRunner });
+    activatePreparedFrontendBuild(root);
+    const statePath = getFrontendBuildPaths(root).state, before = fs.readFileSync(statePath, 'utf8');
+    fs.appendFileSync(path.join(root, 'client', 'scripts', 'check-build-budget.mjs'), '\nnew policy');
+    assert.throws(() => prepareFrontendBuild({ root, run: command => { assert.equal(command, 'node'); throw new Error('异常增长'); } }), /异常增长/);
+    assert.equal(fs.readFileSync(statePath, 'utf8'), before);
+    assert.equal(fs.existsSync(path.join(first.releasePath, 'assets', 'app-abcdef12.js')), true);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('缓存源码和策略均未变化时，误删的异步资源仍会阻止复用且保留活动状态', () => {
+  const root = createRoot();
+  try {
+    const run = (command, args) => {
+      if (command === 'node') return collectBuildBudget(args[1], { boot: ['index.html'] });
+      successfulRunner(command, args);
+      if (command !== 'npm' || !args.includes('vite')) return;
+      const outDir = args[args.indexOf('--outDir') + 1];
+      fs.mkdirSync(path.join(outDir, '.vite'));
+      fs.writeFileSync(path.join(outDir, 'static-share-script.js'), 'ok');
+      fs.writeFileSync(path.join(outDir, 'assets', 'lazy.js'), 'ok');
+      fs.writeFileSync(path.join(outDir, '.vite', 'manifest.json'), JSON.stringify({
+        'index.html': { file: 'assets/app-abcdef12.js', dynamicImports: ['lazy'] },
+        lazy: { file: 'assets/lazy.js' },
+      }));
+    };
+    const first = prepareFrontendBuild({ root, run });
+    activatePreparedFrontendBuild(root);
+    const statePath = getFrontendBuildPaths(root).state, before = fs.readFileSync(statePath, 'utf8');
+    fs.unlinkSync(path.join(first.releasePath, 'assets', 'lazy.js'));
+    assert.throws(() => prepareFrontendBuild({ root, run }), /ENOENT/);
+    assert.equal(fs.readFileSync(statePath, 'utf8'), before);
+    assert.equal(fs.existsSync(path.join(first.releasePath, 'index.html')), true);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('未记录预算身份的已有构建必须复核，精确预构建仍绑定准备时的验证', () => {
+  const root = createRoot();
+  try {
+    const first = prepareFrontendBuild({ root, run: successfulRunner });
+    const paths = getFrontendBuildPaths(root), state = readFrontendBuildState(paths.state);
+    delete state.builds[first.buildId].budgetFingerprint;
+    writeFrontendBuildState(paths.state, state);
+    let checks = 0;
+    prepareFrontendBuild({ root, run: command => { assert.equal(command, 'node'); checks += 1; } });
+    assert.equal(checks, 1);
+    fs.appendFileSync(path.join(root, 'client', 'scripts', 'check-build-budget.mjs'), '\nfuture policy');
+    assert.equal(verifyPreparedFrontendBuild(root, first.buildId).buildId, first.buildId);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
 test('构建阶段和成功工具输出落盘，终端保持简洁且文件日志脱敏', async () => {

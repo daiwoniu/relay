@@ -100,6 +100,29 @@ test('关闭处理过程时移除全部过程字段', () => {
   assert.equal(assistant.changedFilesIncomplete, undefined);
 });
 
+test('分享保留范围、过程选择和回合关联，授权结果与实测时间不丢失', () => {
+  const snapshot = buildShareSnapshot([message({
+    id: 'approval-reply', role: 'assistant', content: '完成', turn_id: 'turn-share', created_at: 2,
+    items: JSON.stringify([{ id: 'approval', type: 'interaction', status: 'completed', details: {
+      title: '命令授权', interactionKind: 'command_approval', resolvedAction: 'decline',
+      decisionSource: 'user', effectiveScope: null, trustExpiresAt: null, decidedAt: 20,
+      firstObservedAt: 10, completedObservedAt: 20, requestId: 'private',
+    } }]),
+  })], { scope: 'session', includeProcess: true });
+  assert.equal(snapshot.scope, 'session');
+  assert.equal(snapshot.includeProcess, true);
+  assert.equal(snapshot.messages[0].turnId, 'turn-share');
+  const details = snapshot.messages[0].processItems![0].details;
+  assert.equal(details.resolvedAction, 'decline');
+  assert.equal(details.interactionKind, 'command_approval');
+  assert.equal(details.decisionSource, 'user');
+  assert.equal(details.effectiveScope, null);
+  assert.equal(details.decidedAt, 20);
+  assert.equal(details.firstObservedAt, 10);
+  assert.equal(details.completedObservedAt, 20);
+  assert.equal(details.requestId, undefined);
+});
+
 test('开启处理过程时只保留展示字段并清除敏感和可执行信息', () => {
   const assistant = buildShareSnapshot(messages, { scope: 'single', includeProcess: true, messageIds: ['assistant-1'] }).messages[0];
   assert.equal(assistant.processContent, '处理过程');

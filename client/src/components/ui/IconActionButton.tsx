@@ -20,6 +20,7 @@ export default function IconActionButton({
   variant = 'sidebar',
   overlayIgnore = true,
   disabled,
+  title,
   ...props
 }: IconActionButtonProps) {
   const hoverClass = variant === 'sidebar'
@@ -39,5 +40,5 @@ export default function IconActionButton({
     </button>
   );
 
-  return tooltip ? <Tooltip content={label} disabled={disabled} placement={tooltipPlacement}>{button}</Tooltip> : button;
+  return tooltip ? <Tooltip content={title || label} disabled={disabled} placement={tooltipPlacement}>{button}</Tooltip> : button;
 }

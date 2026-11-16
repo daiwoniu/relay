@@ -418,7 +418,7 @@ export function SessionRow({ scope, session, active, onSelect, onMenu, renamingT
               </Tooltip>
             </div>
           )}
-          {session.codex_archived && <span title="已归档" aria-label="已归档" className="inline-flex w-5 items-center justify-center text-[var(--color-text-tertiary)]"><svg aria-hidden="true" width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor"><path d="M2 2h12v3H2zM3 5v9h10V5M6 8h4" /></svg></span>}
+          {session.codex_archived && <span aria-label="已归档" className="inline-flex w-5 items-center justify-center text-[var(--color-text-tertiary)]"><svg aria-hidden="true" width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor"><path d="M2 2h12v3H2zM3 5v9h10V5M6 8h4" /></svg></span>}
           <div className={`sidebar-resource-actions sidebar-session-actions flex items-center transition-opacity ${actionsVisible ? 'pointer-events-auto opacity-100' : 'pointer-events-none opacity-0'}`}>
             <IconActionButton
               label="更多"

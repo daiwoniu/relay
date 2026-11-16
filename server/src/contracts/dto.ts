@@ -1166,6 +1166,7 @@ export const CreateShareRequestSchema = z.discriminatedUnion('scope', [
 
 export const ShareSnapshotMessageSchema = z.object({
   id: z.string(),
+  turnId: z.string().optional(),
   role: z.enum(['user', 'assistant']),
   content: z.string(),
   createdAt: z.number(),
@@ -1182,6 +1183,8 @@ export const ShareSnapshotMessageSchema = z.object({
 
 export const ShareSnapshotV1Schema = z.object({
   version: z.literal(1),
+  scope: ShareScopeSchema.optional(),
+  includeProcess: z.boolean().optional(),
   sourceEngine: EngineIdSchema.optional(),
   messages: z.array(ShareSnapshotMessageSchema),
 }).strict();
@@ -1195,6 +1198,7 @@ export const ShareListItemDtoSchema = z.object({
   includeProcess: z.boolean(),
   sourceSessionId: z.string().nullable(),
   sourceSessionTitle: z.string().nullable(),
+  sourceState: z.enum(['available', 'deleted', 'unavailable']).optional(),
   sourceEngine: EngineIdSchema,
   createdAt: z.number().int().nonnegative(),
   expiresAt: z.number().int().nonnegative().nullable(),
@@ -1525,6 +1529,7 @@ export const WorkspaceConsoleDeliveryMatrixItemDtoSchema = z.object({ project: z
 export const WorkspaceConsoleTaskDtoSchema = z.object({
   id: z.string().min(1), title: z.string().nullable(), taskPath: z.string().nullable(), taskDocumentPath: z.string().nullable(), status: z.string().nullable(),
   description: z.string().max(240).nullable().optional(),
+  feishuPrimaryWorkItemId: z.string().regex(/^[1-9]\d*$/).nullable().optional(),
   horizon: z.string().nullable(), nextAction: z.string().nullable(), waitingOn: z.string().nullable(), statusBasis: z.string().nullable(),
   verification: z.string().nullable(), lastVerifiedAt: z.string().nullable(), startedAt: z.string().nullable(), completedAt: z.string().nullable(), deliveryMatrix: z.array(WorkspaceConsoleDeliveryMatrixItemDtoSchema).default([]), feishuWorkItemIds: z.array(z.string()), feishuWorkItemUrls: z.record(z.string(), z.string().url()).optional(),
 }).strict();

@@ -42,18 +42,17 @@ function createPreviewBridgeHarness(documentHtml) {
 test('HTML 文件标签保存源码或可视化模式', () => {
   assert.match(storeSource, /htmlPreviewMode\?: HtmlPreviewMode/);
   assert.match(storeSource, /htmlPreviewScriptsEnabled\?: boolean/);
-  assert.match(panelSource, /shouldUseHtmlVisualization\(activeTab\.contentSize, activeTab\.htmlPreviewMode\)/);
-  assert.match(panelSource, /updateRightPanelTab\(activeTab\.id, \{ htmlPreviewMode: mode \}\)/);
+  assert.match(panelSource, /getFilePreviewView\(activeTab\) === 'preview'/);
+  assert.match(panelSource, /previewView: mode/);
+  assert.match(panelSource, /htmlPreviewMode: mode === 'preview' \? 'visualization'/);
 });
 
 test('HTML 工具栏提供可视化和源码切换', () => {
-  assert.match(panelSource, /mode === 'visualization' \? '可视化' : mode === 'source' \? '源码' : 'Git 变更'/);
-  assert.match(panelSource, /aria-label="HTML 预览模式"/);
+  assert.match(panelSource, /isHtmlPreview \? '可视化' : '预览'/);
+  assert.match(panelSource, /aria-label=\{isHtmlPreview \? 'HTML 预览模式' : '文件预览模式'\}/);
   assert.match(panelSource, /disabled=\{disabled\}/);
-  assert.match(panelSource, /htmlPreviewModeControl = isHtmlPreview && activeTab/);
-  assert.match(panelSource, /min-h-10 flex-1/);
-  assert.match(panelSource, /isMobile \? 'min-h-10 flex-1 px-3 py-2 text-xs' : 'px-2 py-0\.5 text-\[11px\]'/);
-  assert.match(panelSource, /focus-visible:ring-2 focus-visible:ring-\[var\(--color-focus-ring\)\]/);
+  assert.match(panelSource, /workspace-preview-viewbar/);
+  assert.match(panelSource, /workspace-preview-modes/);
   assert.match(panelSource, /普通 HTML 默认禁用脚本/);
   assert.match(panelSource, /<ConfirmDialog[\s\S]*确认启用 HTML 脚本/);
 });
@@ -63,7 +62,7 @@ test('可视化 iframe 使用隔离脚本沙箱且不获得同源权限', () => 
   assert.doesNotMatch(panelSource, /allow-same-origin/);
   assert.match(panelSource, /referrerPolicy="no-referrer"/);
   assert.match(panelSource, /srcDoc=\{sandboxedHtmlDocument\}/);
-  assert.match(panelSource, /title=\{`HTML 可视化：\$\{activeTab\.title\}`\}/);
+  assert.match(panelSource, /aria-label=\{`HTML 可视化：\$\{activeTab\.title\}`\}/);
   assert.match(panelSource, /event\.source !== htmlIframeRef\.current\?\.contentWindow/);
   assert.match(panelSource, /HTML_PREVIEW_HEIGHT_MESSAGE/);
   assert.doesNotMatch(panelSource, /h-full min-h-\[20rem\].*bg-white/);

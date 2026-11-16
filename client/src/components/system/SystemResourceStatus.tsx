@@ -1,3 +1,4 @@
+import Tooltip from '../ui/Tooltip';
 import { useEffect, useState } from 'react';
 import { getSystemResourceStatus } from '../../api/system';
 import type { SystemResourceStatusDto } from '../../generated/relay-contracts';
@@ -62,10 +63,10 @@ export default function SystemResourceStatus({ active }: { active: boolean }) {
       <div className="mt-2 font-medium text-[var(--color-text)]">占用前 5 名 · 同名进程合计</div>
       {processes.available && processes.rows.length > 0 ? <ol className="mt-1 space-y-1">
         {processes.rows.map((row, index) => <li key={row.name} className="flex items-baseline justify-between gap-3">
-          <span className="min-w-0 truncate text-[var(--color-text-secondary)]" title={row.name}>
+          <Tooltip content={row.name} asChild><span className="min-w-0 truncate text-[var(--color-text-secondary)]">
             <span className="mr-1.5 text-[var(--color-text-tertiary)]">{index + 1}.</span>{row.name}
             <span className="ml-1 text-[10px] text-[var(--color-text-tertiary)]">({row.processCount})</span>
-          </span>
+          </span></Tooltip>
           <span className="shrink-0 font-mono tabular-nums text-[var(--color-text)]">{row.memoryLabel}</span>
         </li>)}
       </ol> : <p className="mt-1 text-[11px] text-[var(--color-text-secondary)]">{loading && snapshot === null ? '正在读取进程占用' : '进程占用暂不可用，不影响系统提交内存监测。'}</p>}

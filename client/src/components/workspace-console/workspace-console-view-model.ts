@@ -1,5 +1,6 @@
 import type { WorkspaceConsoleDashboardDto, WorkspaceConsoleResponsibilityDto } from '../../generated/relay-contracts';
 import { taskStatusPresentation } from './task-status.ts';
+import { primaryFeishuWorkItemId } from './workspace-task-identity.ts';
 import { hasTaskStarted, taskProgressAt, progressRecency, withDashboardProgress, type ProgressTask } from './workspace-task-progress.ts';
 
 type DashboardTask = ProgressTask;
@@ -84,6 +85,22 @@ function personalIssueCompleted(item: ResponsibilityItem, tasks: readonly Dashbo
         && (item.myRoleKeys === undefined && item.baseOwnerIsMe === undefined
           || item.myRoleKeys?.length === 1 && item.myRoleKeys[0] === 'operator' && item.baseOwnerIsMe === false)))
     && !hasUnfinishedLocalWork(tasks, new Set([item.workItemId, ...(item.linkedStoryIds ?? [])]), item.localTaskIds);
+}
+
+/** Explain the existing classification without turning inferred handoff into verified completion. */
+export function personalIssueCompletionNotice(item: ResponsibilityItem, tasks: readonly DashboardTask[] = []): string | null {
+  if (!personalIssueCompleted(item, tasks)) return null;
+  if (item.baseOwnerIsMe === true || item.myRoleKeys?.includes('acceptor')) {
+    return '完成依据待核对：已有完成记录，但报表仍登记本人验收或负责人角色，请核对本轮责任范围。';
+  }
+  if ((item.personalSubtasks ?? []).some((child) => child.passed)) return '完成依据：报表中的本人子任务已完成，不代表整体流程结束。';
+  if (tasks.some((task) => (task.status === 'done' || task.status === 'completed')
+    && (item.localTaskIds.includes(task.id) || task.feishuWorkItemIds.includes(item.workItemId)))) {
+    return '完成依据：本地台账登记已完成；责任范围与核验记录请查看任务说明。';
+  }
+  return item.myRoleKeys === undefined && item.baseOwnerIsMe === undefined
+    ? '完成依据待核对：旧报表缺少本人责任信息，暂按原分类展示，请刷新核对。'
+    : '完成依据待核对：按修复状态与角色推断本轮修复已交接，尚无明确责任完成记录。';
 }
 
 function openParticipationItems(
@@ -741,7 +758,9 @@ export function feishuLinksForTask(task: DashboardTask, responsibility: Workspac
   for (const item of registryFeishuLinksForTask(task)) {
     if (!links.has(item.workItemId)) links.set(item.workItemId, { ...item, title: `工作项 ${item.workItemId}` });
   }
-  return [...links.values()];
+  const primary = primaryFeishuWorkItemId(task);
+  return [...links.values()].sort((a, b) => Number(b.workItemId === primary) - Number(a.workItemId === primary))
+    .map((link) => link.workItemId === primary ? { ...link, title: `主任务 · ${link.title}` } : link);
 }
 
 export function feishuTypeName(typeName: string | null | undefined, url?: string | null): string | null {

@@ -1,3 +1,4 @@
+import Tooltip from '../ui/Tooltip';
 import type { PublicUserDto } from '../../generated/relay-contracts';
 import RelayLogo from '../brand/RelayLogo';
 import UserAvatar from '../account/UserAvatar';
@@ -55,9 +56,9 @@ export default function SidebarWorkbench({
         <span className="min-w-0 flex-1"><span className="block truncate text-xs font-semibold text-[var(--color-text)]">{selectedResourceUser ? `${selectedResourceUser.displayName}的资源` : '全部用户资源'}</span>{selectedResourceUser && <span className="block truncate text-[10px] text-[var(--color-text-tertiary)]">@{selectedResourceUser.username}</span>}</span>
         <span aria-hidden="true" className="text-xs text-[var(--color-text-tertiary)]">▾</span>
       </button>
-      {showAllProjectsToggle && <button type="button" onClick={showAllProjectsToggle.onToggle} aria-pressed={showAllProjectsToggle.checked} aria-label="显示全部项目" title={showAllProjectsToggle.checked ? '当前显示全部项目，点击隐藏没有会话的空项目' : '当前隐藏没有会话的空项目，点击显示全部项目'} className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-md transition-colors hover:bg-[var(--color-surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus-ring)] ${showAllProjectsToggle.checked ? 'text-[var(--color-primary)]' : 'text-[var(--color-text-tertiary)]'}`}>
+      {showAllProjectsToggle && <Tooltip content={showAllProjectsToggle.checked ? '当前显示全部项目，点击隐藏没有会话的空项目' : '当前隐藏没有会话的空项目，点击显示全部项目'} asChild><button type="button" onClick={showAllProjectsToggle.onToggle} aria-pressed={showAllProjectsToggle.checked} aria-label="显示全部项目" className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-md transition-colors hover:bg-[var(--color-surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus-ring)] ${showAllProjectsToggle.checked ? 'text-[var(--color-primary)]' : 'text-[var(--color-text-tertiary)]'}`}>
         <svg viewBox="0 0 16 16" fill="none" className="h-4 w-4" aria-hidden="true"><path d="M1.8 8s2.2-4 6.2-4 6.2 4 6.2 4-2.2 4-6.2 4-6.2-4-6.2-4Z" stroke="currentColor" strokeWidth="1.4"/><circle cx="8" cy="8" r="1.9" stroke="currentColor" strokeWidth="1.4"/>{showAllProjectsToggle.checked ? <path d="M2.5 13.5 13.5 2.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/> : <path d="M5 8h.01M8 8h.01M11 8h.01" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/>}</svg>
-      </button>}
+      </button></Tooltip>}
       <button type="button" onClick={onExitUserResources} aria-label="退出用户资源视图" className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus-ring)]"><span aria-hidden="true">×</span></button>
     </div>}
 

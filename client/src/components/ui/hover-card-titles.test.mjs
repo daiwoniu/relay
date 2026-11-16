@@ -15,7 +15,7 @@ test('业务悬浮卡片提供明确的信息类型标题', () => {
     '../messages/MessageOriginInfo.tsx',
   ].map((file) => fs.readFileSync(new URL(file, import.meta.url), 'utf8')).join('\n');
 
-  for (const title of ['项目详情', '会话详情', '本轮模型', '设备信息', '上下文用量', '文件详情', '临时文件授权']) {
+  for (const title of ['项目详情', '会话详情', '本轮模型', '设备信息', '上下文用量']) {
     assert.match(files, new RegExp(`title=["']${title}["']`));
   }
   assert.doesNotMatch(files, /title=["']文件路径["']/);

@@ -20,7 +20,12 @@ export class StoredFilesystem{
     if(this.closed)return Promise.reject(new StorageContractError('NOT_SUBMITTED'));
     if(this.active.size>=4)return Promise.reject(new StorageContractError('OVERLOADED'));
     let timedOut=false,timer:ReturnType<typeof setTimeout>;
-    const work=this.run(raw,url,method,body,()=>!timedOut&&!this.closed);this.active.add(work);
+    const work=this.run(raw,url,method,body,()=>!timedOut&&!this.closed).catch(error=>{
+      // Native preflight/postflight IO must retain a missing-file outcome instead
+      // of turning a stale path into a generic service outage. Never expose raw paths.
+      if(['ENOENT','ENOTDIR'].includes((error as NodeJS.ErrnoException)?.code??''))throw new StorageContractError('NOT_FOUND');
+      throw error;
+    });this.active.add(work);
     const deadline=new Promise<never>((_,reject)=>{timer=setTimeout(()=>{timedOut=true;reject(new StorageContractError('STORAGE_UNAVAILABLE'));},this.options.timeoutMs??30000);timer.unref();});
     void work.finally(()=>{clearTimeout(timer);this.active.delete(work);}).catch(()=>undefined);
     return Promise.race([work,deadline]);

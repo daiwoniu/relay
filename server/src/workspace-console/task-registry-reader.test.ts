@@ -48,6 +48,24 @@ test('recovers an exact Feishu work item URL from the task guide when the regist
   });
 });
 
+test('retains a structured primary item only when it is a numeric member of all associations', async () => {
+  await withRoot(async (root) => {
+    await fs.mkdir(path.join(root, 'tasks'));
+    const ids = ['9001000001', '9001000002'];
+    const tasks = Object.fromEntries(['9001000002', '9001000003', 'invalid', 9001000001, null].map((primary, index) => [
+      `task-${index}`, { title: '任务', status: 'waiting', feishu_work_item_ids: ids, feishu_primary_work_item_id: primary },
+    ]));
+    await fs.writeFile(path.join(root, 'tasks', 'task-registry.json'), JSON.stringify({ schema_version: 1, tasks }));
+    const result = await readTaskRegistry(root);
+    assert.equal(result.tasks[0]?.feishuPrimaryWorkItemId, '9001000002');
+    assert(result.tasks.slice(1).every(task => task.feishuPrimaryWorkItemId === undefined));
+    for (const task of result.tasks) {
+      assert.deepEqual(task.feishuWorkItemIds, ids);
+      assert.equal(task.status, 'waiting');
+    }
+  });
+});
+
 test('uses a Chinese README task name and a scope sentence when registry title is an ID', async () => {
   await withRoot(async (root) => {
     const taskId = 'feishu-9001000021-tanji-limit-consume-match-fix';

@@ -1,6 +1,11 @@
 @import "tailwindcss";
+@source not "../../scripts";
+@source not "../../**/*.test.*";
+@source not "../../**/*.spec.*";
+@source not "../../**/__tests__/**";
 @import "./theme-foundation.css";
 @import "./global-base.css";
+@import "./file-preview.css";
 @import "./markdown-foundation.css";
 @import "./auth.css";
 @import "./notification-settings.css";

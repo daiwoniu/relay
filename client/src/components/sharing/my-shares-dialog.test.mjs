@@ -8,7 +8,7 @@ const sidebar = fs.readFileSync(new URL('../layout/Sidebar.tsx', import.meta.url
 test('取消或删除分享时保留现有列表并后台刷新', () => {
   assert.match(dialog, /hasLoaded\.current = true;\s+setItems\(response\.items\)/);
   assert.match(dialog, /loading && !hasLoaded\.current \?/);
-  assert.match(dialog, /await action\(\); await load\(page\)/);
+  assert.match(dialog, /await action\(\); if \(sequence === requestSequence\.current\) await load\(page\)/);
 });
 
 test('分享操作进行中禁用对应条目的操作按钮', () => {
