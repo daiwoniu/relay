@@ -26,9 +26,9 @@ export function createStoredTrashRouter(options:{port:CoreStoragePort;service:St
   router.onError((error,c)=>{if(error instanceof RestoreDirectoryUnavailable)return c.json(presentApiError('原项目目录不存在或不可访问，请先恢复原目录',{code:'TRASH_PROJECT_PATH_UNAVAILABLE'}),409);
     const code=error instanceof StorageContractError?error.code:'STORAGE_UNAVAILABLE';const status=code==='INVALID_ARGUMENT'?400:code==='FORBIDDEN'||code==='NOT_FOUND'?404:code==='CONFLICT'||code==='OPERATION_EXPIRED'?409:code==='PAYLOAD_TOO_LARGE'?413:503;
     return c.json(presentApiError(status===404?'回收站记录不存在或没有权限':status===409?'回收站记录或运行状态已变化，请刷新核对':'回收站暂不可用',{code}),status);});
-  router.get('/projects',async(c)=>{const input=z.object({...page,q:z.string().trim().max(100).default('')}).strict().safeParse(c.req.query());if(!input.success)return c.json(presentApiError('无效的回收站查询'),400);
+  router.get('/projects',async(c)=>{const input=z.object({...page,q:z.string().trim().max(100).default(''),creatorId:z.string().trim().min(1).max(128).optional()}).strict().safeParse(c.req.query());if(!input.success)return c.json(presentApiError('无效的回收站查询'),400);
     return c.json(await options.port.readTrash({principal:c.get('relayStoragePrincipal')!,name:'projects',input:input.data}));});
-  router.get('/sessions',async(c)=>{const input=z.object({...page,q:z.string().trim().max(100).default(''),projectId:uuid.optional()}).strict().safeParse(c.req.query());if(!input.success)return c.json(presentApiError('无效的回收站查询'),400);
+  router.get('/sessions',async(c)=>{const input=z.object({...page,q:z.string().trim().max(100).default(''),creatorId:z.string().trim().min(1).max(128).optional(),projectId:uuid.optional()}).strict().safeParse(c.req.query());if(!input.success)return c.json(presentApiError('无效的回收站查询'),400);
     return c.json(await options.port.readTrash({principal:c.get('relayStoragePrincipal')!,name:'sessions',input:{...input.data,projectId:input.data.projectId??null}}));});
   router.get('/session-projects',async(c)=>c.json(await options.port.readTrash({principal:c.get('relayStoragePrincipal')!,name:'options',input:{}})));
   router.get('/projects/:id/sessions',async(c)=>{const id=uuid.safeParse(c.req.param('id')),input=z.object(page).strict().safeParse(c.req.query());if(!id.success||!input.success)return c.json(presentApiError('无效的回收站查询'),400);

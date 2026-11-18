@@ -8,8 +8,8 @@ const EXTENSION_TYPES: Record<string, FileIconType> = {
   markdown: 'markdown', md: 'markdown', mdx: 'markdown',
   conf: 'config', config: 'config', env: 'config', ini: 'config', json: 'config', lock: 'config', properties: 'config', toml: 'config', xml: 'config', yaml: 'config', yml: 'config',
   '7z': 'archive', bz2: 'archive', gz: 'archive', rar: 'archive', tar: 'archive', tgz: 'archive', xz: 'archive', zip: 'archive',
-  aac: 'audio', flac: 'audio', m4a: 'audio', mp3: 'audio', ogg: 'audio', wav: 'audio',
-  avi: 'video', m4v: 'video', mkv: 'video', mov: 'video', mp4: 'video', webm: 'video',
+  aac: 'audio', flac: 'audio', m4a: 'audio', mp3: 'audio', ogg: 'audio', oga: 'audio', opus: 'audio', wav: 'audio', weba: 'audio',
+  avi: 'video', m4v: 'video', mkv: 'video', mov: 'video', mp4: 'video', ogv: 'video', webm: 'video',
   csv: 'table', ods: 'table', tsv: 'table', xls: 'table', xlsx: 'table',
   doc: 'document', docx: 'document', odt: 'document', pdf: 'document', rtf: 'document', txt: 'document',
 };

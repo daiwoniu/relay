@@ -86,11 +86,11 @@ function addPageBreakTokens(documentXml: string, pageBreakToken: string): string
     .replace(explicitPageBreakPattern(), tokenXml);
 }
 
-function truncateReliablePages(html: string, savedPages: number, pageBreakToken: string): string {
-  if (savedPages <= MAX_WORD_PREVIEW_ITEMS) return html.replaceAll(pageBreakToken, '');
+function truncateReliablePages(html: string, savedPages: number, pageBreakToken: string, maxItems: number): string {
+  if (savedPages <= maxItems) return html.replaceAll(pageBreakToken, '');
   let boundaryIndex = -1;
   let searchFrom = 0;
-  for (let page = 0; page < MAX_WORD_PREVIEW_ITEMS; page += 1) {
+  for (let page = 0; page < maxItems; page += 1) {
     boundaryIndex = html.indexOf(pageBreakToken, searchFrom);
     if (boundaryIndex < 0) {
       throw new DocumentPreviewError('DOCUMENT_INVALID', 'Word 文档分页信息无法安全截断，请下载后查看');
@@ -106,7 +106,7 @@ function assertWordHtmlSize(html: string): void {
   }
 }
 
-export async function parseWordPreview(buffer: Buffer): Promise<Omit<WordDocumentPreviewDto, 'size'>> {
+export async function parseWordPreview(buffer: Buffer, maxItems = MAX_WORD_PREVIEW_ITEMS): Promise<Omit<WordDocumentPreviewDto, 'size'>> {
   const zip = await loadCheckedZip(buffer);
   const appXml = await zip.file('docProps/app.xml')?.async('string');
   const documentXml = await zip.file('word/document.xml')?.async('string');
@@ -143,21 +143,21 @@ export async function parseWordPreview(buffer: Buffer): Promise<Omit<WordDocumen
     });
     const sanitized = sanitizeWordHtml(result.value);
     if (savedPages !== null && reliablePageBoundaries) {
-      const pageHtml = truncateReliablePages(sanitized, savedPages, pageBreakToken);
+      const pageHtml = truncateReliablePages(sanitized, savedPages, pageBreakToken, maxItems);
       assertWordHtmlSize(pageHtml);
       return {
         type: 'word-document',
         html: pageHtml,
         countUnit: 'pages',
         totalCount: savedPages,
-        displayedCount: Math.min(savedPages, MAX_WORD_PREVIEW_ITEMS),
-        truncated: savedPages > MAX_WORD_PREVIEW_ITEMS,
+        displayedCount: Math.min(savedPages, maxItems),
+        truncated: savedPages > maxItems,
         imageCount,
         omittedImageCount,
       };
     }
     const blocks = splitTopLevelHtml(sanitized);
-    const displayedBlocks = blocks.slice(0, MAX_WORD_PREVIEW_ITEMS);
+    const displayedBlocks = blocks.slice(0, maxItems);
     const displayedHtml = displayedBlocks.join('');
     assertWordHtmlSize(displayedHtml);
     return {

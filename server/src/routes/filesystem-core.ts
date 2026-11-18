@@ -1,3 +1,4 @@
+import { defaultPreviewPreferences, effectivePreviewPreferences } from '../contracts/preview-preferences.js';
 import { Hono } from 'hono';
 import { randomUUID } from 'node:crypto';
 import fs from 'fs';
@@ -12,7 +13,6 @@ import {
 
 import { getRequestActor, type Actor, type RelayEnv } from '../auth/authorization.js';
 
-import { MAX_DOCUMENT_PREVIEW_SIZE } from '../documents/document-preview-limits.js';
 import { DocumentPreviewError, normalizeDocumentPreviewError } from '../documents/document-preview-error.js';
 import { runDocumentPreviewTask } from '../documents/document-preview-runner.js';
 import {
@@ -25,6 +25,7 @@ import {
 import {
   decodeTextPreview,
   readTextPreviewHead,
+  fitsTextPreviewResponse,
   getFilePreviewDisposition,
   getMimeType,
   isImageFile,
@@ -52,7 +53,7 @@ export {
 } from './filesystem-preview.js';
 
 
-const DOCUMENT_EXTENSIONS = new Set(['.pdf', '.docx', '.xlsx']);
+const DOCUMENT_EXTENSIONS = new Set(['.pdf', '.docx', '.xlsx', '.zip']);
 const LEGACY_DOCUMENT_EXTENSIONS = new Set(['.doc', '.xls']);
 const MAX_DOWNLOAD_SIZE = 100 * 1024 * 1024; // 100MB
 
@@ -135,12 +136,17 @@ export function isPathInsideRoots(targetPath: string, roots: string[]): boolean 
 }
 
 export interface FilesystemCoreOptions {
+  previewPreferences?: ReturnType<typeof effectivePreviewPreferences>;
   getAllowedProjectRoots:(actor:Actor)=>Promise<string[]>;
   grants:{allows:(path:string,token:string|undefined,userId:string)=>boolean;grant:(path:string,userId:string)=>string;revoke:(token:string,userId:string)=>void};
 }
 /** File IO runs in the Native filesystem Worker; the legacy wrapper retains its previous execution model. */
 export function createFilesystemCore(options:FilesystemCoreOptions){
 const filesystem=new Hono<RelayEnv>(),fileAccessGrants=options.grants;
+const preferences=options.previewPreferences??effectivePreviewPreferences(defaultPreviewPreferences(),false);
+const previewFileSize=preferences.capacity.fileSizeMb*1024*1024;
+const imageDirectSize=preferences.image.directSizeMb*1024*1024;
+const documentOptions={maxFileSize:previewFileSize,maxItems:preferences.capacity.documentItems,maxRows:preferences.capacity.spreadsheetRows,maxColumns:preferences.capacity.spreadsheetColumns};
 async function getAllowedProjectRoots(actor:Actor):Promise<string[]>{
   return (await options.getAllowedProjectRoots(actor)).flatMap(root=>{try{return[fs.realpathSync(root)];}catch{return[];}});
 }
@@ -330,21 +336,21 @@ filesystem.get('/read', async (c) => {
       return c.json(presentApiError('暂不支持此旧格式预览，请下载后查看', { code: 'DOCUMENT_FORMAT_UNSUPPORTED' }), 400);
     }
     if (DOCUMENT_EXTENSIONS.has(ext)) {
-      if (stat.size > MAX_DOCUMENT_PREVIEW_SIZE) {
+      if (stat.size > previewFileSize) {
         return c.json(presentApiError(
-          `文件过大 (${(stat.size / 1024 / 1024).toFixed(1)}MB)，预览上限 3MB，请下载后查看`,
+          `文件过大 (${(stat.size / 1024 / 1024).toFixed(1)}MB)，当前预览上限 ${preferences.capacity.fileSizeMb}MB，请调整预览容量或下载后查看`,
           { code: 'FILE_PREVIEW_TOO_LARGE' },
         ), 400);
       }
-      const baseTask = { filePath: realPath, expectedSize: stat.size, expectedMtimeMs: stat.mtimeMs };
+      const baseTask = { filePath: realPath, expectedSize: stat.size, expectedMtimeMs: stat.mtimeMs, options: documentOptions };
       const result = await runDocumentPreviewTask({
         ...baseTask,
-        kind: ext === '.pdf' ? 'pdf-metadata' : ext === '.docx' ? 'word' : 'spreadsheet',
+        kind: ext === '.zip' ? 'archive' : ext === '.pdf' ? 'pdf-metadata' : ext === '.docx' ? 'word' : 'spreadsheet',
       });
       return c.json(presentDocumentPreviewResult(result));
     }
 
-    const previewDisposition = getFilePreviewDisposition(realPath, stat.size);
+    const previewDisposition = getFilePreviewDisposition(realPath, stat.size, previewFileSize, imageDirectSize);
 
     // 图片：返回 base64 data URL
     if (previewDisposition.startsWith('image')) {
@@ -372,8 +378,14 @@ filesystem.get('/read', async (c) => {
     }
 
     // 文本文件：返回内容
-    const truncated = previewDisposition === 'text-too-large';
-    const content = truncated ? await readTextPreviewHead(realPath) : decodeTextPreview(fs.readFileSync(realPath));
+    let truncated = previewDisposition === 'text-too-large';
+    let truncationReason: 'file-size' | 'output-size' | undefined = truncated ? 'file-size' : undefined;
+    let content = truncated ? await readTextPreviewHead(realPath) : decodeTextPreview(fs.readFileSync(realPath));
+    if (content !== null && !truncated && !fitsTextPreviewResponse(content)) {
+      content = await readTextPreviewHead(realPath);
+      truncated = true;
+      truncationReason = 'output-size';
+    }
     if (content === null) {
       return c.json(presentApiError(
         '该文件是二进制文件或不是受支持的 UTF-8 编码，请下载后查看',
@@ -385,7 +397,7 @@ filesystem.get('/read', async (c) => {
       content,
       language: ext ? ext.slice(1) : 'plaintext',
       size: stat.size,
-      ...(truncated ? { truncated: true } : {}),
+      ...(truncated ? { truncated: true, truncationReason } : {}),
     });
   } catch (error: unknown) {
     if (error instanceof FileRouteError) {
@@ -402,19 +414,19 @@ filesystem.get('/read', async (c) => {
   }
 });
 
-/** 返回最多前 50 页的内存 PDF 副本，扫描页图像会原样保留。 */
+/** 按账号容量返回有界内存 PDF 副本，扫描页图像会原样保留。 */
 filesystem.get('/preview-pdf-source', async (c) => {
   try {
     const filePath = c.req.query('path') || '';
     const accessToken = c.req.query('accessToken');
     const { realPath, stat } = await resolveAllowedFile(filePath, getRequestActor(c), accessToken);
     if (path.extname(realPath).toLowerCase() !== '.pdf') throw new FileRouteError('不是支持预览的 PDF 文件', 400);
-    if (stat.size > MAX_DOCUMENT_PREVIEW_SIZE) throw new FileRouteError('文件超过 3 MB 预览上限，请下载后查看', 400, 'FILE_PREVIEW_TOO_LARGE');
+    if (stat.size > previewFileSize) throw new FileRouteError(`文件超过 ${preferences.capacity.fileSizeMb} MB 预览上限，请调整预览容量或下载后查看`, 400, 'FILE_PREVIEW_TOO_LARGE');
     const result = await runDocumentPreviewTask({
       kind: 'pdf-source',
       filePath: realPath,
       expectedSize: stat.size,
-      expectedMtimeMs: stat.mtimeMs,
+      expectedMtimeMs: stat.mtimeMs, options: documentOptions,
     });
     if (!('type' in result) || result.type !== 'pdf-source') throw new DocumentPreviewError('DOCUMENT_INVALID', 'PDF 预览结果无效');
     return c.body(Buffer.from(result.bytes), 200, {
@@ -444,12 +456,12 @@ filesystem.get('/preview-spreadsheet-sheet', async (c) => {
     if (!sheetName || sheetName.length > 31) throw new FileRouteError('缺少有效的工作表名称', 400);
     const { realPath, stat } = await resolveAllowedFile(filePath, getRequestActor(c), accessToken);
     if (path.extname(realPath).toLowerCase() !== '.xlsx') throw new FileRouteError('不是支持预览的 Excel 文件', 400);
-    if (stat.size > MAX_DOCUMENT_PREVIEW_SIZE) throw new FileRouteError('文件超过 3 MB 预览上限，请下载后查看', 400, 'FILE_PREVIEW_TOO_LARGE');
+    if (stat.size > previewFileSize) throw new FileRouteError(`文件超过 ${preferences.capacity.fileSizeMb} MB 预览上限，请调整预览容量或下载后查看`, 400, 'FILE_PREVIEW_TOO_LARGE');
     const result = await runDocumentPreviewTask({
       kind: 'spreadsheet',
       filePath: realPath,
       expectedSize: stat.size,
-      expectedMtimeMs: stat.mtimeMs,
+      expectedMtimeMs: stat.mtimeMs, options: documentOptions,
       sheetName,
     });
     return c.json(presentSpreadsheetSheetResult(result));

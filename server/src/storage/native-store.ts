@@ -1,4 +1,7 @@
 import { applyInitialNativeMigration,assertNativeMigration } from './native-migrations.js';
+import { readHostedSites,saveHostedSite,deleteHostedSite } from './native-hosting.js';
+import { appendAnalytics,readAnalytics } from './native-analytics.js';
+import { AnalyticsRecordSchema,AnalyticsQuerySchema } from '../analytics/contract.js';
 import { updateAcceptedAutomaticTitle } from './native-session-title.js';
 import { isCreditResetCommand,authorizeCreditReset,executeCreditReset,readCreditReset } from './native-credit-reset.js';
 import { assertMaintenanceAdmission,acquireMaintenanceFence,releaseMaintenanceFence } from './native-maintenance-fence.js';
@@ -56,6 +59,7 @@ import { isSoftDeleteCommand,readSoftDeleteJob,authorizeSoftDeleteJob,executeSof
 import { assertDeletionWriteFence } from './native-deletion-fence.js';
 import { getNotificationPreferencesFromDatabase } from '../db/queries-account.js';
 import { NotificationPreferencesDtoSchema } from '../contracts/index.js';
+import { readNativePreviewPreferences } from './native-preview-preferences.js';
 import { readNativeTheme } from './native-theme.js';
 import { readNativeTools } from './native-tools.js';
 import { readThemeAssetJob,authorizeThemeAssetJob,isThemeAssetCommand,executeThemeAsset } from './native-theme-assets.js';
@@ -72,6 +76,31 @@ function deny(code: ConstructorParameters<typeof StorageContractError>[0]): neve
 
 /** Worker-only connection. It never consults RELAY_DB_PATH or imports application bootstrap. */
 export class NativeStore {
+  appendAnalytics(input:Parameters<CoreStoragePort['appendAnalytics']>[0]){
+    canonicalJson(input,32*1024);
+    if(!input||Object.keys(input).length!==1||!Array.isArray(input.records)||input.records.length<1||input.records.length>20)deny('INVALID_ARGUMENT');
+    const records=input.records.map(record=>{const parsed=AnalyticsRecordSchema.safeParse(record);if(!parsed.success)deny('INVALID_ARGUMENT');return parsed.data;});
+    return this.transaction(()=>appendAnalytics(nativeQueries(this.db),records,Date.now()));
+  }
+  readAnalytics(input:Parameters<CoreStoragePort['readAnalytics']>[0]){
+    canonicalJson(input);
+    const actor=this.resourceActor(input,['principal','query','view']);if(actor.role!=='admin')deny('FORBIDDEN');
+    const query=AnalyticsQuerySchema.safeParse(input.query);
+    if(!query.success||!['summary','visits'].includes(input.view))deny('INVALID_ARGUMENT');
+    return this.readOnly(()=>readAnalytics(nativeQueries(this.db),query.data,input.view));
+  }
+  readHostedSites(input:Parameters<CoreStoragePort['readHostedSites']>[0]){
+    return this.readOnly(()=>{
+      canonicalJson(input);
+      if(!input||typeof input!=='object'||Object.keys(input).length!==1)deny('INVALID_ARGUMENT');
+      if('siteId' in input){this.resourceId(input.siteId);return readHostedSites(nativeQueries(this.db),input.siteId).filter(site=>site.enabled);}
+      const principal=parseStoragePrincipal(input.principal);
+      if(principal.kind==='system'){
+        if(principal.purpose!=='recovery')deny('FORBIDDEN');
+      }else{const actor=this.resourceActor(input,['principal']);if(actor.role!=='admin')deny('FORBIDDEN');}
+      return readHostedSites(nativeQueries(this.db));
+    });
+  }
   readCreditResetJob(request:Parameters<CoreStoragePort['readCreditResetJob']>[0]){
     const actor=this.resourceActor(request,['principal','jobId']);this.resourceId(request.jobId);
     return this.readOnly(()=>{authorizeCreditReset(nativeQueries(this.db),actor,request.principal,request.jobId);return readCreditReset(nativeQueries(this.db),request.jobId);});
@@ -434,6 +463,13 @@ export class NativeStore {
   readNotificationPreferences(request:Parameters<CoreStoragePort['readNotificationPreferences']>[0]){
     const actor=this.resourceActor(request,['principal']);
     return this.readOnly(()=>NotificationPreferencesDtoSchema.parse(getNotificationPreferencesFromDatabase(nativeQueries(this.db),actor.id)));
+  }
+  readPreviewPreferences(request:Parameters<CoreStoragePort['readPreviewPreferences']>[0]){
+    const actor=this.resourceActor(request,['principal']);return this.readOnly(()=>{
+      const preferences=readNativePreviewPreferences(nativeQueries(this.db),actor.id);
+      if(actor.role!=='admin')return{...preferences,capacityPreset:preferences.capacityPreset==='custom'?'default' as const:preferences.capacityPreset,imagePreset:preferences.imagePreset==='custom'?'default' as const:preferences.imagePreset};
+      return preferences;
+    });
   }
   readThemeSettings(request:Parameters<CoreStoragePort['readThemeSettings']>[0]){
     const actor=this.resourceActor(request,['principal']);return this.readOnly(()=>readNativeTheme(nativeQueries(this.db),actor.id));
@@ -800,6 +836,7 @@ export class NativeStore {
     const scope: string | null = data.sessionId ?? data.claim?.sessionId ?? data.fact?.sessionId ?? data.decision?.sessionId ?? null;
     try {
       return this.transaction(() => {
+        if(request.command.name==='hosting.save'||request.command.name==='hosting.delete')this.accountAdmin(request.principal);
         if(request.command.name==='concurrency.set'){
           this.accountAdmin(request.principal);
           if(!Object.hasOwn(this.defaultConcurrency,request.command.input.resourceKey))deny('NOT_FOUND');
@@ -981,6 +1018,10 @@ export class NativeStore {
           }
         }else if(request.command.name==='interaction.rejectUnsubmitted'){
           value=rejectUnsubmittedInteraction(nativeQueries(this.db),request.command.input);
+        }else if(request.command.name==='hosting.save'){
+          value=saveHostedSite(nativeQueries(this.db),request.command.input.site,request.command.input.expectedToken);
+        }else if(request.command.name==='hosting.delete'){
+          value=deleteHostedSite(nativeQueries(this.db),request.command.input.id,request.command.input.expectedToken);
         }else if(isUploadCleanupCommand(request.command.name)){
           value=executeUploadCleanup(nativeQueries(this.db),request.principal.kind==='user'?this.user(request.principal) as AccessActor:null,request.principal,request.command as Parameters<typeof executeUploadCleanup>[3]);
         }else if(isProviderSnapshotCommand(request.command.name)&&request.principal.kind==='user'){
@@ -1388,6 +1429,7 @@ export class NativeStore {
       if(prior.command_name==='sidebar.move'){
         if(actor.kind!=='user')deny('FORBIDDEN');authorizeSidebar(nativeQueries(this.db),this.user(actor) as AccessActor,value.scope);
       }
+      if(prior.command_name==='hosting.save'||prior.command_name==='hosting.delete')this.accountAdmin(principal);
       if(prior.command_name==='interaction.prepareResponse'&&actor.kind==='user')authorizeInteractionJob(nativeQueries(this.db),this.user(actor) as AccessActor,value);
       if(isSoftDeleteCommand(prior.command_name))authorizeSoftDeleteJob(nativeQueries(this.db),principal.kind==='user'?this.user(principal) as AccessActor:null,principal,value.jobId);
       if(isThemeAssetCommand(prior.command_name))authorizeThemeAssetJob(nativeQueries(this.db),principal.kind==='user'?this.user(principal) as AccessActor:null,principal,value.jobId);

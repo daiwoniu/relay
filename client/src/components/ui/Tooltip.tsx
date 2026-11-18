@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { computeFloatingPosition, type FloatingPlacement } from './floating-position';
 import { useOverlay } from './OverlayProvider';
 import { tooltipTriggerProps } from './tooltip-trigger';
+import { hasTooltipOverflow } from './tooltip-overflow';
 
 interface TooltipProps {
   content?: string | null;
@@ -14,13 +15,17 @@ interface TooltipProps {
   inline?: boolean;
   coexist?: boolean;
   asChild?: boolean;
+  /** Full-text hints only; explanatory hints keep their normal behavior. */
+  overflowOnly?: boolean;
+  /** Restrict clipping checks when the trigger also contains other labels. */
+  overflowTarget?: string;
 }
 
 function supportsHover() {
   return typeof window !== 'undefined' && window.matchMedia('(hover: hover) and (pointer: fine)').matches;
 }
 
-export default function Tooltip({ content, children, delay = 300, disabled = false, placement = 'top', className = '', inline = false, coexist = false, asChild = false }: TooltipProps) {
+export default function Tooltip({ content, children, delay = 300, disabled = false, placement = 'top', className = '', inline = false, coexist = false, asChild = false, overflowOnly = false, overflowTarget }: TooltipProps) {
   const tooltipId = useId();
   const overlayId = `tooltip-${tooltipId}`;
   const triggerRef = useRef<HTMLElement | null>(null);
@@ -65,6 +70,7 @@ export default function Tooltip({ content, children, delay = 300, disabled = fal
   const show = (immediate = false) => {
     if (disabled || !content) return;
     clearTimer();
+    if (overflowOnly && (!triggerRef.current || !hasTooltipOverflow(triggerRef.current, overflowTarget))) return;
     if (immediate) {
       setPositioned(false);
       openTooltip();
@@ -72,6 +78,7 @@ export default function Tooltip({ content, children, delay = 300, disabled = fal
     }
     timerRef.current = setTimeout(() => {
       timerRef.current = null;
+      if (overflowOnly && (!triggerRef.current || !hasTooltipOverflow(triggerRef.current, overflowTarget))) return;
       setPositioned(false);
       openTooltip();
     }, delay);
@@ -89,28 +96,44 @@ export default function Tooltip({ content, children, delay = 300, disabled = fal
   }, [closeOverlay, coexist, overlayId]);
 
   useEffect(() => {
-    if (disabled || !content) hide();
-  }, [disabled, content]);
+    if (disabled || !content || (overflowOnly && triggerRef.current && !hasTooltipOverflow(triggerRef.current, overflowTarget))) hide();
+  }, [disabled, content, overflowOnly, overflowTarget]);
 
   useEffect(() => {
     if (!visible) return;
+    const updateLayout = () => {
+      if (overflowOnly && (!triggerRef.current || !hasTooltipOverflow(triggerRef.current, overflowTarget))) {
+        hide();
+        return;
+      }
+      updatePosition();
+    };
+    const observer = overflowOnly && typeof ResizeObserver !== 'undefined' ? new ResizeObserver(updateLayout) : null;
+    if (observer && triggerRef.current) {
+      observer.observe(triggerRef.current);
+      triggerRef.current.querySelectorAll<HTMLElement>(overflowTarget ?? '*').forEach((element) => observer.observe(element));
+    }
+    const mutation = overflowOnly && typeof MutationObserver !== 'undefined' ? new MutationObserver(updateLayout) : null;
+    if (triggerRef.current) mutation?.observe(triggerRef.current, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['class', 'style', 'data-tooltip-truncated', 'data-tooltip-full-text', 'hidden'] });
     const dismissOnEscape = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
       event.preventDefault();
       event.stopPropagation();
       hide();
     };
-    const frame = requestAnimationFrame(updatePosition);
+    const frame = requestAnimationFrame(updateLayout);
     document.addEventListener('keydown', dismissOnEscape, true);
-    window.addEventListener('resize', updatePosition);
+    window.addEventListener('resize', updateLayout);
     window.addEventListener('scroll', updatePosition, true);
     return () => {
       cancelAnimationFrame(frame);
+      observer?.disconnect();
+      mutation?.disconnect();
       document.removeEventListener('keydown', dismissOnEscape, true);
-      window.removeEventListener('resize', updatePosition);
+      window.removeEventListener('resize', updateLayout);
       window.removeEventListener('scroll', updatePosition, true);
     };
-  }, [updatePosition, visible, content]);
+  }, [updatePosition, visible, content, overflowOnly, overflowTarget]);
 
   const trigger = asChild && isValidElement<HTMLAttributes<HTMLElement>>(children) && typeof children.type === 'string'
     ? cloneElement(children, tooltipTriggerProps(children.props, {

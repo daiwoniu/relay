@@ -1,3 +1,4 @@
+import { saveNativePreviewPreferences } from './native-preview-preferences.js';
 import { randomUUID } from 'node:crypto';
 import type { SQLiteDB } from '../db/index.js';
 import type { User } from '../db/query-types.js';
@@ -14,7 +15,7 @@ import { MAX_AVATAR_BYTES,validateAvatarUpload } from '../auth/avatar.js';
 type DB = Pick<SQLiteDB, 'get' | 'all' | 'run' | 'exec' | 'saveToFile'>;
 export type AccessActor = { id: string; role: string };
 export type AccessScope = { scope: 'project' | 'session'; scopeId: string };
-const names = ['account.setProjectCreation', 'account.setDisplayName', 'account.setAvatar', 'account.setDefaultEngine', 'account.setDefaultModel', 'account.setNotifications', 'account.setTheme', 'account.changeTools', 'account.setDefaultProject', 'project.setMember', 'project.removeMember', 'approvalTrust.set', 'approvalTrust.clear'] as const;
+const names = ['account.setProjectCreation', 'account.setDisplayName', 'account.setAvatar', 'account.setDefaultEngine', 'account.setDefaultModel', 'account.setNotifications', 'account.setTheme', 'account.setPreviewPreferences', 'account.changeTools', 'account.setDefaultProject', 'project.setMember', 'project.removeMember', 'approvalTrust.set', 'approvalTrust.clear'] as const;
 type Name = typeof names[number];
 type Command = Extract<CoreCommand, { name: Name }>;
 export function isAccessCommand(name: string): name is Name { return (names as readonly string[]).includes(name); }
@@ -83,6 +84,7 @@ export function executeAccess(db: DB, actor: AccessActor, command: Command) {
       db.run('UPDATE users SET default_model_id=?,updated_at=? WHERE id=?',[command.input.modelId,now,actor.id]);
       return{user:publicUser(db,actor.id)};
     }
+    case 'account.setPreviewPreferences':return saveNativePreviewPreferences(db,actor,command.input.changes);
     case 'account.setTheme':return saveNativeTheme(db,actor.id,command.input.settings,now);
     case 'account.changeTools':return changeNativeTools(db,actor.id,command.input,now);
     case 'account.setNotifications':{

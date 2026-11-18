@@ -1,17 +1,22 @@
-import { lazy, Suspense, useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useRef,useState } from 'react';
 import { createPomodoro, diffLines, formatJson, parseZonedDateTime, readPomodoro, tickPomodoro, timestampMilliseconds, type DiffLine, type LocalToolId } from './local-tools-model';
-import { CopyButton, ToolError, toolButton, toolInput } from './tool-ui';
+import { CopyButton, ToolError, toolButton, toolInput,ToolAnalyticsContext } from './tool-ui';
+import { trackToolAction } from '../../analytics/tracker';
+import { formatDateTime } from '../../utils/date-display.ts';
 
 const QrTool = lazy(() => import('./QrTool'));
 const LifeTools = lazy(() => import('./LifeTools'));
 const message = (error: unknown) => error instanceof Error ? error.message : '处理失败，请检查输入。';
-export default function LocalTools({ id, storageKey }: { id: LocalToolId; storageKey: string }) {
+export default function LocalTools(props:{id:LocalToolId;storageKey:string}){
+  return <ToolAnalyticsContext.Provider value={props.id}><ToolContent {...props}/></ToolAnalyticsContext.Provider>;
+}
+function ToolContent({ id, storageKey }: { id: LocalToolId; storageKey: string }) {
   if (id === 'timestamp') return <TimestampTool />;
   if (id === 'json') return <JsonTool />;
   if (id === 'diff') return <DiffTool />;
   if (id === 'pomodoro') return <PomodoroTool storageKey={storageKey} />;
   if (id === 'units' || id === 'dates' || id === 'shopping' || id === 'random') return <Suspense fallback={<p role="status">正在打开工具…</p>}><LifeTools id={id} /></Suspense>;
-  return <Suspense fallback={<p role="status">正在打开二维码工具…</p>}><QrTool /></Suspense>;
+  return <Suspense fallback={<p role="status">正在打开二维码工具…</p>}><QrTool key={storageKey} storageKey={storageKey} /></Suspense>;
 }
 
 function TimestampTool() {
@@ -23,11 +28,11 @@ function TimestampTool() {
   const [error, setError] = useState('');
   const zones = ['Asia/Shanghai', 'UTC', 'Asia/Tokyo', 'Asia/Singapore', 'Europe/London', 'America/New_York', 'America/Los_Angeles', Intl.DateTimeFormat().resolvedOptions().timeZone];
   const output = instant === null ? '' : [
-    `${zone}：${new Intl.DateTimeFormat('zh-CN', { timeZone: zone, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23', timeZoneName: 'shortOffset' }).format(instant)}`,
+    `${zone}：${formatDateTime(instant, { timeZone: zone, seconds: true })} ${new Intl.DateTimeFormat('en', { timeZone: zone, timeZoneName: 'shortOffset' }).formatToParts(instant).find(part => part.type === 'timeZoneName')?.value ?? ''}`,
     `UTC：${new Date(instant).toISOString()}`, `秒：${Math.floor(instant / 1000)}`, `毫秒：${instant}`,
   ].join('\n');
   function convert(kind: 'stamp' | 'date') {
-    try { setInstant(kind === 'stamp' ? timestampMilliseconds(stamp, unit) : parseZonedDateTime(date)); setError(''); } catch (error) { setError(message(error)); setInstant(null); }
+    try { setInstant(kind === 'stamp' ? timestampMilliseconds(stamp, unit) : parseZonedDateTime(date)); setError('');trackToolAction('timestamp','calculate'); } catch (error) { setError(message(error)); setInstant(null);trackToolAction('timestamp','calculate','invalid_input'); }
   }
   return <div className="space-y-4">
     <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_8rem_auto]">
@@ -36,7 +41,7 @@ function TimestampTool() {
       <button type="button" className={`${toolButton} self-end`} onClick={() => convert('stamp')}>转换时间戳</button>
     </div>
     <label className="block space-y-2 text-sm"><span>带时区的日期时间</span><input className={toolInput} value={date} placeholder="2026-11-11T12:30:00+08:00" onChange={(event) => { setDate(event.target.value); setInstant(null); setError(''); }} spellCheck={false}  enterKeyHint="done" /></label>
-    <div className="flex flex-wrap gap-2"><button type="button" className={toolButton} onClick={() => convert('date')}>日期转时间戳</button><button type="button" className={toolButton} onClick={() => { const now = Date.now(); setInstant(now); setStamp(String(unit === 'seconds' ? Math.floor(now / 1000) : now)); setDate(new Date(now).toISOString()); setError(''); }}>使用当前时间</button></div>
+    <div className="flex flex-wrap gap-2"><button type="button" className={toolButton} onClick={() => convert('date')}>日期转时间戳</button><button type="button" className={toolButton} onClick={() => { const now = Date.now(); setInstant(now); setStamp(String(unit === 'seconds' ? Math.floor(now / 1000) : now)); setDate(new Date(now).toISOString()); setError('');trackToolAction('timestamp','calculate'); }}>使用当前时间</button></div>
     <label className="block space-y-2 text-sm"><span>结果显示时区（自动考虑夏令时）</span><select className={toolInput} value={zone} onChange={(event) => setZone(event.target.value)}>{[...new Set(zones)].map((value) => <option key={value}>{value}</option>)}</select></label>
     <ToolError message={error} />
     {output && <><pre className="overflow-x-auto whitespace-pre-wrap break-all rounded-xl bg-[var(--color-bg)] p-4 text-sm leading-7">{output}</pre><CopyButton text={output} /></>}
@@ -48,7 +53,7 @@ function JsonTool() {
   const [output, setOutput] = useState('');
   const [error, setError] = useState('');
   function run(compact: boolean) {
-    try { setOutput(formatJson(input, compact)); setError(''); } catch (error) { setOutput(''); setError(message(error)); }
+    try { setOutput(formatJson(input, compact)); setError('');trackToolAction('json',compact?'minify':'format'); } catch (error) { setOutput(''); setError(message(error));trackToolAction('json',compact?'minify':'format','invalid_input'); }
   }
   return <div className="space-y-4"><label className="block space-y-2 text-sm"><span>JSON 内容</span><textarea className={`${toolInput} min-h-44 font-mono`} maxLength={200_000} value={input} placeholder={'{"message":"你好","id":1234567890123456789}'} onChange={(event) => { setInput(event.target.value); setOutput(''); setError(''); }} spellCheck={false}  enterKeyHint="done" /></label>
     <div className="flex flex-wrap gap-2"><button type="button" className={toolButton} onClick={() => run(false)}>格式化</button><button type="button" className={toolButton} onClick={() => run(true)}>压缩</button><button type="button" className={toolButton} onClick={() => { setInput(''); setOutput(''); setError(''); }}>清空</button></div><ToolError message={error} />
@@ -64,7 +69,7 @@ function DiffTool() {
   return <div className="space-y-4"><div className="grid gap-4 md:grid-cols-2">
     <label className="space-y-2 text-sm"><span>原文本</span><textarea className={`${toolInput} min-h-44`} maxLength={50_000} value={before} onChange={(event) => { setBefore(event.target.value); setResult(null); setError(''); }}  enterKeyHint="done" /></label>
     <label className="space-y-2 text-sm"><span>新文本</span><textarea className={`${toolInput} min-h-44`} maxLength={50_000} value={after} onChange={(event) => { setAfter(event.target.value); setResult(null); setError(''); }}  enterKeyHint="done" /></label>
-  </div><button type="button" className={toolButton} onClick={() => { try { setResult(diffLines(before, after)); setError(''); } catch (error) { setResult(null); setError(message(error)); } }}>逐行对比</button><ToolError message={error} />
+  </div><button type="button" className={toolButton} onClick={() => { try { setResult(diffLines(before, after)); setError('');trackToolAction('diff','compare'); } catch (error) { setResult(null); setError(message(error));trackToolAction('diff','compare','invalid_input'); } }}>逐行对比</button><ToolError message={error} />
     {result && <><p role="status" className="text-sm text-[var(--color-text-secondary)]">新增 {result.filter((line) => line.kind === 'add').length} 行 · 删除 {result.filter((line) => line.kind === 'remove').length} 行{result.every((line) => line.kind === 'same') ? ' · 内容相同' : ''}</p>
       <div className="max-h-96 overflow-auto rounded-xl border border-[var(--color-border)] font-mono text-sm">{result.map((line, index) => <div key={index} className={`flex gap-3 px-3 py-1 ${line.kind === 'add' ? 'bg-emerald-500/10' : line.kind === 'remove' ? 'bg-rose-500/10' : ''}`}><span aria-label={line.kind === 'add' ? '新增' : line.kind === 'remove' ? '删除' : '不变'} className="shrink-0 select-none">{line.kind === 'add' ? '+' : line.kind === 'remove' ? '−' : ' '}</span><span className="min-w-0 whitespace-pre-wrap break-all">{line.text || '\u00a0'}</span></div>)}</div></>}
   </div>;
@@ -74,6 +79,8 @@ function PomodoroTool({ storageKey }: { storageKey: string }) {
   const key = `${storageKey}:pomodoro`;
   const [timer, setTimer] = useState(() => { try { return readPomodoro(localStorage.getItem(key), Date.now()); } catch { return createPomodoro(); } });
   const [storageError, setStorageError] = useState(false);
+  const previousRounds=useRef(timer.rounds);
+  useEffect(()=>{if(timer.rounds>previousRounds.current)trackToolAction('pomodoro','complete');previousRounds.current=timer.rounds;},[timer.rounds]);
   const storedRemaining = timer.deadline === null ? timer.remainingMs : 0;
   useEffect(() => {
     try { localStorage.setItem(key, JSON.stringify({ ...timer, remainingMs: storedRemaining })); setStorageError(false); } catch { setStorageError(true); }
@@ -90,6 +97,7 @@ function PomodoroTool({ storageKey }: { storageKey: string }) {
   const finished = timer.remainingMs === 0;
   const running = timer.deadline !== null;
   function start() {
+    trackToolAction('pomodoro','start');
     setTimer((state) => {
       if (state.remainingMs === 0) {
         const mode = state.mode === 'focus' ? 'break' : 'focus';
@@ -103,7 +111,7 @@ function PomodoroTool({ storageKey }: { storageKey: string }) {
     <p role="timer" aria-label={`剩余${Math.floor(seconds / 60)}分${seconds % 60}秒`} className="py-4 text-5xl font-semibold tabular-nums sm:text-6xl">{String(Math.floor(seconds / 60)).padStart(2, '0')}:{String(seconds % 60).padStart(2, '0')}</p>
     {finished && <p role="status" className="text-sm">{timer.mode === 'focus' ? '本轮专注结束，休息一下吧。' : '休息结束，准备好下一轮了吗？'}</p>}
     <div className="flex flex-wrap justify-center gap-3">{running ? <button type="button" className={toolButton} onClick={() => setTimer((state) => ({ ...tickPomodoro(state, Date.now()), deadline: null }))}>暂停</button> : <button type="button" className={toolButton} onClick={start}>{finished ? timer.mode === 'focus' ? '开始休息' : '开始下一轮' : '开始 / 继续'}</button>}
-      <button type="button" className={toolButton} onClick={() => setTimer((state) => ({ ...createPomodoro(state.focusMinutes, state.breakMinutes), rounds: state.rounds }))}>重置</button></div>
+      <button type="button" className={toolButton} onClick={() => {if(running)trackToolAction('pomodoro','cancel','cancelled');setTimer((state) => ({ ...createPomodoro(state.focusMinutes, state.breakMinutes), rounds: state.rounds }));}}>重置</button></div>
     <div className="mx-auto grid max-w-sm grid-cols-2 gap-3 text-left"><label className="space-y-2 text-sm"><span>专注时长</span><select disabled={running} className={toolInput} value={timer.focusMinutes} onChange={(event) => setTimer((state) => ({ ...createPomodoro(Number(event.target.value), state.breakMinutes), rounds: state.rounds }))}>{[15, 25, 45, 50].map((value) => <option key={value} value={value}>{value} 分钟</option>)}</select></label>
       <label className="space-y-2 text-sm"><span>休息时长</span><select disabled={running} className={toolInput} value={timer.breakMinutes} onChange={(event) => setTimer((state) => ({ ...createPomodoro(state.focusMinutes, Number(event.target.value)), rounds: state.rounds }))}>{[5, 10, 15].map((value) => <option key={value} value={value}>{value} 分钟</option>)}</select></label></div>
     <p className="text-xs leading-5 text-[var(--color-text-secondary)]">计时保存在当前设备，刷新或重新打开工具可继续。后台计时按结束时间校准；关闭页面后不发送提醒。</p><ToolError message={storageError ? '浏览器存储不可用，收起或刷新后计时不会保留。' : ''} />

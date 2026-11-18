@@ -1,4 +1,5 @@
 import type { EngineMaintenanceActionDto, EngineMaintenanceStatusDto } from '../../generated/relay-contracts.ts';
+import { formatDateTime } from '../../utils/date-display.ts';
 
 export type EngineMaintenanceStatusTone = 'success' | 'warning' | 'danger' | 'neutral';
 
@@ -61,8 +62,7 @@ export function formatEngineReleaseTime(timestamp: number | null | undefined): s
   if (!Number.isFinite(timestamp) || timestamp === null || timestamp === undefined || timestamp < 0) return null;
   const date = new Date(timestamp);
   if (!Number.isFinite(date.getTime())) return null;
-  const pad = (value: number) => String(value).padStart(2, '0');
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  return formatDateTime(date);
 }
 
 function getStatus(engine: EngineMaintenanceStatusDto): { statusLabel: string; statusTone: EngineMaintenanceStatusTone } {

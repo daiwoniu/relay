@@ -127,6 +127,20 @@ test('legacy upgrade backs up the original, preserves message/blob content and o
   }finally{f.cleanup();}
 });
 
+test('existing Native install adds hosted sites once with backup and unchanged support migration',async()=>{
+  const f=fixture();
+  try{
+    const first=await initializeLocalStorage(f.filename);await first.owner.release();
+    const db=new DatabaseSync(f.filename),migration=db.prepare('SELECT script_digest FROM _relay_storage_migrations').get()!.script_digest;
+    db.exec('DROP TABLE hosted_sites');db.close();
+    const upgraded=await initializeLocalStorage(f.filename);
+    assert.equal(upgraded.action,'migrated');assert.equal(upgraded.backups.length,1);await upgraded.owner.release();
+    const saved=new DatabaseSync(f.filename,{readOnly:true});assert.equal(saved.prepare('SELECT COUNT(*) AS n FROM hosted_sites').get()!.n,0);
+    assert.equal(saved.prepare('SELECT script_digest FROM _relay_storage_migrations').get()!.script_digest,migration);saved.close();
+    const repeated=await initializeLocalStorage(f.filename);try{assert.equal(repeated.action,'current');assert.deepEqual(repeated.backups,[]);}finally{await repeated.owner.release();}
+  }finally{f.cleanup();}
+});
+
 test('existing Native install adds tools settings once with backup and unchanged support migration',async()=>{
   const f=fixture();
   try{
@@ -139,6 +153,25 @@ test('existing Native install adds tools settings once with backup and unchanged
     assert.equal(upgraded.action,'migrated');assert.equal(upgraded.backups.length,1);await upgraded.owner.release();
     const saved=new DatabaseSync(f.filename,{readOnly:true});
     assert.equal(saved.prepare('SELECT COUNT(*) AS n FROM user_tools_settings').get()!.n,0);
+    assert.equal(saved.prepare('SELECT COUNT(*) AS n FROM users').get()!.n,users);
+    assert.equal(saved.prepare('SELECT script_digest FROM _relay_storage_migrations').get()!.script_digest,migration);saved.close();
+    const repeated=await initializeLocalStorage(f.filename);
+    try{assert.equal(repeated.action,'current');assert.deepEqual(repeated.backups,[]);}finally{await repeated.owner.release();}
+  }finally{f.cleanup();}
+});
+
+test('existing Native install adds preview preferences once and preserves users and support migration',async()=>{
+  const f=fixture();
+  try{
+    const first=await initializeLocalStorage(f.filename);await first.owner.release();
+    const db=new DatabaseSync(f.filename);
+    const migration=db.prepare('SELECT script_digest FROM _relay_storage_migrations').get()!.script_digest;
+    const users=db.prepare('SELECT COUNT(*) AS n FROM users').get()!.n;
+    db.exec('DROP TABLE user_preview_preferences');db.close();
+    const upgraded=await initializeLocalStorage(f.filename);
+    assert.equal(upgraded.action,'migrated');assert.equal(upgraded.backups.length,1);await upgraded.owner.release();
+    const saved=new DatabaseSync(f.filename,{readOnly:true});
+    assert.equal(saved.prepare('SELECT COUNT(*) AS n FROM user_preview_preferences').get()!.n,0);
     assert.equal(saved.prepare('SELECT COUNT(*) AS n FROM users').get()!.n,users);
     assert.equal(saved.prepare('SELECT script_digest FROM _relay_storage_migrations').get()!.script_digest,migration);saved.close();
     const repeated=await initializeLocalStorage(f.filename);
@@ -201,11 +234,11 @@ test('news migration failure rolls back its transaction and keeps the pre-upgrad
 });
 
 test('a missing main database with existing installation evidence is never recreated',async()=>{
-  for(const entry of ['news','theme-assets','relay.db.pre-native-v1-synthetic.bak','relay.db-wal','relay.db.relay-owner']){
+  for(const entry of ['news','theme-assets','page-hosting','relay.db.pre-native-v1-synthetic.bak','relay.db-wal','relay.db.relay-owner']){
     const f=fixture();
     try{
       const evidence=path.join(f.root,entry);
-      if(['news','theme-assets','relay.db.relay-owner'].includes(entry))fs.mkdirSync(evidence);else fs.writeFileSync(evidence,'synthetic prior data');
+      if(['news','theme-assets','page-hosting','relay.db.relay-owner'].includes(entry))fs.mkdirSync(evidence);else fs.writeFileSync(evidence,'synthetic prior data');
       await assert.rejects(initializeLocalStorage(f.filename),/STORAGE_MAIN_DATABASE_MISSING/);
       assert.equal(fs.existsSync(f.filename),false);assert.equal(fs.existsSync(evidence),true);
     }finally{f.cleanup();}

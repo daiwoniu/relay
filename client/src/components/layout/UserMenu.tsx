@@ -1,3 +1,4 @@
+import { formatDateTime } from '../../utils/date-display.ts';
 import FailureNotice from '../ui/FailureNotice';
 import { useEffect, useState } from 'react';
 import type { AuthUser } from '../../api/auth';
@@ -12,7 +13,9 @@ import Tooltip from '../ui/Tooltip';
 import { selectSidebarCodexQuota } from './sidebar-codex-quota';
 import { MenuIcon } from '../icons/MenuIcon';
 
-function MenuGlyph({ type }: { type: 'share' | 'trash' | 'accounts' | 'server' | 'logout' }) {
+function MenuGlyph({ type }: { type: 'share' | 'trash' | 'accounts' | 'pages' | 'analytics' | 'server' | 'logout' }) {
+  if (type === 'analytics') return <svg viewBox="0 0 18 18" fill="none" aria-hidden="true"><path d="M2.5 2.5v13h13M6 12V8m4 4V4m4 8V6" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/></svg>;
+  if (type === 'pages') return <svg viewBox="0 0 18 18" fill="none" aria-hidden="true"><rect x="2" y="3" width="14" height="12" rx="2" stroke="currentColor" strokeWidth="1.4"/><path d="M2 6h14M6 6v9" stroke="currentColor" strokeWidth="1.4"/></svg>;
   if (type === 'share' || type === 'trash') return <MenuIcon type={type} size={18} />;
   if (type === 'accounts') return <svg viewBox="0 0 18 18" fill="none" aria-hidden="true"><circle cx="6.8" cy="5.7" r="2.2" stroke="currentColor" strokeWidth="1.4"/><path d="M2.8 13.7c.5-2.8 1.8-4.2 4-4.2 1.3 0 2.3.5 3 1.4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/><circle cx="13.3" cy="12.7" r="2.1" stroke="currentColor" strokeWidth="1.2"/><path d="M13.3 9.7v.9m0 4.2v.9m3-3h-.9m-4.2 0h-.9m5.1-2.1-.6.6m-3 3-.6.6m4.2 0-.6-.6m-3-3-.6-.6" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round"/></svg>;
   if (type === 'server') return <svg viewBox="0 0 18 18" fill="none" aria-hidden="true"><rect x="3" y="3" width="12" height="4.5" rx="1.2" stroke="currentColor" strokeWidth="1.4"/><rect x="3" y="10.5" width="12" height="4.5" rx="1.2" stroke="currentColor" strokeWidth="1.4"/><path d="M5.5 5.25h.01M8 5.25h4.5M5.5 12.75h.01M8 12.75h4.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/></svg>;
@@ -33,6 +36,7 @@ export default function UserMenu({
   onOpenShares,
   onOpenTrash,
   onOpenAccountManagement,
+  onOpenPageHosting,
   onOpenServiceMaintenance,
   onOpenEngineMaintenance,
   onLogout,
@@ -48,6 +52,7 @@ export default function UserMenu({
   onOpenShares: () => void;
   onOpenTrash: () => void;
   onOpenAccountManagement: () => void;
+  onOpenPageHosting: () => void;
   onOpenServiceMaintenance: () => void;
   onOpenEngineMaintenance: (engine?: EngineId) => void;
   onLogout: () => void;
@@ -115,7 +120,7 @@ export default function UserMenu({
   const quotaWarning = canReadCodexQuota && (quotaError !== null || quotaSnapshot?.sourceMeta?.state === 'failed_snapshot');
   const warningText = quota.length > 0
     ? snapshotNotice('Codex', quotaSnapshot?.sourceMeta)
-      ?? `Codex 额度更新失败，显示上次成功读取的数据（${quotaSnapshot ? new Date(quotaSnapshot.fetchedAt).toLocaleString('zh-CN') : '时间未知'}）。`
+      ?? `Codex 额度更新失败，显示上次成功读取的数据（${quotaSnapshot ? formatDateTime(quotaSnapshot.fetchedAt, { seconds: true }) : '时间未知'}）。`
     : 'Codex 额度暂时无法读取，请稍后重试。';
   const refreshQuota = async () => {
     if (!canReadCodexQuota || !user?.id || quotaRefreshing) return;
@@ -156,18 +161,20 @@ export default function UserMenu({
           <div className="user-menu__scroll-region">
             <div className="user-menu__section" aria-label="个人">
               <div className="user-menu__section-label">个人</div>
-              <button type="button" role="menuitem" onClick={() => run(onOpenShares)} className={itemClass}><span className="user-menu__item-icon"><MenuGlyph type="share" /></span><span>我的分享</span></button>
-              <button type="button" role="menuitem" onClick={() => run(onOpenTrash)} className={itemClass}><span className="user-menu__item-icon"><MenuGlyph type="trash" /></span><span>回收站</span></button>
+              <button type="button" role="menuitem" onClick={() => run(onOpenShares)} className={itemClass}><span className="user-menu__item-icon"><MenuGlyph type="share" /></span><span className="min-w-0 flex-1 text-left">我的分享</span><span aria-hidden="true" className="text-[var(--color-text-tertiary)]">›</span></button>
+              <button type="button" role="menuitem" onClick={() => run(onOpenTrash)} className={itemClass}><span className="user-menu__item-icon"><MenuGlyph type="trash" /></span><span className="min-w-0 flex-1 text-left">回收站</span><span aria-hidden="true" className="text-[var(--color-text-tertiary)]">›</span></button>
             </div>
 
             {user?.role === 'admin' && <div className="user-menu__section" aria-label="管理">
               <div className="user-menu__section-label">管理</div>
+              <a role="menuitem" href="/admin/analytics" target="_blank" rel="noopener noreferrer" onClick={onClose} className={itemClass}><span className="user-menu__item-icon"><MenuGlyph type="analytics" /></span><span className="min-w-0 flex-1 text-left">访问统计</span><span aria-hidden="true" className="text-[var(--color-text-tertiary)]">↗</span><span className="sr-only">（新标签页打开）</span></a>
+              <button type="button" role="menuitem" onClick={() => run(onOpenPageHosting)} className={itemClass}><span className="user-menu__item-icon"><MenuGlyph type="pages" /></span><span className="min-w-0 flex-1 text-left">页面托管</span><span aria-hidden="true" className="text-[var(--color-text-tertiary)]">›</span></button>
               <button type="button" role="menuitem" onClick={() => run(onOpenAccountManagement)} className={itemClass}><span className="user-menu__item-icon"><MenuGlyph type="accounts" /></span><span className="min-w-0 flex-1 text-left">账号管理</span><span aria-hidden="true" className="text-[var(--color-text-tertiary)]">›</span></button>
             </div>}
 
             {(showServiceMaintenance || user !== null) && <div className="user-menu__section" aria-label="系统管理">
               <div className="user-menu__section-label">系统管理</div>
-              {showServiceMaintenance && <button type="button" role="menuitem" onClick={() => run(onOpenServiceMaintenance)} className={itemClass}><span className="user-menu__item-icon"><MenuGlyph type="server" /></span><span>Relay 维护</span></button>}
+              {showServiceMaintenance && <button type="button" role="menuitem" onClick={() => run(onOpenServiceMaintenance)} className={itemClass}><span className="user-menu__item-icon"><MenuGlyph type="server" /></span><span className="min-w-0 flex-1 text-left">Relay 维护</span><span aria-hidden="true" className="text-[var(--color-text-tertiary)]">›</span></button>}
               <button type="button" role="menuitem" onClick={() => run(() => onOpenEngineMaintenance())} className={itemClass}><span className="user-menu__item-icon"><SessionEngineBadge engine="codex" size="menu" /></span><span className="min-w-0 flex-1 text-left">引擎维护</span><span className="truncate text-[10px] text-[var(--color-text-tertiary)]">{engineSummary ? `${engineSummary.engines.filter((engine) => engine.readiness === 'ready').length}/${engineSummary.engines.length} 可用` : '查看状态'}</span><span aria-hidden="true" className="text-[var(--color-text-tertiary)]">›</span></button>
             </div>}
           </div>

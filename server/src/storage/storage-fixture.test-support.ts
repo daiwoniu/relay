@@ -1,4 +1,6 @@
 import fs from 'node:fs';
+import { PREVIEW_PREFERENCES_SCHEMA_SQL } from '../contracts/preview-preferences.js';
+import { ANALYTICS_SCHEMA_SQL } from '../analytics/contract.js';
 import os from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -31,6 +33,8 @@ export function fixture() {
     INSERT INTO engine_resource_leases VALUES('attempt','session','lease','running','codex','codex:default',1,1);
     INSERT INTO messages VALUES('m1','session','turn','assistant','first','final_answer',NULL,NULL,1,NULL,0),
       ('m2','session','turn','assistant','latest','final_answer',NULL,NULL,2,NULL,0);`);
+  db.exec(PREVIEW_PREFERENCES_SCHEMA_SQL);
+  db.exec(ANALYTICS_SCHEMA_SQL);
   for (const id of ['owner', 'other', 'admin']) db.prepare('INSERT INTO auth_sessions VALUES(?,?,?)').run(`auth-${id}`, id, Date.now() + 3600_000);
   db.exec(`CREATE TABLE projects(id TEXT PRIMARY KEY,owner_user_id TEXT,path TEXT,deleted_at INTEGER);
     ALTER TABLE users ADD COLUMN username TEXT;

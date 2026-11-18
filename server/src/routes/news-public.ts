@@ -1,5 +1,5 @@
 import { Hono, type Context } from 'hono';
-import { getConnInfo } from '@hono/node-server/conninfo';
+import { getHttpClientIp } from '../http-client-ip.js';
 import { PublicShareRateLimiter } from '../shares/public-rate-limit.js';
 import { isAllowedOrigin } from '../security.js';
 import { SEED_SOURCES } from '../news/sources/seed-sources.js';
@@ -43,8 +43,7 @@ export function createPublicNewsRouter({ repository, now = Date.now, getClientId
   const cache = new Map<string, { until: number; body: unknown }>();
   router.use('*', async (c, next) => {
     if (!isAllowedOrigin(c.req.header('origin'))) return c.json({ error: '不允许的请求来源' }, 403);
-    const proxy = process.env.RELAY_TRUST_PROXY === '1' ? c.req.header('x-forwarded-for')?.split(',')[0]?.trim() : undefined;
-    const client = getClientId?.(c) || c.req.header('x-relay-client-address')?.trim() || proxy || getConnInfo(c).remote.address || 'local';
+    const client = getClientId?.(c) || getHttpClientIp(c);
     if (!limiter.consume(client.slice(0, 128))) return c.json({ error: '请求过于频繁' }, 429);
     c.header('Cache-Control', 'public, max-age=30');
     await next();

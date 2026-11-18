@@ -37,7 +37,7 @@ async function harness() {
       codex_thread_id TEXT, codex_archived INTEGER DEFAULT 0, status TEXT NOT NULL DEFAULT 'idle',
       token_usage TEXT, active_turn_usage TEXT, active_attempt_id TEXT, deleted_at INTEGER
     );
-    CREATE TABLE messages (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, metadata TEXT);
+    CREATE TABLE messages (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, metadata TEXT, role TEXT NOT NULL DEFAULT 'user');
     CREATE TABLE shared_records (id TEXT PRIMARY KEY, source_session_id TEXT);
     CREATE TABLE context_compaction_events (session_id TEXT, thread_id TEXT, turn_id TEXT);
     CREATE TABLE engine_turn_facts (id TEXT PRIMARY KEY, session_id TEXT, attempt_id TEXT);
@@ -57,7 +57,7 @@ async function harness() {
       ('${SESSION_PROJECT}', '项目会话一', 1, 10, '${PROJECT_DELETED}', 'codex', 'idle', 'attempt-project', 10),
       ('${SESSION_PROJECT_2}', '项目会话二', 1, 10, '${PROJECT_DELETED}', 'codebuddy', 'idle', NULL, 10),
       ('${SESSION_SINGLE}', '单独删除', 1, 10, '${PROJECT_ACTIVE}', 'codex', 'idle', 'attempt-single', 10);
-    INSERT INTO messages VALUES
+    INSERT INTO messages(id,session_id,metadata) VALUES
       ('77777777-7777-4777-8777-777777777777', '${SESSION_PROJECT}', '{"attachments":[{"id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","kind":"uploaded_file","name":"a.txt","path":"D:/deleted/.relay_upload/messages/77777777-7777-4777-8777-777777777777/a.txt","size":12,"mimeType":"text/plain","available":true}]}'),
       ('88888888-8888-4888-8888-888888888888', '${SESSION_PROJECT_2}', NULL),
       ('99999999-9999-4999-8999-999999999999', '${SESSION_SINGLE}', NULL);

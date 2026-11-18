@@ -10,6 +10,7 @@ import SettingsNavigation from '../ui/SettingsNavigation';
 import { useChatStore } from '../../stores/chat';
 import ThemeSettingsDialog, { type ThemeSettingsDialogHandle } from '../theme/ThemeSettingsDialog';
 import NotificationSettingsDialog from '../settings/NotificationSettingsDialog';
+import PreviewSettings from '../settings/PreviewSettings';
 import ConfirmDialog from '../ui/ConfirmDialog';
 import { FormField, FormFeedback, formControlClassName, primaryFormButtonClassName, secondaryFormButtonClassName } from '../ui/FormControls';
 import SessionEngineBadge from '../chat/SessionEngineBadge';
@@ -32,7 +33,7 @@ function canvasToBlob(canvas: HTMLCanvasElement): Promise<Blob> {
   });
 }
 
-type AccountSectionId = 'profile' | 'security' | 'project' | 'appearance' | 'notifications';
+type AccountSectionId = 'profile' | 'security' | 'project' | 'appearance' | 'notifications' | 'preview';
 
 const ACCOUNT_SECTIONS: Array<{ id: AccountSectionId; label: string; description: string; adminOnly?: boolean }> = [
   { id: 'profile', label: '个人资料', description: '头像、昵称与账号身份' },
@@ -40,9 +41,11 @@ const ACCOUNT_SECTIONS: Array<{ id: AccountSectionId; label: string; description
   { id: 'project', label: '新对话', description: '默认设置' },
   { id: 'appearance', label: '外观', description: '主题、背景与面板效果' },
   { id: 'notifications', label: '通知', description: '系统通知与提示音' },
+  { id: 'preview', label: '文件预览', description: '预览容量与图片清晰度，仅对本人账号生效' },
 ];
 
 function SectionIcon({ section }: { section: AccountSectionId }) {
+  if (section === 'preview') return <svg aria-hidden="true" viewBox="0 0 24 24" className="h-[18px] w-[18px]" fill="none" stroke="currentColor" strokeWidth="1.7"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/></svg>;
   const path = section === 'profile'
     ? <><circle cx="12" cy="8" r="3" /><path d="M5.5 19c.8-3.2 3-4.8 6.5-4.8s5.7 1.6 6.5 4.8" /></>
     : section === 'security'
@@ -358,6 +361,7 @@ export default function AccountSettingsDialog({ open, onClose, mobile }: { open:
           <FormFeedback message={defaultError} error />
         </section>}
 
+        {selectedSection.id === 'preview' && open && <PreviewSettings />}
         {selectedSection.id === 'appearance' && <div className="embedded-settings-content min-h-0 flex-1"><ThemeSettingsDialog ref={themeSettingsRef} open={open} onClose={closeSettingsNow} mobile={mobile} embedded onDirtyChange={setThemeDirty} onMinimizedChange={setThemeMinimized} onBusyChange={setThemeBusy} /></div>}
         {selectedSection.id === 'notifications' && <div className="embedded-settings-content min-h-0 flex-1"><NotificationSettingsDialog open={open} onClose={closeSettingsNow} mobile={mobile} embedded /></div>}
           </div>

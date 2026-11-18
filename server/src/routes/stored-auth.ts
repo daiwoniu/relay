@@ -1,5 +1,7 @@
+import { PreviewPreferencesSchema, PreviewPreferencesPatchSchema } from '../contracts/preview-preferences.js';
 import { randomUUID } from 'node:crypto';
 import { getConnInfo } from '@hono/node-server/conninfo';
+import { getHttpClientIp } from '../http-client-ip.js';
 import { Hono, type Context } from 'hono';
 import { z } from 'zod';
 import type { RelayEnv } from '../auth/authorization.js';
@@ -48,6 +50,7 @@ export function createStoredAuthModule(options: {
   themeSettingsChanged?:(userId:string)=>void|Promise<void>;
   getCatalog?:(engine:EngineId)=>Promise<EngineModelCatalog>;
   remoteAddress?: (c: C) => string | undefined;
+  observeLogin?:(c:C,input:{id:string;result:'success'|'rejected'|'throttled'|'error';userId?:string;role?:'admin'|'member'})=>void;
   loginTokens?: LoginIntentTokens;
   limiters?: { loginClient?: LoginAttemptLimiter; loginIp?: LoginAttemptLimiter;
     credentialClient?: LoginAttemptLimiter; credentialIp?: LoginAttemptLimiter };
@@ -63,7 +66,7 @@ export function createStoredAuthModule(options: {
   const uuid = z.string().uuid();
   const secure = (c: C) => isSecureRelayRequest(c.req.url, c.req.header('x-forwarded-proto'), c.req.header('x-forwarded-host'));
   const peer = options.remoteAddress ?? ((c: C) => { try { return getConnInfo(c).remote.address; } catch { return undefined; } });
-  const ip = (c: C) => ((process.env.RELAY_TRUST_PROXY === '1' ? c.req.header('x-forwarded-for')?.split(',')[0]?.trim() : undefined) || peer(c) || 'local').slice(0, 128);
+  const ip = (c: C) => getHttpClientIp(c, peer(c));
   const clientId = (c: C) => {
     const current = getClientIdFromCookieHeader(c.req.header('cookie')); if (current) return current;
     const created = createClientId(); c.header('Set-Cookie', serializeClientIdCookie(created, secure(c)), { append: true }); return created;
@@ -87,7 +90,7 @@ export function createStoredAuthModule(options: {
   const origin = (c: C) => isAllowedOrigin(c.req.header('origin')) ? null : c.json(presentApiError('请求来源不受允许', { code: 'ACCOUNT_ORIGIN_FORBIDDEN' }), 403);
   const guard = createRequireStoredUserSession(options.port);
   for (const path of ['/me', '/profile', '/change-password', '/change-username', '/users', '/users/:id/disabled',
-    '/users/:id/project-permission', '/users/:id/reset-password', '/default-project','/default-engine','/default-model','/avatar','/users/:id/avatar','/notification-preferences','/theme-settings','/tools-settings']) router.use(path, guard);
+    '/users/:id/project-permission', '/users/:id/reset-password', '/default-project','/default-engine','/default-model','/avatar','/users/:id/avatar','/notification-preferences','/preview-preferences','/theme-settings','/tools-settings']) router.use(path, guard);
   const actor = (c: C) => c.get('relayAuthSession')!;
   const principal = (c: C) => c.get('relayStoragePrincipal')!;
   const admin = (c: C) => actor(c).user.role === 'admin' ? null : c.json(presentApiError('仅管理员可以管理账号'), 403);
@@ -132,24 +135,33 @@ export function createStoredAuthModule(options: {
     const policy = resolveLoginSessionPolicy({ purpose: parsed.data.purpose, marker: c.req.header('x-relay-acceptance'), remoteAddress: peer(c),
       proxiedClientAddress: c.req.header('x-relay-client-address'), forwardedHost: c.req.header('x-forwarded-host'), forwardedProto: c.req.header('x-forwarded-proto') });
     if (!policy) return c.json(presentApiError('无头验收长会话只允许本机管理员认证'), 403);
+    const eventIntent=uuid.safeParse(c.req.header('x-relay-operation-id'));
+    const eventId=eventIntent.success?eventIntent.data:randomUUID();
+    const report=(result:'success'|'rejected'|'throttled'|'error',user?:PublicUserDto)=>{
+      if(parsed.data.purpose==='headless_acceptance')return;
+      try{options.observeLogin?.(c,{id:eventId,result,userId:user?.id,role:user?.role});}catch{/* Statistics cannot block login. */}
+    };
     const address = ip(c), client = clientId(c), scope = `${address}|${client}`;
-    const wait = limited(c, loginClient, scope, loginIp, address, '登录失败次数过多'); if (wait) return wait;
+    const wait = limited(c, loginClient, scope, loginIp, address, '登录失败次数过多'); if (wait) {report('throttled');return wait;}
     const id = key(c); if (id instanceof Response) return id;
     const held = tokens.acquire(id, scope);
     const request: CredentialRequest<'auth.login'> = { protocolVersion: 1, storeId: options.storeId, workerGeneration: options.generation,
       requestId: randomUUID(), operationId: `credential:${id}`, principal: { kind: 'login' }, command: { name: 'auth.login',
         input: { username: parsed.data.username, password: parsed.data.password, tokenHash: held.tokenHash, ...policy } } };
-    const result = await credentials.run(request);
+    const result = await credentials.run(request).catch(error=>{report('error');throw error;});
     if (result.state !== 'committed') {
-      if (result.state === 'rejected' && result.reason === 'invalid_credentials') return failed(c, loginClient, scope, loginIp, address, true);
+      if (result.state === 'rejected' && result.reason === 'invalid_credentials') {const response=failed(c, loginClient, scope, loginIp, address, true);report(response.status===429?'throttled':'rejected');return response;}
       if (result.state === 'rejected' && result.code === 'CONFLICT') {
         const attempt = failed(c, loginClient, scope, loginIp, address, true);
+        report(attempt.status===429?'throttled':'error');
         return attempt.status === 429 ? attempt : error(c, 'CONFLICT');
       }
+      report('error');
       if (result.state === 'rejected' && result.code === 'FORBIDDEN') return error(c, 'OPERATION_EXPIRED');
       return credentialError(c, result);
     }
     loginClient.clear(scope);
+    report('success',result.value.user);
     c.header('Set-Cookie', serializeSessionCookie(held.token, result.value.expiresAt, secure(c), result.value.ttlMs), { append: true });
     return c.json(AuthResponseDtoSchema.parse({ user: result.value.user, expiresAt: result.value.expiresAt }));
   });
@@ -256,6 +268,18 @@ export function createStoredAuthModule(options: {
     if(result.state!=='committed')return result.state==='unknown'?unavailable(c,true):error(c,result.code);
     try{await options.notificationPreferencesChanged?.(actor(c).user.id);}catch{/* Committed preference is recovered on GET/reconnect. */}
     return c.json(NotificationPreferencesResponseDtoSchema.parse({preferences:await options.port.readNotificationPreferences({principal:principal(c)})}));
+  });
+  router.get('/preview-preferences',async(c)=>{
+    c.header('Cache-Control','private, no-store');
+    return c.json(PreviewPreferencesSchema.parse(await options.port.readPreviewPreferences({principal:principal(c)})));
+  });
+  router.patch('/preview-preferences',async(c)=>{
+    c.header('Cache-Control','private, no-store');const denied=origin(c);if(denied)return denied;
+    const body=PreviewPreferencesPatchSchema.safeParse(await accountSettingsBody(c));if(!body.success)return error(c,'INVALID_ARGUMENT');
+    const id=key(c);if(id instanceof Response)return id;
+    const result=await core(c,id,'account.setPreviewPreferences',{changes:body.data});
+    if(result.state!=='committed')return result.state==='unknown'?unavailable(c,true):error(c,result.code);
+    return c.json(PreviewPreferencesSchema.parse(await options.port.readPreviewPreferences({principal:principal(c)})));
   });
   router.get('/theme-settings',async(c)=>{
     c.header('Cache-Control','private, no-store');return c.json(AccountThemeSettingsResponseDtoSchema.parse({settings:await options.port.readThemeSettings({principal:principal(c)})}));

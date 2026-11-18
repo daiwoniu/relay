@@ -1,8 +1,9 @@
 export function isUnauthenticatedApiRequest(method: string, path: string): boolean {
   return path === '/api/health'
     || path === '/api/auth/login'
+    || (method === 'POST' && path === '/api/public/analytics/events')
     || (method === 'GET' && path.startsWith('/api/public/shares/'))
-    || (method === 'GET' && ['/api/public/tools/china-day', '/api/public/tools/china-day/calendar', '/api/public/tools/china-day/weather'].includes(path))
+    || (method === 'GET' && ['/api/public/tools/china-day', '/api/public/tools/china-day/calendar', '/api/public/tools/china-day/weather', '/api/public/tools/china-day/hourly'].includes(path))
     || (method === 'GET' && (path === '/api/public/news' || path === '/api/public/news/version'));
 }
 

@@ -307,6 +307,8 @@ test('共享契约 presenter 只输出浏览器允许读取的 DTO 字段', () =
     codex_archived: 1,
     status: 'idle',
     message_revision: 7,
+    message_count: 3,
+    assistant_message_count: 1,
     archived: 0,
     codex_thread_id: 'internal-thread',
   }), {
@@ -327,7 +329,8 @@ test('共享契约 presenter 只输出浏览器允许读取的 DTO 字段', () =
       serviceTier: null,
       revision: 0,
     },
-    message_count: 7,
+    message_count: 3,
+    assistant_message_count: 1,
     context_compaction_count: 0,
   });
 

@@ -1,4 +1,6 @@
 import fs from 'node:fs/promises';
+import path from 'node:path';
+import { PageHosting } from './page-hosting/service.js';
 import type { StoredApplicationScope } from './stored-application-host.js';
 import type { StoredHttpApplicationOptions } from './stored-http-application.js';
 import type { EngineRegistry } from './engine/registry.js';
@@ -78,6 +80,7 @@ export function createStoredDomainServices(scope:StoredApplicationScope,dependen
   const draftCleanup=own(new StoredDraftCleanup({...base,files})),archivedCleanup=own(new StoredArchivedCleanup({...base,files,changed:id=>changed('project',id)}));
   const downloads=own(new StoredFileDownloads({port,grants})),filesystem=own(new StoredFilesystem({port,grants,assertExclusiveWriter}));
   const theme=own(new StoredThemeAssets({...base,root:dependencies.themeRoot}));
+  const hosting=own(new PageHosting({...base,root:path.join(path.dirname(dependencies.newsRoot),'page-hosting')}));
   const chinaDayCache=own(new ChinaDayPanelCache(dependencies.chinaDayCacheRoot,Date.now,{assertExclusiveWriter}));
   const news=own(new StoredNews({port,root:dependencies.newsRoot,writerProof:scope.writerProof,assertExclusiveWriter,sources:dependencies.newsSources,initialize:dependencies.newsInitialize}));
   const snapshots=own(new StoredProviderSnapshots({...dependencies.snapshots,...base})),localUsage=own(new StoredLocalUsage({...dependencies.usage,...base}));
@@ -113,6 +116,6 @@ export function createStoredDomainServices(scope:StoredApplicationScope,dependen
   const http:Omit<StoredHttpApplicationOptions,'port'|'storeId'|'generation'|'graph'|'ready'>={auth:dependencies.auth,codexDebugInfo:dependencies.codexDebugInfo,reads:{refreshSessionArchiveState:()=>archive.refresh()},writes:{...dependencies.resources,assertNotDeleting,changed,softDelete},
     uploads:{service:uploads},uploadReads:{service:uploadReads},draftCleanup:{service:draftCleanup},archivedCleanup:{service:archivedCleanup},downloads:{service:downloads},filesystem:{service:filesystem},themeAssets:{service:theme},
     unarchive:{service:unarchive,assertNotDeleting},fork:{service:fork,assertNotDeleting},shares:{service:shares},publicShares:dependencies.publicShares,trash:{service:trash,purge},repair:{service:repair},workspace:{service:workspace,snapshots},accountResources:{snapshots,localUsage,creditReset},system:dependencies.system,
-    news:{service:news},chinaDay:{...dependencies.chinaDay,cache:chinaDayCache},concurrency:{resources,changed:async key=>{await publishCapacity(key);void graph.scheduler.drain(key).catch(()=>undefined);}}};
-  return{http,sender,commands,attachments,publishCapacity,recover:async()=>{await news.initialize();await dependencies.codexLifecycle?.start();const result=await startup.recover();if(result.blockedCount)dependencies.diagnostic('NATIVE_STARTUP_WORK_BLOCKED',result.blockedCount);},resume:async()=>{await news.resume();await startup.resume();}};
+    hosting,news:{service:news},chinaDay:{...dependencies.chinaDay,cache:chinaDayCache},concurrency:{resources,changed:async key=>{await publishCapacity(key);void graph.scheduler.drain(key).catch(()=>undefined);}}};
+  return{http,sender,commands,attachments,publishCapacity,recover:async()=>{await hosting.initialize();await news.initialize();await dependencies.codexLifecycle?.start();const result=await startup.recover();if(result.blockedCount)dependencies.diagnostic('NATIVE_STARTUP_WORK_BLOCKED',result.blockedCount);},resume:async()=>{await news.resume();await startup.resume();}};
 }

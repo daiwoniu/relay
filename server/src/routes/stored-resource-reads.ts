@@ -2,7 +2,8 @@ import { Hono, type Context } from 'hono';
 import { z } from 'zod';
 import type { RelayEnv } from '../auth/authorization.js';
 import { createRequireStoredUserSession } from '../auth/stored-session.js';
-import { presentApiError } from '../contracts/index.js';
+import { presentApiError, SubAgentReportDtoSchema } from '../contracts/index.js';
+import { readCodexSubAgentReport } from '../codex/thread-admin.js';
 import { StorageContractError } from '../storage/command-boundary.js';
 import type { CoreStoragePort, StorageRejectionCode } from '../storage/contracts.js';
 
@@ -23,12 +24,13 @@ const messageList = z.object({ limit: z.coerce.number().int().min(0).max(500).de
 /** Candidate public reads. Archive refresh must use the same native graph; no implicit engine or sql.js dependency. */
 export function createStoredResourceReadsRouter(options: {
   port: CoreStoragePort; refreshSessionArchiveState: () => void | Promise<void>;
+  loadSubAgentReport?: (childThreadId: string, completionItemId: string) => Promise<string | null>;
 }) {
   options = Object.freeze({ ...options });
   const router = new Hono<RelayEnv>();
   const guard = createRequireStoredUserSession(options.port);
   for (const path of ['/projects', '/projects/:id', '/sessions', '/sessions/:id', '/sessions/:id/message-page', '/sessions/:id/messages/:messageId/details',
-    '/sessions/:id/search-matches', '/sessions/:id/messages', '/sessions/:id/deletion-impact', '/projects/:id/deletion-impact']) {
+    '/sessions/:id/search-matches', '/sessions/:id/messages', '/sessions/:id/messages/:messageId/subagent-report', '/sessions/:id/deletion-impact', '/projects/:id/deletion-impact']) {
     router.use(path, guard, async (c, next) => { c.header('Cache-Control', 'private, no-store'); await next(); });
   }
   function failure(c: Context<RelayEnv>, code: StorageRejectionCode) {
@@ -90,6 +92,28 @@ export function createStoredResourceReadsRouter(options: {
     const id = uuid.safeParse(c.req.param('id')), messageId = z.string().min(1).max(256).safeParse(c.req.param('messageId'));
     if (!id.success || !messageId.success) return failure(c, 'INVALID_ARGUMENT');
     return c.json(await options.port.readMessageDetails({ principal: c.get('relayStoragePrincipal')!, sessionId: id.data, messageId: messageId.data }));
+  });
+  router.get('/sessions/:id/messages/:messageId/subagent-report', async (c) => {
+    const id = uuid.safeParse(c.req.param('id'));
+    const messageId = z.string().min(1).max(256).safeParse(c.req.param('messageId'));
+    const query = z.object({ itemId: z.string().min(1).max(256) }).strict().safeParse(c.req.query());
+    if (!id.success || !messageId.success || !query.success) return failure(c, 'INVALID_ARGUMENT');
+    const principal = c.get('relayStoragePrincipal')!;
+    const session = await options.port.readSessionDetails({ principal, sessionId: id.data });
+    if (!session || session.engine !== 'codex') return failure(c, 'NOT_FOUND');
+    const reference = { principal, sessionId: id.data, messageId: messageId.data };
+    const details = await options.port.readMessageDetails(reference);
+    const item = details.items?.find(item => item.id === query.data.itemId && item.type === 'subAgentActivity');
+    const childId = item?.details.agentThreadId;
+    if (item?.details.kind !== 'completed' || item.status !== 'completed' || typeof childId !== 'string'
+      || !childId || childId.length > 256 || !item.id.startsWith('subagent-completed-')) return failure(c, 'NOT_FOUND');
+    let content: string | null;
+    try { content = await (options.loadSubAgentReport ?? readCodexSubAgentReport)(childId, item.id); }
+    catch { return c.json(presentApiError('子任务回报暂不可用，请稍后重试'), 503); }
+    // Recheck access after the external read; permissions/deletion may have changed while awaiting it.
+    await options.port.readMessageDetails(reference);
+    if (!content) return c.json(presentApiError('此完成记录没有可确认的结果回报'), 404);
+    return c.json(SubAgentReportDtoSchema.parse({ content }));
   });
   router.get('/sessions/:id/messages', async (c) => {
     const id = uuid.safeParse(c.req.param('id')), parsed = messageList.safeParse(c.req.query());

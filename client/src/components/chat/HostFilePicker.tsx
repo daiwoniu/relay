@@ -129,7 +129,7 @@ export default function HostFilePicker({ initialPath, remainingSlots, existingHo
                       <input type="checkbox" checked={alreadyAdded || selected.has(entry.path)} disabled={alreadyAdded || selectionFull} onChange={() => toggleFile(entry)} className="h-4 w-4 shrink-0" />
                       <FileTypeIcon filePath={entry.name} size={17} className="shrink-0 text-[var(--color-text-secondary)]" />
                       <span className="min-w-0 flex-1">
-                        <Tooltip content={entry.name} asChild><span className="block truncate text-sm leading-5 text-[var(--color-text)]">{entry.name}</span></Tooltip>
+                        <Tooltip overflowOnly content={entry.name} asChild><span className="block truncate text-sm leading-5 text-[var(--color-text)]">{entry.name}</span></Tooltip>
                         {typeof entry.modifiedAt === 'number' && Number.isFinite(entry.modifiedAt) && (
                           <span className="mt-0.5 block text-[11px] leading-4 text-[var(--color-text-tertiary)]">修改于 {formatFileBrowserModifiedTime(entry.modifiedAt)}</span>
                         )}

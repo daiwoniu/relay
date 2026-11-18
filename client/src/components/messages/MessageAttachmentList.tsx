@@ -45,10 +45,10 @@ export default function MessageAttachmentList({ attachments, readOnly = false }:
     const path = 'path' in attachment ? attachment.path : null;
     const available = attachment.kind === 'host_file' ? Boolean(path) : attachment.available;
   const label = attachment.kind === 'host_file' ? getFileIconType(attachment.name) === 'image' ? '主机图片' : '主机文件' : attachment.mimeType.startsWith('image/') ? '图片' : '设备文件';
-    const content = <><MessageAttachmentThumbnail attachment={attachment} path={readOnly ? null : path} /><span className="min-w-0"><span className="block truncate text-xs font-medium">{attachment.name}</span><span className="block text-[11px] opacity-70">{label} · {formatFileSize(attachment.size)}{readOnly ? ' · 仅附件信息，不含文件内容' : !available ? attachment.kind === 'host_file' ? ' · 仅来源设备可访问' : ' · 文件已清理' : ''}</span></span></>;
+    const content = <><MessageAttachmentThumbnail attachment={attachment} path={readOnly ? null : path} /><span className="min-w-0"><span data-attachment-name data-tooltip-full-text={path ?? attachment.name} className="block truncate text-xs font-medium">{attachment.name}</span><span className="block text-[11px] opacity-70">{label} · {formatFileSize(attachment.size)}{readOnly ? ' · 仅附件信息，不含文件内容' : !available ? attachment.kind === 'host_file' ? ' · 仅来源设备可访问' : ' · 文件已清理' : ''}</span></span></>;
     const className = "flex min-w-0 items-center gap-2 rounded-lg border border-[var(--color-border-light)] bg-[var(--color-bg-secondary)] px-2 py-1.5 text-left";
     return path && available && !readOnly
-      ? <Tooltip key={attachment.id} content={path} asChild><button type="button" onClick={() => void openFilePreview(path)} className={`${className} hover:bg-[var(--color-surface-hover)]`}>{content}</button></Tooltip>
+      ? <Tooltip overflowOnly overflowTarget="[data-attachment-name]" key={attachment.id} content={path} asChild><button type="button" onClick={() => void openFilePreview(path)} className={`${className} hover:bg-[var(--color-surface-hover)]`}>{content}</button></Tooltip>
       : <div key={attachment.id} className={className}>{content}</div>;
   })}</div>;
 }

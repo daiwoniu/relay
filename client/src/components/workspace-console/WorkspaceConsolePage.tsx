@@ -1,3 +1,4 @@
+import { formatClockTime, formatDateTime } from '../../utils/date-display.ts';
 import Tooltip from '../ui/Tooltip';
 import FailureNotice from '../ui/FailureNotice';
 import { isWorkbenchItemOwner } from './workspace-console-view-model';
@@ -44,9 +45,9 @@ type CachedOperations = { anchor: string; fetchedAt: number; value: WorkspaceOpe
 const lastChildOperation = (activity: WorkspaceOperationRecordsDto | null | undefined, childId: string): string | null =>
   activity && !activity.hasMore ? activity.events.filter((event) => event.childId === childId)
     .map((event) => event.at).sort((a, b) => Date.parse(b) - Date.parse(a))[0] ?? null : null;
-const formatTime = (value: string | number | null | undefined) => value ? new Date(value).toLocaleString('zh-CN') : '未登记';
+const formatTime = (value: string | number | null | undefined) => value ? formatDateTime(value, { seconds: true }) : '未登记';
 const formatSummaryTime = (value: string | number | null | undefined) => value
-  ? new Date(value).toLocaleString('zh-CN', { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false })
+  ? formatDateTime(value)
   : '未登记';
 const formatRefreshSeconds = (elapsedMs: number) => `${(Math.max(0, elapsedMs) / 1000).toFixed(1)} 秒`;
 const statusText = (status: string | null) => taskStatusPresentation(status).label;
@@ -931,17 +932,17 @@ function FocusTaskCard({ task, responsibility, isNew = false, onOpen, onStart, a
   const recordAt = latestTaskRecordAt(task);
   return <article data-task-tone={taskEntryLane({ kind: 'local', key: task.id, task })} className="workspace-workbench__task-card flex min-w-0 flex-col gap-3 rounded-xl border border-white/10 bg-white/[0.035] p-4 focus-within:border-cyan-300/50">
     <div className="flex min-w-0 items-start justify-between gap-3">
-      <div className="min-w-0"><div className="flex min-w-0 items-start gap-1.5"><Tooltip content={task.title || task.id} asChild><button type="button" onClick={onOpen} aria-label={`查看任务详情：${task.title || task.id}`} className="min-w-0 line-clamp-2 break-words text-left text-sm font-semibold leading-5 text-slate-100 hover:text-cyan-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-300">{task.title || task.id}</button></Tooltip>{isNew && <NewBadge />}</div><p className="mt-1 text-[11px] text-slate-500">本地台账</p></div>
+      <div className="min-w-0"><div className="flex min-w-0 items-start gap-1.5"><Tooltip overflowOnly content={task.title || task.id} asChild><button type="button" onClick={onOpen} aria-label={`查看任务详情：${task.title || task.id}`} className="min-w-0 line-clamp-2 break-words text-left text-sm font-semibold leading-5 text-slate-100 hover:text-cyan-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-300">{task.title || task.id}</button></Tooltip>{isNew && <NewBadge />}</div><p className="mt-1 text-[11px] text-slate-500">本地台账</p></div>
       <LocalStatusBadge task={task} />
     </div>
     {linked.length > 0 && <div className="flex min-w-0 flex-wrap gap-x-2 gap-y-1 text-xs text-slate-400">{linked.slice(0, 2).map((item) => <span key={item.workItemId} className="min-w-0 break-words"><span className="text-slate-500">{item.workItemId === primary && '主任务 · '}{feishuRelationshipLabel(item.workItemId, responsibility, item.url)} · </span><a href={item.url} target="_blank" rel="noopener noreferrer" aria-label={`打开飞书任务：${item.title} · ${item.workItemId}`} className="text-cyan-300 hover:underline">{item.workItemId}</a></span>)}{linked.length > 2 && <button type="button" onClick={onOpen} className="text-cyan-300 hover:underline">另 {linked.length - 2} 项</button>}</div>}
     {!!linked.length && primary && !linked.some((item) => item.workItemId === primary) && <p className="break-words text-xs text-slate-500">主任务 · {primary}（链接未核验）</p>}
     {!linked.length && !!(projectItems.length || task.feishuWorkItemIds.length) && <p className="text-xs text-slate-500">{(task.feishuWorkItemIds.length ? task.feishuWorkItemIds : projectItems.map((item) => item.workItemId)).slice().sort((a, b) => Number(b === primary) - Number(a === primary)).map((id) => `${id === primary ? '主任务 · ' : ''}${feishuRelationshipLabel(id, responsibility)} · ${id}`).join('；')}（链接未核验）</p>}
-    {(task.nextAction || task.waitingOn) && <Tooltip content={task.nextAction || task.waitingOn || undefined} asChild><p className="line-clamp-3 break-words text-sm leading-5 text-slate-200"><span className="text-slate-500">{task.waitingOn ? '等待：' : '下一步：'}</span>{task.waitingOn || task.nextAction}</p></Tooltip>}
+    {(task.nextAction || task.waitingOn) && <Tooltip overflowOnly content={task.waitingOn || task.nextAction || undefined} asChild><p className="line-clamp-3 break-words text-sm leading-5 text-slate-200"><span className="text-slate-500">{task.waitingOn ? '等待：' : '下一步：'}</span>{task.waitingOn || task.nextAction}</p></Tooltip>}
     <TaskProgressNotice entry={{kind:'local',key:task.id,task}} />
     {task.taskDocumentPath && <Tooltip content={task.taskDocumentPath} asChild><button type="button" onClick={() => onOpenDocument(task.taskDocumentPath!)} className="self-start text-xs text-cyan-300 hover:underline">预览任务说明 · {documentName}</button></Tooltip>}
     <div className="mt-auto grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-2 border-t border-white/10 pt-3">
-      <Tooltip content={recordAt || '未登记'} asChild><span className="min-w-0 break-words text-[11px] text-slate-500">本地更新 {formatTime(recordAt)}</span></Tooltip>
+      <span className="min-w-0 break-words text-[11px] text-slate-500">本地更新 {formatTime(recordAt)}</span>
       <button type="button" onClick={onStart} className="shrink-0 whitespace-nowrap rounded-lg border border-cyan-300/35 px-2.5 py-1.5 text-xs font-medium text-cyan-200 hover:bg-cyan-300/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-300">{actionLabel} →</button>
     </div>
   </article>;
@@ -957,15 +958,15 @@ function ProjectTaskCard({ item, actionLabel, reportGeneratedAt, isNew = false, 
   const url = feishuUrlForWorkItem(item);
   const finished = isPersonalProjectComplete(item);
   return <article data-task-tone={finished ? 'completed' : 'unstarted'} className="workspace-workbench__task-card flex min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-white/10 bg-white/5 p-3 focus-within:border-cyan-300/50">
-    <div className="flex min-w-0 items-start justify-between gap-2"><div className="flex min-w-0 items-start gap-1.5"><Tooltip content={item.title} asChild><button type="button" onClick={onOpen} aria-label={`查看任务详情：${item.title}`} className="min-w-0 line-clamp-2 break-words text-left text-sm font-semibold leading-5 hover:text-cyan-300">{item.title}</button></Tooltip>{isNew && <NewBadge />}</div><Tooltip content={finished ? item.statusName ?? undefined : responsibilityExplanation(item.actionability)} asChild><span className="shrink-0 rounded bg-cyan-300/10 px-1.5 py-0.5 text-[11px] text-cyan-300">{taskEntryStatusLabel({kind:'project',key:item.workItemId,item})}</span></Tooltip></div>
+    <div className="flex min-w-0 items-start justify-between gap-2"><div className="flex min-w-0 items-start gap-1.5"><Tooltip overflowOnly content={item.title} asChild><button type="button" onClick={onOpen} aria-label={`查看任务详情：${item.title}`} className="min-w-0 line-clamp-2 break-words text-left text-sm font-semibold leading-5 hover:text-cyan-300">{item.title}</button></Tooltip>{isNew && <NewBadge />}</div><Tooltip content={finished ? item.statusName ?? undefined : responsibilityExplanation(item.actionability)} asChild><span className="shrink-0 rounded bg-cyan-300/10 px-1.5 py-0.5 text-[11px] text-cyan-300">{taskEntryStatusLabel({kind:'project',key:item.workItemId,item})}</span></Tooltip></div>
     <p className="mt-1 text-[11px] text-slate-500">飞书{feishuTypeName(item.typeName, url) ?? '工作项'} · {url ? <a href={url} target="_blank" rel="noopener noreferrer" aria-label={`打开飞书工作项：${item.title} · ${item.workItemId}`} className="text-cyan-300 hover:underline">{item.workItemId}</a> : `${item.workItemId}（链接未核验）`}</p>
     {item.statusName && <p className="mt-1 text-[11px] text-slate-400">飞书状态：{item.statusName}</p>}
     {item.personalCompleted && <PersonalCompletionNotice item={item} tasks={item.tasks} />}
     {(item.tasks.length > 0 || !finished) && <p className="mt-2 text-[11px] font-medium text-amber-200">{item.tasks.length ? `关联本地台账 ${item.tasks.length} 项` : '本地进度未知 · 仅有飞书责任报表'}</p>}
     {!!item.linkedStoryIds?.length && <p className="mt-1 text-[11px] text-slate-400">关联需求：{item.linkedStoryIds.join('、')}</p>}
     <div className="mt-2 min-h-0 flex-1 space-y-1.5 text-xs leading-4">
-      <Tooltip content={current} asChild><p className="line-clamp-2 break-words text-slate-300"><span className="text-slate-500">当前：</span>{current}</p></Tooltip>
-      <Tooltip content={next} asChild><p className="line-clamp-2 break-words text-slate-300"><span className="text-slate-500">下一步：</span>{next}</p></Tooltip>
+      <Tooltip overflowOnly content={current} asChild><p className="line-clamp-2 break-words text-slate-300"><span className="text-slate-500">当前：</span>{current}</p></Tooltip>
+      <Tooltip overflowOnly content={next} asChild><p className="line-clamp-2 break-words text-slate-300"><span className="text-slate-500">下一步：</span>{next}</p></Tooltip>
     </div>
     <div className="mt-2 grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-2 border-t border-white/10 pt-2">
       <Tooltip content={item.updatedAt ? '飞书工作项最后更新时间' : '飞书责任报表生成时间'} asChild><span className="min-w-0 break-words text-[11px] text-slate-500">{item.updatedAt ? `飞书更新 ${formatTime(item.updatedAt)}` : `飞书同步 ${formatTime(reportGeneratedAt)}`}</span></Tooltip>
@@ -1011,7 +1012,7 @@ function TaskGroupCard({ group, activity, reportGeneratedAt, isNew, newKeys, onO
   };
   return <article data-task-tone={taskEntryLane(group)} className={`workspace-workbench__task-card workspace-workbench__matter-card min-w-0 rounded-xl border p-3.5 focus-within:border-cyan-300/50 ${prominent ? 'border-cyan-300/20 bg-cyan-300/[0.045]' : 'border-white/10 bg-white/5'}`}>
     <div className="flex min-w-0 flex-wrap items-start justify-between gap-2">
-      <div className="min-w-0 flex-1"><Tooltip content={parent.title} asChild><button type="button" onClick={onOpen} aria-label={`查看事项详情：${parent.title}`} className="line-clamp-2 break-words text-left text-sm font-semibold leading-5 hover:text-cyan-300">{parent.title}</button></Tooltip><p className="mt-1 text-[11px] text-slate-500">飞书{feishuTypeName(parent.typeName, parent.url) ?? ''}父项 · {parent.url ? <a href={parent.url} target="_blank" rel="noopener noreferrer" aria-label={`打开飞书父项：${parent.title} · ${parent.workItemId}`} className="text-cyan-300 hover:underline">{parent.workItemId}</a> : `${parent.workItemId}（链接未核验）`}</p></div>
+      <div className="min-w-0 flex-1"><Tooltip overflowOnly content={parent.title} asChild><button type="button" onClick={onOpen} aria-label={`查看事项详情：${parent.title}`} className="line-clamp-2 break-words text-left text-sm font-semibold leading-5 hover:text-cyan-300">{parent.title}</button></Tooltip><p className="mt-1 text-[11px] text-slate-500">飞书{feishuTypeName(parent.typeName, parent.url) ?? ''}父项 · {parent.url ? <a href={parent.url} target="_blank" rel="noopener noreferrer" aria-label={`打开飞书父项：${parent.title} · ${parent.workItemId}`} className="text-cyan-300 hover:underline">{parent.workItemId}</a> : `${parent.workItemId}（链接未核验）`}</p></div>
       <span className="rounded bg-cyan-300/10 px-1.5 py-0.5 text-[11px] text-cyan-300">{taskEntryStatusLabel(group)}</span>
     </div>
     <p className="mt-2 text-[11px] text-slate-400">{ownChildren.length} 个子任务 · {activeChildren.length} 个待处理 · {unfinishedLocals.length} 份待处理本地台账{linkedIssues.length > 0 && ` · ${linkedIssues.length} 个关联缺陷`}{showNew && isNew && <NewBadge className="ml-2" />}</p>
@@ -1061,7 +1062,7 @@ function GroupedLocalRow({ task, childTitle, relationLabel, onOpen, onStart, act
   const recordAt = latestTaskRecordAt(task);
   const recordSource = recordAt === task.lastVerifiedAt ? '核验' : recordAt === task.completedAt ? '完成' : recordAt === task.startedAt ? '开始' : null;
   return <div className="workspace-workbench__local-row min-w-0 rounded-md border border-white/10 p-2">
-    <div className="flex flex-wrap items-start justify-between gap-1"><div className="min-w-0 flex-1"><span className="text-[10px] text-slate-500">本地台账</span><Tooltip content={task.title || task.id} asChild><button type="button" onClick={onOpen} className="block break-words text-left text-xs font-medium text-slate-100 hover:text-cyan-300">{task.title === childTitle ? task.id : task.title || task.id}</button></Tooltip></div><span className="text-[11px] text-slate-400">{localTaskStatusLabel(task)}</span></div>
+    <div className="flex flex-wrap items-start justify-between gap-1"><div className="min-w-0 flex-1"><span className="text-[10px] text-slate-500">本地台账</span><Tooltip overflowOnly={task.title !== childTitle} content={task.title || task.id} asChild><button type="button" onClick={onOpen} className="block break-words text-left text-xs font-medium text-slate-100 hover:text-cyan-300">{task.title === childTitle ? task.id : task.title || task.id}</button></Tooltip></div><span className="text-[11px] text-slate-400">{localTaskStatusLabel(task)}</span></div>
     {relationLabel && <p className="mt-1 break-words text-[11px] text-slate-500">{relationLabel}</p>}
     <p className="mt-1 text-[11px] text-slate-500">{recordAt ? `本地最近记录（${recordSource}）：${formatTime(recordAt)}` : '本地更新时间未登记'}</p>
     {(task.nextAction || task.waitingOn) && <p className="mt-1 line-clamp-2 break-words text-[11px] text-slate-400">{task.waitingOn || task.nextAction}</p>}
@@ -1099,17 +1100,17 @@ function LocalTaskCard({ task, responsibility, compact = false, isNew = false, o
   const documentName = task.taskDocumentPath?.split(/[\\/]/).slice(-1)[0] || null;
   return <article data-task-tone={taskEntryLane({ kind: 'local', key: task.id, task })} className={`workspace-workbench__task-card flex min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-white/10 bg-white/5 focus-within:border-cyan-300/50 ${compact ? 'p-3' : 'p-3.5'}`}>
     <div className="flex min-w-0 items-start justify-between gap-2">
-      <div className="min-w-0"><div className="flex min-w-0 items-start gap-1.5"><Tooltip content={task.title || task.id} asChild><button type="button" onClick={onOpen} aria-label={`查看任务详情：${task.title || task.id}`} className="min-w-0 line-clamp-2 break-words text-left text-sm font-semibold leading-5 hover:text-cyan-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-300">{task.title || task.id}</button></Tooltip>{isNew && <NewBadge />}</div><p className="mt-1 text-[11px] text-slate-500">本地台账</p></div>
+      <div className="min-w-0"><div className="flex min-w-0 items-start gap-1.5"><Tooltip overflowOnly content={task.title || task.id} asChild><button type="button" onClick={onOpen} aria-label={`查看任务详情：${task.title || task.id}`} className="min-w-0 line-clamp-2 break-words text-left text-sm font-semibold leading-5 hover:text-cyan-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-300">{task.title || task.id}</button></Tooltip>{isNew && <NewBadge />}</div><p className="mt-1 text-[11px] text-slate-500">本地台账</p></div>
       <LocalStatusBadge task={task} />
     </div>
     {linked.length > 0 && <div className="mt-2 flex min-w-0 flex-wrap gap-x-2 gap-y-1 text-[11px]">{linked.slice(0, 2).map((item) => <span key={item.workItemId} className="min-w-0 break-words"><span className="text-slate-500">{item.workItemId === primary && '主任务 · '}{feishuRelationshipLabel(item.workItemId, responsibility, item.url)} · </span><a href={item.url} target="_blank" rel="noopener noreferrer" aria-label={`打开飞书任务：${item.title} · ${item.workItemId}`} className="text-cyan-300 hover:underline">{item.workItemId}</a></span>)}{linked.length > 2 && <button type="button" onClick={onOpen} className="text-cyan-300 hover:underline">另 {linked.length - 2} 项</button>}</div>}
     {!!linked.length && primary && !linked.some((item) => item.workItemId === primary) && <p className="mt-1 break-words text-[11px] text-slate-500">主任务 · {primary}（链接未核验）</p>}
     {!linked.length && !!(projectItems.length || task.feishuWorkItemIds.length) && <p className="mt-2 line-clamp-2 break-words text-[11px] text-slate-500">{(task.feishuWorkItemIds.length ? task.feishuWorkItemIds : projectItems.map((item) => item.workItemId)).slice().sort((a, b) => Number(b === primary) - Number(a === primary)).map((id) => `${id === primary ? '主任务 · ' : ''}${feishuRelationshipLabel(id, responsibility)} · ${id}`).join('；')}（链接未核验）</p>}
-    {next !== '未登记' && <Tooltip content={next} asChild><p className="mt-2 line-clamp-2 break-words text-xs leading-4 text-slate-300"><span className="text-slate-500">{isCompleted ? '结果：' : task.waitingOn ? '等待：' : '下一步：'}</span>{task.waitingOn || next}</p></Tooltip>}
+    {next !== '未登记' && <Tooltip overflowOnly content={task.waitingOn || next} asChild><p className="mt-2 line-clamp-2 break-words text-xs leading-4 text-slate-300"><span className="text-slate-500">{isCompleted ? '结果：' : task.waitingOn ? '等待：' : '下一步：'}</span>{task.waitingOn || next}</p></Tooltip>}
     <TaskProgressNotice entry={{kind:'local',key:task.id,task}} />
     {task.taskDocumentPath && <Tooltip content={task.taskDocumentPath} asChild><button type="button" onClick={() => onOpenDocument(task.taskDocumentPath!)} className="mt-2 self-start text-[11px] text-cyan-300 hover:underline">预览任务说明 · {documentName}</button></Tooltip>}
     <div className="mt-2 grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-2 border-t border-white/10 pt-2">
-      <Tooltip content={isCompleted ? task.completedAt || '结束时间未登记' : latestTaskRecordAt(task) || '未登记'} asChild><span className="min-w-0 break-words text-[11px] text-slate-500">{isCompleted ? task.completedAt ? `${endLabel} ${formatTime(task.completedAt)}` : '结束时间未登记' : `本地更新 ${formatTime(latestTaskRecordAt(task))}`}</span></Tooltip>
+      <span className="min-w-0 break-words text-[11px] text-slate-500">{isCompleted ? task.completedAt ? `${endLabel} ${formatTime(task.completedAt)}` : '结束时间未登记' : `本地更新 ${formatTime(latestTaskRecordAt(task))}`}</span>
       <button type="button" onClick={onStart} className="shrink-0 whitespace-nowrap rounded-lg border border-cyan-300/35 px-2.5 py-1.5 text-xs font-medium text-cyan-200 hover:bg-cyan-300/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-300">{actionLabel} →</button>
     </div>
   </article>;
@@ -1121,14 +1122,14 @@ function ObservationSection({ title, count, tone, empty, onRefresh, refreshing, 
 function formatRunCardTime(value: string | null): string {
   if (!value) return '未记录';
   const date = new Date(value.replace(' ', 'T'));
-  return Number.isNaN(date.getTime()) ? '未记录' : date.toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false });
+  return formatDateTime(date, { short: true });
 }
 function formatRunCardClock(value: string, startedAt: string | null): string {
   const date = new Date(value.replace(' ', 'T'));
   if (Number.isNaN(date.getTime())) return '未记录';
   const started = startedAt ? new Date(startedAt.replace(' ', 'T')) : null;
   return started && !Number.isNaN(started.getTime()) && date.toDateString() === started.toDateString()
-    ? date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false }) : formatRunCardTime(value);
+    ? formatClockTime(date) : formatRunCardTime(value);
 }
 function RunRow({ run, taskTitle, onOpen }: { run: WorkspaceConsoleRunDto; taskTitle?: string; onOpen: () => void }) {
   const description = describeRun(run);
@@ -1143,9 +1144,9 @@ function RunRow({ run, taskTitle, onOpen }: { run: WorkspaceConsoleRunDto; taskT
   return <button type="button" onClick={onOpen} className="block w-full min-w-0 rounded-lg border border-white/10 bg-white/[0.03] p-2.5 text-left hover:border-cyan-300/40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-300">
     <span className="mb-1 block text-[10px] text-slate-500">{describeRunCategory(run)}</span>
     <span className="flex min-w-0 items-start justify-between gap-2"><span className="min-w-0 whitespace-normal break-words text-xs font-medium text-slate-100">{taskTitle || description.title}</span><span className={`shrink-0 whitespace-nowrap rounded border px-1.5 py-0.5 text-[10px] ${statusTone}`}>{run.source === 'remote-runner' ? `Runner ${compactOutcome}` : compactOutcome}</span></span>
-    <Tooltip content={`${description.title} · ${describeRunMode(run)}`} asChild><span className="mt-1 block truncate text-[11px] text-slate-300">{taskTitle && taskTitle !== description.title && `${description.title} · `}{describeRunMode(run)}</span></Tooltip>
-    {metrics ? <Tooltip content={metrics} asChild><span className="mt-0.5 block truncate text-[11px] text-slate-200">{metrics}</span></Tooltip> : running && run.source === 'remote-runner' ? <span className="mt-0.5 block text-[11px] text-slate-500">本机尚无进度计数</span> : null}
-    <Tooltip content={timestamp} asChild><span className="mt-1 block truncate text-[11px] text-slate-500">{timestamp}</span></Tooltip>
+    <Tooltip overflowOnly={Boolean(taskTitle && taskTitle !== description.title)} content={`${description.title} · ${describeRunMode(run)}`} asChild><span className="mt-1 block truncate text-[11px] text-slate-300">{taskTitle && taskTitle !== description.title && `${description.title} · `}{describeRunMode(run)}</span></Tooltip>
+    {metrics ? <Tooltip overflowOnly content={metrics} asChild><span className="mt-0.5 block truncate text-[11px] text-slate-200">{metrics}</span></Tooltip> : running && run.source === 'remote-runner' ? <span className="mt-0.5 block text-[11px] text-slate-500">本机尚无进度计数</span> : null}
+    <Tooltip overflowOnly content={timestamp} asChild><span className="mt-1 block truncate text-[11px] text-slate-500">{timestamp}</span></Tooltip>
   </button>;
 }
 function RunDetail({ run, taskTitle, onOpenTask, onOpenFile }: { run: WorkspaceConsoleRunDto; taskTitle: string | null; onOpenTask?: () => void; onOpenFile?: () => void }) {

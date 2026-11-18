@@ -260,6 +260,7 @@ export const ProjectDtoSchema = z.object({
   deletion_protected: z.union([z.literal(0), z.literal(1)]).optional(),
   access_role: z.enum(['owner', 'viewer', 'collaborator', 'manager']).optional(),
   members_can_view_sessions: z.union([z.literal(0), z.literal(1)]).optional(),
+  session_count: z.number().int().nonnegative().optional(),
   owner: ResourceOwnerDtoSchema.nullable().optional(),
 }).strict();
 
@@ -284,6 +285,7 @@ export const SessionDtoSchema = z.object({
   execution_stage: z.enum(['accepted', 'started', 'responding']).nullable().optional(),
   engine_preferences: EnginePreferencesDtoSchema,
   message_count: z.number().int().nonnegative().optional(),
+  assistant_message_count: z.number().int().nonnegative().optional(),
   context_compaction_count: z.number().int().nonnegative().optional(),
   owner: ResourceOwnerDtoSchema.nullable().optional(),
 }).strict();
@@ -305,13 +307,21 @@ export const ProjectDeletionImpactDtoSchema = z.object({
 export const TrashProjectDtoSchema = z.object({
   id: z.string().uuid(), name: z.string().trim().min(1).max(100), path: z.string().min(1).max(2048),
   deletedAt: z.number().int().nonnegative(), sessionCount: z.number().int().nonnegative(),
+  creator: ResourceOwnerDtoSchema.nullable().optional(), deletedBy: ResourceOwnerDtoSchema.nullable().optional(),
   matchSessionId: z.string().uuid().optional(), matchSessionTitle: z.string().optional(), matchSessionMessageCount: z.number().int().nonnegative().optional(),
+  matchSessionAssistantMessageCount: z.number().int().nonnegative().optional(),
+  matchSessionEngine: EngineIdSchema.nullable().optional(), matchSessionEngineSessionId: z.string().nullable().optional(),
+  matchSessionDeletedAt: z.number().int().nonnegative().optional(),
+  matchSessionCreator: ResourceOwnerDtoSchema.nullable().optional(), matchSessionDeletedBy: ResourceOwnerDtoSchema.nullable().optional(),
   matchMessageId: z.string().uuid().optional(), matchCount: z.number().int().nonnegative().optional(), matchSnippet: z.string().optional(),
 }).strict();
 export const TrashSessionDtoSchema = z.object({
   id: z.string().uuid(), title: z.string().trim().min(1).max(200), projectId: z.string().uuid(),
+  engineSessionId: z.string().nullable(),
   projectName: z.string().trim().min(1).max(100), engine: EngineIdSchema.nullable(), deletedAt: z.number().int().nonnegative(),
   messageCount: z.number().int().nonnegative(), matchMessageId: z.string().uuid().optional(),
+  assistantMessageCount: z.number().int().nonnegative().optional(),
+  creator: ResourceOwnerDtoSchema.nullable().optional(), deletedBy: ResourceOwnerDtoSchema.nullable().optional(),
   matchCount: z.number().int().nonnegative().optional(), matchSnippet: z.string().optional(),
 }).strict();
 export const TrashProjectListResponseDtoSchema = z.object({
@@ -332,6 +342,7 @@ export const TrashRestoreResponseDtoSchema = z.object({
 export const TrashImpactDtoSchema = z.object({
   sessionCount: z.number().int().nonnegative(),
   messageCount: z.number().int().nonnegative(),
+  assistantMessageCount: z.number().int().nonnegative().optional(),
   shareCount: z.number().int().nonnegative(),
   attachmentCount: z.number().int().nonnegative(),
   releasableBytes: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
@@ -626,6 +637,8 @@ export const MessageDetailsDtoSchema = z.object({
   changedFilesIncomplete: z.boolean().optional(),
 }).strict();
 
+export const SubAgentReportDtoSchema = z.object({ content: z.string().min(1).max(200_000) }).strict();
+
 export const MessageCursorDtoSchema = z.object({
   beforeCreatedAt: z.number().int().nonnegative(),
   beforeId: z.string().min(1),
@@ -798,10 +811,30 @@ export const FileAccessResponseDtoSchema = z.object({
   accessToken: z.string(),
 }).strict();
 
+export const ArchiveEntryDtoSchema = z.object({
+  path: z.string().min(1).max(1024),
+  directory: z.boolean(),
+  size: z.number().int().nonnegative().safe(),
+  compressedSize: z.number().int().nonnegative().safe(),
+  modifiedAt: z.number().finite().nullable(),
+}).strict();
+
+export const ArchivePreviewDtoSchema = z.object({
+  type: z.literal('archive'),
+  format: z.literal('zip'),
+  entries: z.array(ArchiveEntryDtoSchema).max(1000),
+  totalEntries: z.number().int().nonnegative().max(5000),
+  totalFiles: z.number().int().nonnegative().max(5000),
+  totalSize: z.number().int().nonnegative().safe(),
+  totalCompressedSize: z.number().int().nonnegative().safe(),
+  truncated: z.boolean(),
+  size: z.number().int().nonnegative(),
+}).strict();
+
 export const PdfDocumentPreviewDtoSchema = z.object({
   type: z.literal('pdf-document'),
   totalPages: z.number().int().positive(),
-  displayedPages: z.number().int().positive().max(50),
+  displayedPages: z.number().int().positive().max(500),
   truncated: z.boolean(),
   size: z.number().int().nonnegative(),
 }).strict();
@@ -811,7 +844,7 @@ export const WordDocumentPreviewDtoSchema = z.object({
   html: z.string(),
   countUnit: z.enum(['pages', 'blocks']),
   totalCount: z.number().int().nonnegative(),
-  displayedCount: z.number().int().nonnegative().max(50),
+  displayedCount: z.number().int().nonnegative().max(500),
   truncated: z.boolean(),
   imageCount: z.number().int().nonnegative(),
   omittedImageCount: z.number().int().nonnegative(),
@@ -819,7 +852,7 @@ export const WordDocumentPreviewDtoSchema = z.object({
 }).strict();
 
 export const SpreadsheetCellDtoSchema = z.object({
-  column: z.number().int().positive().max(100),
+  column: z.number().int().positive().max(300),
   address: z.string().min(1).max(32),
   display: z.string().max(10_000),
   formula: z.string().max(10_000).optional(),
@@ -827,7 +860,7 @@ export const SpreadsheetCellDtoSchema = z.object({
 
 export const SpreadsheetRowDtoSchema = z.object({
   rowNumber: z.number().int().positive(),
-  cells: z.array(SpreadsheetCellDtoSchema).max(100),
+  cells: z.array(SpreadsheetCellDtoSchema).max(300),
 }).strict();
 
 export const SpreadsheetSheetSummaryDtoSchema = z.object({
@@ -841,11 +874,11 @@ export const SpreadsheetSheetPreviewDtoSchema = z.object({
   name: z.string().min(1).max(31),
   totalRows: z.number().int().nonnegative(),
   totalColumns: z.number().int().nonnegative(),
-  displayedRows: z.number().int().nonnegative().max(50),
-  displayedColumns: z.number().int().nonnegative().max(100),
+  displayedRows: z.number().int().nonnegative().max(1000),
+  displayedColumns: z.number().int().nonnegative().max(300),
   rowsTruncated: z.boolean(),
   columnsTruncated: z.boolean(),
-  rows: z.array(SpreadsheetRowDtoSchema).max(50),
+  rows: z.array(SpreadsheetRowDtoSchema).max(1000),
   merges: z.array(z.string().max(64)).max(500),
 }).strict();
 
@@ -1195,6 +1228,7 @@ export const ShareListItemDtoSchema = z.object({
   title: z.string(),
   scope: ShareScopeSchema,
   messageCount: z.number().int().nonnegative(),
+  assistantMessageCount: z.number().int().nonnegative().optional(),
   includeProcess: z.boolean(),
   sourceSessionId: z.string().nullable(),
   sourceSessionTitle: z.string().nullable(),
@@ -1313,6 +1347,7 @@ export type ProcessTimelineEntryDto = z.infer<typeof ProcessTimelineEntrySchema>
 export type MessageDto = z.infer<typeof MessageDtoSchema>;
 export type MessageSummaryDto = z.infer<typeof MessageSummaryDtoSchema>;
 export type MessageDetailsDto = z.infer<typeof MessageDetailsDtoSchema>;
+export type SubAgentReportDto = z.infer<typeof SubAgentReportDtoSchema>;
 export type MessageCursorDto = z.infer<typeof MessageCursorDtoSchema>;
 export type MessagePageDto = z.infer<typeof MessagePageDtoSchema>;
 export type MessagePageResultDto = z.infer<typeof MessagePageResultDtoSchema>;
@@ -1337,6 +1372,8 @@ export type SessionSearchResultDto = z.infer<typeof SessionSearchResultDtoSchema
 export type SessionSearchResponseDto = z.infer<typeof SessionSearchResponseDtoSchema>;
 export type SessionMessageMatchesResponseDto = z.infer<typeof SessionMessageMatchesResponseDtoSchema>;
 export type FileAccessResponseDto = z.infer<typeof FileAccessResponseDtoSchema>;
+export type ArchiveEntryDto = z.infer<typeof ArchiveEntryDtoSchema>;
+export type ArchivePreviewDto = z.infer<typeof ArchivePreviewDtoSchema>;
 export type PdfDocumentPreviewDto = z.infer<typeof PdfDocumentPreviewDtoSchema>;
 export type WordDocumentPreviewDto = z.infer<typeof WordDocumentPreviewDtoSchema>;
 export type SpreadsheetCellDto = z.infer<typeof SpreadsheetCellDtoSchema>;
@@ -1397,6 +1434,7 @@ type ProjectSource = {
   deletion_protected?: number;
   access_role?: 'owner' | 'viewer' | 'collaborator' | 'manager';
   members_can_view_sessions?: number;
+  session_count?: number;
 };
 
 type SessionSource = {
@@ -1414,6 +1452,8 @@ type SessionSource = {
   status: SessionStatus;
   last_result?: SessionDto['last_result'];
   message_revision?: number;
+  message_count?: number;
+  assistant_message_count?: number;
   context_compaction_count?: number;
   selected_model_id?: string | null;
   selected_reasoning_effort?: string | null;
@@ -1439,7 +1479,7 @@ type PublicUserSource = {
   can_create_project?: number;
 };
 
-function presentResourceOwner(owner?: PublicUserSource | null) {
+export function presentResourceOwner(owner?: PublicUserSource | null) {
   return owner ? {
     id: owner.id,
     username: owner.username,
@@ -1462,6 +1502,7 @@ export function presentProject<T extends ProjectSource>(project: T, owner?: Publ
     deletion_protected: project.deletion_protected ?? 0,
     ...(project.access_role ? { access_role: project.access_role } : {}),
     members_can_view_sessions: project.members_can_view_sessions ?? 0,
+    ...(project.session_count !== undefined ? { session_count: project.session_count } : {}),
     ...(owner !== undefined ? { owner: presentResourceOwner(owner) } : {}),
   });
 }
@@ -1496,7 +1537,8 @@ export function presentSession<T extends SessionSource>(session: T, owner?: Publ
       serviceTier: session.selected_service_tier ?? null,
       revision: Math.max(0, Math.trunc(session.engine_preferences_revision ?? 0)),
     },
-    message_count: Math.max(0, Math.trunc(session.message_revision ?? 0)),
+    ...(session.message_count !== undefined ? { message_count: session.message_count } : {}),
+    ...(session.assistant_message_count !== undefined ? { assistant_message_count: session.assistant_message_count } : {}),
     context_compaction_count: Math.max(0, Math.trunc(session.context_compaction_count ?? 0)),
     ...(owner !== undefined ? { owner: presentResourceOwner(owner) } : {}),
   });

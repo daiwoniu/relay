@@ -1,0 +1,57 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import JSZip from 'jszip';
+import { fixture } from '../storage/storage-fixture.test-support.js';
+import { StorageWorkerClient } from '../storage/worker-client.js';
+import { hashSessionToken } from '../auth/session.js';
+import { StoredFilesystem } from '../services/stored-filesystem.js';
+import { FileAccessGrants } from '../file-access.js';
+import { ArchivePreviewDtoSchema } from '../contracts/index.js';
+
+test('real filesystem and document Workers preview ZIP under account capacity and file grants', async () => {
+  const f = fixture();
+  const project = path.join(f.directory, 'archive-project');
+  await fs.mkdir(project);
+  f.mutate(`UPDATE projects SET path='${project.replaceAll("'", "''")}' WHERE id='project'`);
+  const principal = { kind: 'user' as const, userId: 'owner', authSessionHash: hashSessionToken('archive-owner') };
+  const other = { kind: 'user' as const, userId: 'other', authSessionHash: hashSessionToken('archive-other') };
+  for (const actor of [principal, other]) f.mutate(`UPDATE auth_sessions SET token_hash='${actor.authSessionHash}' WHERE user_id='${actor.userId}'`);
+  const port = await StorageWorkerClient.open({ filename: f.filename, storeId: 'archive', generation: 1, initialize: true });
+  const service = new StoredFilesystem({ port, grants: new FileAccessGrants(), assertExclusiveWriter: async () => {} });
+  const zip = new JSZip(); zip.file('资料/report.txt', 'archive metadata');
+  const bytes = await zip.generateAsync({ type: 'nodebuffer' });
+  const filePath = path.join(project, 'report.ZIP');
+  const outside = path.join(f.directory, 'outside.zip');
+  const read = (file: string, actor = principal, token?: string) => service.request(actor, '/read?' + new URLSearchParams({ path: file, ...(token ? { accessToken: token } : {}) }), 'GET');
+  try {
+    await fs.writeFile(filePath, bytes); await fs.writeFile(outside, bytes);
+    const response = await read(filePath);
+    assert.equal(response.status, 200);
+    const parsed = ArchivePreviewDtoSchema.parse(await response.json());
+    assert.equal(parsed.totalFiles, 1);
+    assert.equal(parsed.entries.at(-1)?.path, '资料/report.txt');
+    assert.equal((await read(filePath, other)).status, 403);
+    assert.equal((await read(outside)).status, 403);
+    const grantResponse = await service.request(principal, '/authorize-file', 'POST', JSON.stringify({ path: outside }));
+    const { accessToken } = await grantResponse.json() as { accessToken: string };
+    assert.equal((await read(outside, principal, accessToken)).status, 200);
+    assert.equal((await read(outside, other, accessToken)).status, 403);
+    const large = new JSZip(); large.file('large.dat', Buffer.alloc(4 * 1024 * 1024));
+    await fs.writeFile(filePath, await large.generateAsync({ type: 'nodebuffer', compression: 'STORE' }));
+    const tooLarge = await read(filePath);
+    assert.equal(tooLarge.status, 400);
+    assert.equal((await tooLarge.json() as any).code, 'FILE_PREVIEW_TOO_LARGE');
+    const saved = await port.execute({ protocolVersion: 1, storeId: 'archive', workerGeneration: 1, requestId: randomUUID(), operationId: randomUUID(), principal, command: { name: 'account.setPreviewPreferences', input: { changes: { capacityPreset: 'enhanced' } } } });
+    assert.equal(saved.state, 'committed');
+    const allowed = await read(filePath);
+    assert.equal(allowed.status, 200);
+    assert.equal(ArchivePreviewDtoSchema.parse(await allowed.json()).totalSize, 4 * 1024 * 1024);
+    await fs.writeFile(filePath, 'not a ZIP');
+    const invalid = await read(filePath);
+    assert.equal(invalid.status, 400);
+    assert.match((await invalid.json() as any).error, /ZIP 目录损坏/);
+  } finally { await service.close(); await port.close(); f.cleanup(); }
+});

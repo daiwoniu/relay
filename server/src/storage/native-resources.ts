@@ -2,6 +2,7 @@ import type { SQLiteDB } from '../db/index.js';
 import type { Project, Session, User } from '../db/query-types.js';
 import { presentProject, presentSession, presentSessionDetails, type SessionDto, type SessionDetailsDto } from '../contracts/index.js';
 import { withSessionResults } from '../db/session-attention.js';
+import { withSessionMessageCounts } from '../db/session-message-counts.js';
 import { StorageContractError } from './command-boundary.js';
 import { isSessionInProgress } from '../services/session-runtime-status.js';
 
@@ -71,9 +72,16 @@ function project(row: Record<string, any>, actor: Actor) {
 }
 export function readProject(db: DB, actor: Actor, id: string) {
   if (!visibleResource(db, actor, { kind: 'project', id })) return null;
-  const row = db.get(`SELECT ${projectColumns},${ownerColumns},pm.role AS member_role FROM projects p JOIN users u ON u.id=p.owner_user_id
+  const row = db.get(`SELECT ${projectColumns},${ownerColumns},pm.role AS member_role,pm.can_view_sessions AS member_can_view_sessions FROM projects p JOIN users u ON u.id=p.owner_user_id
     LEFT JOIN project_members pm ON pm.project_id=p.id AND pm.user_id=? WHERE p.id=?`, [actor.id, id]);
   if (!row) throw new StorageContractError('STORAGE_UNAVAILABLE');
+  // Match the session list's visibility and hidden/deleted filters, without its pagination.
+  const canViewOthers = actor.role === 'admin' || row.owner_user_id === actor.id
+    || ['viewer', 'collaborator', 'manager'].includes(row.member_role) && row.member_can_view_sessions === 1;
+  const count = db.get(`SELECT COUNT(*) AS count FROM sessions s
+    JOIN users u ON u.id=s.owner_user_id WHERE s.project_id=? AND s.deleted_at IS NULL AND s.archived=0
+      AND (?=1 OR s.owner_user_id=?)`, [id, Number(canViewOthers), actor.id]);
+  row.session_count = Number(count!.count);
   return budget(project(row, actor));
 }
 export function listProjects(db: DB, actor: Actor, scope: 'mine' | 'all') {
@@ -86,7 +94,7 @@ export function listProjects(db: DB, actor: Actor, scope: 'mine' | 'all') {
 }
 function sessions(db: DB, rows: Record<string, any>[], details = false) {
   const normalized = rows.map((r) => ({ ...r, engine: r.engine_bound === 0 ? null : r.engine })) as Session[];
-  return withSessionResults(db, normalized).map((s, i) => {
+  return withSessionResults(db, withSessionMessageCounts(db, normalized)).map((s, i) => {
     const last = s.last_result;
     if (last && last.executionStage === undefined) { const { executionStage, ...defined } = last; s = { ...s, last_result: defined }; }
     return details ? presentSessionDetails(s, owner(rows[i])) : presentSession(s, owner(rows[i]));

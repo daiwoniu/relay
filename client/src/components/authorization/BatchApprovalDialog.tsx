@@ -58,12 +58,12 @@ export default function BatchApprovalDialog({ batch, onClose, onConfirm }: Props
           <section key={group.sessionId} className="batch-approval-dialog__group">
             <div className="batch-approval-dialog__group-header">
               <div className="batch-approval-dialog__session-mark" aria-hidden="true"><span /></div>
-              <Tooltip content={group.sessionTitle} asChild><div className="batch-approval-dialog__session-title">{group.sessionTitle}</div></Tooltip>
+              <Tooltip overflowOnly content={group.sessionTitle} asChild><div className="batch-approval-dialog__session-title">{group.sessionTitle}</div></Tooltip>
               <div className="batch-approval-dialog__group-count">{group.items.length} 项</div>
             </div>
             <div className="batch-approval-dialog__requests">
               {group.items.map((item, index) => (
-                <Tooltip key={item.approvalKey} content={`${item.purpose} · ${item.summary}`} asChild><article className="batch-approval-dialog__request">
+                <Tooltip overflowOnly key={item.approvalKey} content={`${item.purpose} · ${item.summary}`} asChild><article className="batch-approval-dialog__request">
                   <span className="batch-approval-dialog__request-index" aria-hidden="true">{index + 1}</span>
                   <span className="batch-approval-dialog__request-copy">
                     <span className="batch-approval-dialog__request-title">{item.purpose}</span>

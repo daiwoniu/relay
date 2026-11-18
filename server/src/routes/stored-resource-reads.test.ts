@@ -25,12 +25,48 @@ async function prepared() {
   for (const id of ['owner','other','admin']) f.mutate(`INSERT INTO auth_sessions(token_hash,user_id,expires_at)
     VALUES('${hashSessionToken(`synthetic-read-${id}`)}','${id}',${Date.now()+600_000})`);
   const port = await StorageWorkerClient.open({ filename: f.filename, storeId: 'store', generation: 1, initialize: true });
-  const hooks = { archive: async () => {} };
-  const app = new Hono().route('/api', createStoredResourceReadsRouter({ port, refreshSessionArchiveState: () => hooks.archive() }));
+  const hooks = { archive: async () => {}, report: async (_child: string, _item: string): Promise<string | null> => 'synthetic report' };
+  const app = new Hono().route('/api', createStoredResourceReadsRouter({ port, refreshSessionArchiveState: () => hooks.archive(), loadSubAgentReport: (child, item) => hooks.report(child, item) }));
   app.get('/api/public-probe', (c) => c.text('public'));
   const get = (url: string, user = 'owner') => app.request(url, { headers: { cookie: cookie(user) } });
   return { f, port, app, hooks, get, cleanup: async () => { await port.close(); f.cleanup(); } };
 }
+
+test('子任务回报只读取消息内明确的完成记录，不接受浏览器指定线程，读取后复核权限', async () => {
+  const p = await prepared();
+  try {
+    const items = [
+      { id: 'subagent-completed-first', type: 'subAgentActivity', status: 'completed', details: { kind: 'completed', agentThreadId: 'child' } },
+      { id: 'subagent-completed-second', type: 'subAgentActivity', status: 'completed', details: { kind: 'completed', agentThreadId: 'child' } },
+      { id: 'started', type: 'subAgentActivity', status: 'completed', details: { kind: 'started', agentThreadId: 'child' } },
+    ];
+    p.f.mutate(`UPDATE messages SET items='${JSON.stringify(items)}' WHERE id='b'`);
+    const path = `/api/sessions/${session}/messages/b/subagent-report`;
+    const calls: string[][] = [];
+    p.hooks.report = async (child, item) => { calls.push([child, item]); return `report:${item}`; };
+    assert.equal((await p.app.request(`${path}?itemId=subagent-completed-first`)).status, 401);
+    assert.equal((await p.get(`${path}?itemId=subagent-completed-first`, 'other')).status, 404);
+    assert.equal((await p.get(`${path}?itemId=started`)).status, 404);
+    assert.equal((await p.get(`${path}?itemId=subagent-completed-first&childThreadId=foreign`)).status, 400);
+    assert.equal((await p.get(`${path.replace('/messages/b/', '/messages/a/')}?itemId=subagent-completed-first`)).status, 404);
+    assert.equal(calls.length, 0);
+    for (const item of ['subagent-completed-first', 'subagent-completed-second']) {
+      const response = await p.get(`${path}?itemId=${item}`);
+      assert.equal(response.status, 200); assert.equal(response.headers.get('cache-control'), 'private, no-store');
+      assert.deepEqual(await response.json(), { content: `report:${item}` });
+    }
+    assert.deepEqual(calls, [['child', 'subagent-completed-first'], ['child', 'subagent-completed-second']]);
+    p.f.mutate(`INSERT INTO project_members VALUES('${project}','other','viewer',1,1,1)`);
+    assert.equal((await p.get(`${path}?itemId=subagent-completed-first`, 'other')).status, 200);
+    p.hooks.report = async () => { p.f.mutate(`DELETE FROM project_members WHERE project_id='${project}' AND user_id='other'`); return 'must not escape'; };
+    assert.equal((await p.get(`${path}?itemId=subagent-completed-first`, 'other')).status, 404);
+    p.hooks.report = async () => null;
+    assert.equal((await p.get(`${path}?itemId=subagent-completed-first`)).status, 404);
+    p.hooks.report = async () => { throw new Error('private-engine-details'); };
+    const failed = await p.get(`${path}?itemId=subagent-completed-first`);
+    assert.equal(failed.status, 503); assert(!JSON.stringify(await failed.json()).includes('private-engine-details'));
+  } finally { await p.cleanup(); }
+});
 test('candidate reads preserve project/session response contracts and offset pagination with current actor scopes', async () => {
   const p = await prepared();
   try {

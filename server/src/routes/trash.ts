@@ -13,7 +13,7 @@ const paginationSchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(50),
   offset: z.coerce.number().int().min(0).max(100_000).default(0),
 }).strict();
-const listSchema = paginationSchema.extend({ q: z.string().trim().max(100).optional(), projectId: z.string().uuid().optional() });
+const listSchema = paginationSchema.extend({ q: z.string().trim().max(100).optional(), projectId: z.string().uuid().optional(), creatorId: z.string().trim().min(1).max(128).optional() });
 const idSchema = z.string().uuid();
 
 type TrashService = ReturnType<typeof createTrashService>;
@@ -35,13 +35,13 @@ export function createTrashRouter({
   router.get('/projects', (c) => {
     const parsed = listSchema.omit({ projectId: true }).safeParse(c.req.query());
     return parsed.success
-      ? c.json(service.listProjectsForActor(actor(c), parsed.data.limit, parsed.data.offset, { query: parsed.data.q }))
+      ? c.json(service.listProjectsForActor(actor(c), parsed.data.limit, parsed.data.offset, { query: parsed.data.q, creatorId: parsed.data.creatorId }))
       : c.json(presentApiError('无效的回收站分页参数'), 400);
   });
   router.get('/sessions', (c) => {
     const parsed = listSchema.safeParse(c.req.query());
     return parsed.success
-      ? c.json(service.listSessionsForActor(actor(c), parsed.data.limit, parsed.data.offset, { query: parsed.data.q, projectId: parsed.data.projectId }))
+      ? c.json(service.listSessionsForActor(actor(c), parsed.data.limit, parsed.data.offset, { query: parsed.data.q, projectId: parsed.data.projectId, creatorId: parsed.data.creatorId }))
       : c.json(presentApiError('无效的回收站分页参数'), 400);
   });
   router.get('/session-projects', (c) => c.json(service.listSessionProjectsForActor(actor(c))));

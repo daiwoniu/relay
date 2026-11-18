@@ -7,6 +7,7 @@ import type { MessageAttachmentDto, MessageAttachmentSummaryDto, MessageOriginDt
 import MessageAttachmentList from './MessageAttachmentList';
 import { createUserMessageCopyText } from './user-message-copy';
 import MessageOriginInfo from './MessageOriginInfo';
+import { formatCompletionTime } from './message-duration-presentation.ts';
 
 interface Props {
   content: string;
@@ -22,18 +23,6 @@ interface Props {
   searchTarget?: boolean;
   origin?: MessageOriginDto;
   mobile?: boolean;
-}
-
-function formatSentTime(timestamp: number): string {
-  const date = new Date(timestamp);
-  const now = new Date();
-  const time = `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
-  const isToday = date.getFullYear() === now.getFullYear()
-    && date.getMonth() === now.getMonth()
-    && date.getDate() === now.getDate();
-  return isToday
-    ? time
-    : `${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')} ${time}`;
 }
 
 export default function UserMessage({ content, attachments, readOnly = false, full, createdAt, selectionMode = false, selected = false, selectable = true, onToggleSelection, messageId, searchTarget = false, origin, mobile = false }: Props) {
@@ -106,7 +95,7 @@ export default function UserMessage({ content, attachments, readOnly = false, fu
               </button>
             </Tooltip>
           </div>
-          <span className="shrink-0">{formatSentTime(createdAt)}</span>
+          <span className="shrink-0">{formatCompletionTime(createdAt)}</span>
         </div>
       </div>
     </div>

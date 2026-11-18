@@ -125,6 +125,7 @@ function baseServices(options = {}) {
         RELAY_LAUNCHER_CONTROL_VERSION: '6',
         ...createBackendCodexEnvironment(relayConfig.codex),
         RELAY_STORAGE_DRIVER:'native',
+        RELAY_ANALYTICS_ENABLED:runtime.mode==='production'?'1':'0',
       },
       requiredPaths: [serverRuntimePrerequisite],
     },

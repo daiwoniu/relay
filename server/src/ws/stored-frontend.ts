@@ -18,7 +18,7 @@ export function setupStoredWebSocket(wss:WebSocketServer,options:{port:CoreStora
   acceptsOrigin?:(request:IncomingMessage)=>boolean}){
   const states=new Set<SocketState>();let closed=false;
   const connection=(socket:WebSocket,request:IncomingMessage)=>{
-    if(closed||options.ready&&!options.ready()||states.size>=128||!(options.acceptsOrigin?.(request)??isAllowedOrigin(request.headers.origin))){socket.close(1008,'连接不可用');return;}
+    if(closed||options.ready&&!options.ready()||states.size>=128||request.headers.origin==='null'||!(options.acceptsOrigin?.(request)??isAllowedOrigin(request.headers.origin))){socket.close(1008,'连接不可用');return;}
     const state:SocketState={socket,alive:true,pending:0,bytes:0,tail:Promise.resolve()};states.add(state);
     const detach=()=>{state.alive=false;states.delete(state);if(state.client)options.graph.hub.remove(state.client);};
     socket.on('close',detach);socket.on('error',()=>{detach();try{socket.close(1011,'连接异常');}catch{/* Socket already closed. */}});

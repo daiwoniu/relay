@@ -69,6 +69,24 @@ test('selection enforces completed cutoff, existing IDs, empty selection and per
     p.f.mutate(`UPDATE projects SET deleted_at=1 WHERE id='${project}'`);await assert.rejects(p.service.preview(principal(),request),{code:'FORBIDDEN'});
   }finally{await p.cleanup();}
 });
+
+test('share assistant counts come from immutable selected snapshots, including old records and deleted sources',async()=>{
+  const p=await prepared();try{
+    const whole=await p.create();
+    const user=await p.create({...request,scope:'single',messageIds:[first],title:'user only'});
+    const assistant=await p.create({...request,scope:'single',messageIds:[last],title:'assistant only'});
+    p.f.mutate(`INSERT INTO messages(id,session_id,turn_id,role,content,phase,created_at) VALUES('${randomUUID()}','${session}','next','assistant','later answer','final_answer',40);
+      UPDATE sessions SET message_revision=999,deleted_at=1 WHERE id='${session}';
+      UPDATE shared_records SET message_count=777 WHERE id='${whole.id}'`);
+    const list=await p.port.listShares({principal:principal(),limit:50,offset:0});
+    assert.equal(list.items.find(item=>item.id===whole.id)!.messageCount,2);
+    assert.equal(list.items.find(item=>item.id===whole.id)!.assistantMessageCount,1);
+    assert.equal(list.items.find(item=>item.id===user.id)!.assistantMessageCount,0);
+    assert.equal(list.items.find(item=>item.id===assistant.id)!.assistantMessageCount,1);
+    const value=await p.port.readPublicShare({token:whole.publicToken});assert.equal(value.state,'active');
+    if(value.state==='active'){assert.equal(value.messageCount,2);assert.equal(value.snapshot.messages.length,2);assert.equal(value.snapshot.messages.filter(m=>m.role==='assistant').length,1);}
+  }finally{await p.cleanup();}
+});
 test('revoke and delete preserve lifecycle rules, current authority and deleted-record receipt replay',async()=>{
   const p=await prepared();try{
     const saved=await p.create();await assert.rejects(p.service.mutate(principal(),'share.delete',saved.id,randomUUID()),{code:'CONFLICT'});

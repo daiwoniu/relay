@@ -8,8 +8,8 @@ const userMenu = fs.readFileSync(new URL('../layout/UserMenu.tsx', import.meta.u
 const styles = fs.readFileSync(new URL('../../styles/authorization.css', import.meta.url), 'utf8');
 
 test('回收站入口紧跟我的分享且位于个人区分隔线之前', () => {
-  const shares = userMenu.indexOf('<span>我的分享</span>');
-  const trash = userMenu.indexOf('<span>回收站</span>');
+  const shares = userMenu.indexOf('>我的分享</span>');
+  const trash = userMenu.indexOf('>回收站</span>');
   const management = userMenu.indexOf('aria-label="系统管理"');
   assert.ok(shares >= 0 && trash > shares && management > trash);
 });
@@ -28,9 +28,12 @@ test('永久删除提示附件分享影响但明确保留用户文件和 Codex J
   assert.match(dialog, /cleanupPending/);
 });
 
-test('项目会话超过展开上限时明确提示截断', () => {
-  assert.match(dialog, /仅显示前/);
-  assert.match(dialog, /project\.sessionCount > \(expanded\[project\.id\]\?\.length \?\? 0\)/);
+test('项目展开接入十条加载更多并保留失败重试', () => {
+  assert.match(dialog, /useTrashProjectPages/);
+  assert.match(dialog, /projectPages\.loadMore\(project\.id\)/);
+  assert.match(dialog, /加载更多（10条）/);
+  assert.match(dialog, /'重试'/);
+  assert.doesNotMatch(dialog, /仅显示前|位于前 100 条之外/);
 });
 
 test('操作后后台刷新并恢复列表滚动位置', () => {

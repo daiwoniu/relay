@@ -13,7 +13,7 @@ export default function MarkdownFilePreview({ content, sourcePath }: { content: 
       a: ({ href, children }) => {
         const link = resolveMarkdownReference(sourcePath, href ?? '');
         if (link.kind === 'blocked') return <span>{children}</span>;
-        if (link.kind === 'file') return <Tooltip content={link.target} asChild><button type="button" className="md-link-file preview-file-link" onClick={() => void openFile(link.target)}>{children}</button></Tooltip>;
+        if (link.kind === 'file') return <Tooltip overflowOnly content={link.target} asChild><button type="button" data-tooltip-full-text={link.target} className="md-link-file preview-file-link" onClick={() => void openFile(link.target)}>{children}</button></Tooltip>;
         if (link.kind === 'anchor') return <a href={link.target} onClick={(event) => {
           event.preventDefault();
           let id: string;

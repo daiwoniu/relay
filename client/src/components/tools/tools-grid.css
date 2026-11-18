@@ -1,0 +1,52 @@
+.tools-grid {
+  --tools-row-gap: 1rem;
+  --tools-expansion-border: color-mix(in srgb, var(--color-primary) 20%, var(--color-border));
+  gap: var(--tools-row-gap);
+}
+
+.tools-card-expanded,
+.tools-expansion-panel {
+  border-color: var(--tools-expansion-border);
+}
+
+.tools-card-expanded {
+  z-index: 1;
+  border-bottom-width: 0;
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.tools-expansion-bridge {
+  position: absolute;
+  pointer-events: none;
+  left: -1px;
+  right: -1px;
+  bottom: calc(-1 * var(--tools-row-gap) - 1px);
+  height: calc(var(--tools-row-gap) + 2px);
+  border-inline: 1px solid var(--tools-expansion-border);
+  background: var(--color-surface);
+}
+
+/* Native SVG strokes anti-alias the curves, including fractional-pixel zoom.
+   The surface fill masks the straight borders beneath each inward corner. */
+.tools-expansion-corner {
+  position: absolute;
+  bottom: 0;
+  width: 13px;
+  height: 13px;
+}
+
+.tools-expansion-corner-left {
+  left: -13px;
+}
+
+.tools-expansion-corner-right {
+  right: -13px;
+  transform: scaleX(-1);
+}
+
+/* At the panel's outer edges the side is already continuous, with no inward corner. */
+[data-expanded-first-column] .tools-expansion-corner-left,
+[data-expanded-last-column] .tools-expansion-corner-right {
+  display: none;
+}

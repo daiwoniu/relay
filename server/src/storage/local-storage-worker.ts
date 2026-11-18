@@ -10,7 +10,10 @@ import { applyNewsMigration, newsMigrationRequired } from '../news/storage/nativ
 import type { NewsDatabase } from '../news/storage/news-storage-driver.js';
 import type { LocalStorageResult } from './local-storage-initializer.js';
 import { nativeQueries } from './native-queries.js';
+import { PREVIEW_PREFERENCES_SCHEMA_SQL } from '../contracts/preview-preferences.js';
 import { TOOLS_SCHEMA_SQL } from './tools-contract.js';
+import { HOSTING_SCHEMA_SQL } from '../page-hosting/contract.js';
+import { ANALYTICS_SCHEMA_SQL } from '../analytics/contract.js';
 import { createMemberWithDefaultProjectInDatabase } from '../db/queries-account.js';
 import { hashPassword } from '../auth/password.js';
 import { assertStorageRuntime } from '../../../scripts/lib/storage-runtime.mjs';
@@ -131,6 +134,21 @@ async function initialize() {
       const before = contents(db);
       if (!workerData.fresh && backups.length === 0) await makeBackup(db, filename, backups, before);
       transaction(db, () => { ensureAdminAuditTable(bridge); }, before);
+      if (action === 'current') action = 'migrated';
+    }
+    if (!has(db, 'user_preview_preferences')) {
+      if (!workerData.fresh && backups.length === 0) await makeBackup(db, filename, backups, contents(db));
+      transaction(db, () => db.exec(PREVIEW_PREFERENCES_SCHEMA_SQL), null);
+      if (action === 'current') action = 'migrated';
+    }
+    if (!has(db, 'hosted_sites')) {
+      if (!workerData.fresh && backups.length === 0) await makeBackup(db, filename, backups, contents(db));
+      transaction(db, () => db.exec(HOSTING_SCHEMA_SQL), null);
+      if (action === 'current') action = 'migrated';
+    }
+    if (!has(db, 'analytics_events')) {
+      if (!workerData.fresh && backups.length === 0) await makeBackup(db, filename, backups, contents(db));
+      transaction(db, () => db.exec(ANALYTICS_SCHEMA_SQL), null);
       if (action === 'current') action = 'migrated';
     }
     if (!has(db, 'user_tools_settings')) {

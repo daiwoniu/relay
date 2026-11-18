@@ -16,7 +16,6 @@ interface Props {
   projects: Project[];
   currentProjectId: string | null;
   currentProject?: Project;
-  currentProjectSessionCount: number;
   displayName: string;
   canSelectProject: boolean;
   canCreateProject: boolean;
@@ -102,7 +101,6 @@ export default function ChatInputMetadataBar({
   projects,
   currentProjectId,
   currentProject,
-  currentProjectSessionCount,
   displayName,
   canSelectProject,
   canCreateProject,
@@ -176,7 +174,7 @@ export default function ChatInputMetadataBar({
         </div>
       ) : (
         <div className="composer-metadata-leading flex-1 overflow-hidden">
-          <HoverCard disabled={isMobile || !currentProject?.path} placement="top" title="项目详情" content={currentProject ? <ProjectDetailsContent project={currentProject} sessionCount={currentProjectSessionCount} /> : null} className="min-w-0">
+          <HoverCard disabled={isMobile || !currentProject?.path} placement="top" title="项目详情" content={currentProject ? <ProjectDetailsContent project={currentProject} /> : null} className="min-w-0">
             <button type="button" onClick={() => { if (currentProject?.path) onOpenMobileDetails('project'); }} className="composer-compact-trigger composer-project-trigger" aria-label={currentProject ? '查看项目详情' : undefined}>
               <svg width="14" height="14" viewBox="0 0 16 16" fill="none" className="shrink-0"><path d="M2 4a1 1 0 011-1h3l2 2h5a1 1 0 011 1v7a1 1 0 01-1 1H3a1 1 0 01-1-1V4z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round"/></svg>
               <span className="truncate whitespace-nowrap">{displayName}</span>

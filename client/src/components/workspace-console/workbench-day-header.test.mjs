@@ -15,7 +15,7 @@ test('shows date, lunar day, holiday and city weather from the same day', () => 
   }, 10);
 
   assert.deepEqual(result, {
-    date: '10月1日', weekday: '星期四', lunar: '农历八月廿一',
+    date: '10-01', weekday: '星期四', lunar: '农历八月廿一',
     occasion: '国庆节 · 休假', weather: '北京  22℃ · 多云',
   });
 });
@@ -30,7 +30,7 @@ test('makeup day is labeled as workday and ordinary day omits empty chips', () =
   assert.equal(makeup.weather, null);
 
   const ordinary = buildWorkbenchDayHeader('2026-10-02', null, 10);
-  assert.deepEqual(ordinary, { date: '10月2日', weekday: '星期五', lunar: null, occasion: null, weather: null });
+  assert.deepEqual(ordinary, { date: '10-02', weekday: '星期五', lunar: null, occasion: null, weather: null });
 });
 
 test('stale day data is ignored and evening weather uses night forecast', () => {
@@ -41,6 +41,6 @@ test('stale day data is ignored and evening weather uses night forecast', () => 
   };
   assert.equal(buildWorkbenchDayHeader('2026-10-01', day, 20).weather, '北京  18℃ · 晴');
   assert.deepEqual(buildWorkbenchDayHeader('2026-10-02', day, 20), {
-    date: '10月2日', weekday: '星期五', lunar: null, occasion: null, weather: null,
+    date: '10-02', weekday: '星期五', lunar: null, occasion: null, weather: null,
   });
 });

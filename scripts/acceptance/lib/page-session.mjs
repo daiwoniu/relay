@@ -10,6 +10,7 @@ export class PageSession {
 
   async enableMonitoring() {
     for (const method of ['Runtime.enable', 'Log.enable', 'Network.enable', 'Page.enable']) await this.#cdp.request(method);
+    await this.#cdp.request('Page.addScriptToEvaluateOnNewDocument',{source:'window.__RELAY_DISABLE_ANALYTICS__=true;'});
     this.#cdp.on('Runtime.exceptionThrown', (params) => this.#evidence.exceptions.push({ text: params.exceptionDetails?.text || 'Runtime exception' }));
     this.#cdp.on('Log.entryAdded', (params) => { if (['error', 'warning'].includes(params.entry?.level)) this.#evidence.logErrors.push({ level: params.entry.level, text: params.entry.text || '' }); });
     this.#cdp.on('Network.responseReceived', (params) => { const status = Number(params.response?.status); if (status >= 400) this.#evidence.httpErrors.push({ status, url: params.response?.url || '' }); });

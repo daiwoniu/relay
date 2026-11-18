@@ -4,6 +4,7 @@ import type { EngineTerminalProjectionSnapshot } from '../services/engine-termin
 import type { MessageMetadata } from '../message-metadata.js';
 import { removeNarrativeItem } from '../process-timeline.js';
 import { VISIBLE_ITEM_TYPES } from './frontend-protocol.js';
+import { compactProcessItemsForStorage } from '../messages/storage.js';
 
 export type TerminalFileChanges=Pick<MessageMetadata,'changedFiles'|'changedFilesIncomplete'>;
 
@@ -14,7 +15,8 @@ export function buildRuntimeAssistantSnapshot(runtime:SessionRuntime,event:Extra
   const items=runtime.turnItems.filter(item=>VISIBLE_ITEM_TYPES.has(item.type));
   return{
     messageId:options.messageId,turnId:event.turnId,content:event.content,
-    items:items.length?JSON.stringify(items):null,duration:runtime.turnStartTime?options.now-runtime.turnStartTime:null,
+    // Compact before the Worker envelope is bounded, not only after it reaches SQL.
+    items:items.length?JSON.stringify(compactProcessItemsForStorage(items)):null,duration:runtime.turnStartTime?options.now-runtime.turnStartTime:null,
     metadata:{
       processContent:event.processContent?.trim()||undefined,
       processTimeline:event.finalAnswerItemId?removeNarrativeItem(runtime.processTimeline,event.finalAnswerItemId):runtime.processTimeline,

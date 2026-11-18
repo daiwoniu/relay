@@ -1,3 +1,5 @@
+import { formatClockTime, formatDateTime } from '../../utils/date-display.ts';
+
 export function formatDuration(ms?: number | null): string | null {
   if (!ms || ms < 0) return null;
   const seconds = Math.round(ms / 1000);
@@ -7,19 +9,14 @@ export function formatDuration(ms?: number | null): string | null {
   return remainingSeconds > 0 ? `${minutes}分${remainingSeconds}秒` : `${minutes}分钟`;
 }
 
-/** 当天显示 HH:MM，非当天显示 MM-DD HH:MM。 */
+/** 当天显示 HH:mm，同年显示 MM-DD HH:mm，跨年保留完整日期。 */
 export function formatCompletionTime(timestamp: number, nowTimestamp = Date.now()): string {
   const date = new Date(timestamp);
   const now = new Date(nowTimestamp);
   const isToday = date.getFullYear() === now.getFullYear()
     && date.getMonth() === now.getMonth()
     && date.getDate() === now.getDate();
-  const hours = String(date.getHours()).padStart(2, '0');
-  const minutes = String(date.getMinutes()).padStart(2, '0');
-  if (isToday) return `${hours}:${minutes}`;
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  return `${month}-${day} ${hours}:${minutes}`;
+  return isToday ? formatClockTime(date) : formatDateTime(date, { short: date.getFullYear() === now.getFullYear() });
 }
 
 export function getRunningDurationPresentation(statusLabel: string, elapsedMs?: number | null): string | null {

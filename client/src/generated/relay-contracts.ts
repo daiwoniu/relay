@@ -1,6 +1,58 @@
 // 此文件由 server/scripts/generate-client-contracts.ts 自动生成。
 // 请勿手工修改；运行 npm run contracts:generate 更新。
 
+export interface PreviewPreferences {
+  capacityPreset: 'default' | 'enhanced' | 'higher' | 'custom';
+  imagePreset: 'default' | 'enhanced' | 'higher' | 'custom';
+  customCapacity: {
+    fileSizeMb: number;
+    documentItems: number;
+    spreadsheetRows: number;
+    spreadsheetColumns: number;
+  };
+  customImage: {
+    directSizeMb: number;
+    maxDimension: number;
+    qualityPercent: number;
+  };
+}
+export interface HostedSite {
+  id: string;
+  publicId?: string;
+  name: string;
+  entry: string;
+  enabled: boolean;
+  fileCount: number;
+  totalBytes: number;
+  contentToken: string;
+  createdAt: number;
+  updatedAt: number;
+}
+export interface HostingInspection {
+  uploadId: string;
+  previewToken: string;
+  expiresAt: number;
+  entries: string[];
+  suggestedEntry: string | null;
+  fileCount: number;
+  totalBytes: number;
+  rewritten: number;
+  warnings: string[];
+  warningCount: number;
+}
+export interface PreviewCapacity {
+  fileSizeMb: number;
+  documentItems: number;
+  spreadsheetRows: number;
+  spreadsheetColumns: number;
+}
+export interface PreviewImage {
+  directSizeMb: number;
+  maxDimension: number;
+  qualityPercent: number;
+}
+export const PREVIEW_CAPACITY_PRESETS = {"default":{"fileSizeMb":3,"documentItems":50,"spreadsheetRows":50,"spreadsheetColumns":100},"enhanced":{"fileSizeMb":10,"documentItems":100,"spreadsheetRows":200,"spreadsheetColumns":100},"higher":{"fileSizeMb":20,"documentItems":200,"spreadsheetRows":500,"spreadsheetColumns":200}} as const;
+export const PREVIEW_IMAGE_PRESETS = {"default":{"directSizeMb":5,"maxDimension":2048,"qualityPercent":82},"enhanced":{"directSizeMb":10,"maxDimension":4096,"qualityPercent":90},"higher":{"directSizeMb":20,"maxDimension":4096,"qualityPercent":90}} as const;
 export const RELAY_PROTOCOL_VERSION = 35 as const;
 
 export type SessionStatus = 'idle' | 'queued' | 'pending' | 'processing' | 'recovering' | 'awaiting_action' | 'stopping' | 'completed' | 'failed' | 'stopped' | 'interrupted';
@@ -245,6 +297,7 @@ export interface ProjectDto {
   deletion_protected?: 0 | 1;
   access_role?: 'owner' | 'viewer' | 'collaborator' | 'manager';
   members_can_view_sessions?: 0 | 1;
+  session_count?: number;
   owner?: {
     id: string;
     username: string;
@@ -266,9 +319,41 @@ export interface TrashProjectDto {
   path: string;
   deletedAt: number;
   sessionCount: number;
+  creator?: {
+    id: string;
+    username: string;
+    displayName: string;
+    role: 'admin' | 'member';
+    avatarUpdatedAt: number | null;
+  } | null;
+  deletedBy?: {
+    id: string;
+    username: string;
+    displayName: string;
+    role: 'admin' | 'member';
+    avatarUpdatedAt: number | null;
+  } | null;
   matchSessionId?: string;
   matchSessionTitle?: string;
   matchSessionMessageCount?: number;
+  matchSessionAssistantMessageCount?: number;
+  matchSessionEngine?: EngineId | null;
+  matchSessionEngineSessionId?: string | null;
+  matchSessionDeletedAt?: number;
+  matchSessionCreator?: {
+    id: string;
+    username: string;
+    displayName: string;
+    role: 'admin' | 'member';
+    avatarUpdatedAt: number | null;
+  } | null;
+  matchSessionDeletedBy?: {
+    id: string;
+    username: string;
+    displayName: string;
+    role: 'admin' | 'member';
+    avatarUpdatedAt: number | null;
+  } | null;
   matchMessageId?: string;
   matchCount?: number;
   matchSnippet?: string;
@@ -278,11 +363,27 @@ export interface TrashSessionDto {
   id: string;
   title: string;
   projectId: string;
+  engineSessionId: string | null;
   projectName: string;
   engine: EngineId | null;
   deletedAt: number;
   messageCount: number;
   matchMessageId?: string;
+  assistantMessageCount?: number;
+  creator?: {
+    id: string;
+    username: string;
+    displayName: string;
+    role: 'admin' | 'member';
+    avatarUpdatedAt: number | null;
+  } | null;
+  deletedBy?: {
+    id: string;
+    username: string;
+    displayName: string;
+    role: 'admin' | 'member';
+    avatarUpdatedAt: number | null;
+  } | null;
   matchCount?: number;
   matchSnippet?: string;
 }
@@ -312,6 +413,7 @@ export interface TrashRestoreResponseDto {
 export interface TrashImpactDto {
   sessionCount: number;
   messageCount: number;
+  assistantMessageCount?: number;
   shareCount: number;
   attachmentCount: number;
   releasableBytes: number;
@@ -355,6 +457,7 @@ export interface SessionDto {
   execution_stage?: 'accepted' | 'started' | 'responding' | null;
   engine_preferences: EnginePreferencesDto;
   message_count?: number;
+  assistant_message_count?: number;
   context_compaction_count?: number;
   owner?: {
     id: string;
@@ -388,6 +491,7 @@ export interface SessionDetailsDto {
   execution_stage?: 'accepted' | 'started' | 'responding' | null;
   engine_preferences: EnginePreferencesDto;
   message_count?: number;
+  assistant_message_count?: number;
   context_compaction_count?: number;
   owner?: {
     id: string;
@@ -541,6 +645,10 @@ export interface MessageDetailsDto {
   processTimeline?: ProcessTimelineEntryDto[];
   changedFiles?: ChangedFileDto[];
   changedFilesIncomplete?: boolean;
+}
+
+export interface SubAgentReportDto {
+  content: string;
 }
 
 export interface MessageSummaryDto {
@@ -739,6 +847,26 @@ export interface PdfDocumentPreviewDto {
   type: 'pdf-document';
   totalPages: number;
   displayedPages: number;
+  truncated: boolean;
+  size: number;
+}
+
+export interface ArchiveEntryDto {
+  path: string;
+  directory: boolean;
+  size: number;
+  compressedSize: number;
+  modifiedAt: number | null;
+}
+
+export interface ArchivePreviewDto {
+  type: 'archive';
+  format: 'zip';
+  entries: ArchiveEntryDto[];
+  totalEntries: number;
+  totalFiles: number;
+  totalSize: number;
+  totalCompressedSize: number;
   truncated: boolean;
   size: number;
 }
@@ -1478,6 +1606,7 @@ export interface ShareListItemDto {
   title: string;
   scope: ShareScope;
   messageCount: number;
+  assistantMessageCount?: number;
   includeProcess: boolean;
   sourceSessionId: string | null;
   sourceSessionTitle: string | null;
@@ -1995,6 +2124,7 @@ export interface ProjectUpdatedEvent {
     deletion_protected?: 0 | 1;
     access_role?: 'owner' | 'viewer' | 'collaborator' | 'manager';
     members_can_view_sessions?: 0 | 1;
+    session_count?: number;
     owner?: {
       id: string;
       username: string;

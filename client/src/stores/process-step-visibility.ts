@@ -75,11 +75,15 @@ export function hasVisibleProcessStep(step: ProcessStep): boolean {
       return Boolean(toText(data.name || data.agentName || data.prompt || data.tool))
         || (Array.isArray(data.agentResults) && data.agentResults.length > 0);
     case 'imageGeneration':
-      return Boolean(toText(data.prompt || data.content));
+      return Boolean(toText(data.prompt || data.content || data.savedPath));
     case 'plan':
       return Array.isArray(data.plan) || Number(data.planCount) > 0 || Boolean(toText(data.content || data.text));
     case 'subAgentActivity':
-      return Boolean(toText(data.name || data.agentName || data.agentPath || data.content || data.text || step.status));
+      // Keep actual progress, results and failures; names/model metadata alone are not progress.
+      return [data.content, data.text, data.message].some(value => typeof value === 'string' && Boolean(value.trim()))
+        || data.kind === 'completed' || step.status === 'incomplete' || Boolean(data.errorCode || data.failureCode)
+        || (data.exitCode != null && Number.isFinite(Number(data.exitCode)) && Number(data.exitCode) !== 0)
+        || (Array.isArray(data.agentResults) && data.agentResults.length > 0);
     case 'interaction':
       return Boolean(toText(data.title || data.method)) || (Array.isArray(data.questions) && data.questions.length > 0);
     case 'systemNotice':

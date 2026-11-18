@@ -7,17 +7,19 @@ import { useTheme } from '../../hooks/useTheme';
 import { useChinaDayGreeting } from '../../hooks/useChinaDayGreeting';
 import { getDeviceId } from '../../utils/device-id';
 import RelayLogo from '../brand/RelayLogo';
-import { toolOrder, toolsStorageKey, LOCAL_TOOL_IDS, type LocalToolId, type ToolId } from './tools-state';
+import { toolOrder, toolsStorageKey, type LocalToolId, type ToolId } from './tools-state';
 import { useToolsSettings } from './useToolsSettings';
-import ToolsGrid from './ToolsGrid';
+import ToolsGrid, { ToolsExpansionBridge } from './ToolsGrid';
+import { scheduleToolUse } from './tools-usage';
+import { tracker } from '../../analytics/tracker';
 
 const CalendarPanel = lazy(() => import('../workspace-console/WorkspaceDayPanels').then((module) => ({ default: module.WorkspaceCalendarPanel })));
 const WeatherPanel = lazy(() => import('../workspace-console/WorkspaceDayPanels').then((module) => ({ default: module.WorkspaceWeatherPanel })));
 const LocalTools = lazy(() => import('./LocalTools'));
 const tools = {
   news: { title: 'AI 情报', description: '追踪 AI 动态、产品发布与行业资讯', mode: '新页面', icon: '↗', color: 'text-violet-500' },
-  calendar: { title: '万年历', description: '查农历、节气、节日与放假调休', mode: '弹窗', icon: '▦', color: 'text-amber-500' },
-  weather: { title: '天气', description: '查看所在城市近期天气与未来预报', mode: '弹窗', icon: '☀', color: 'text-sky-500' },
+  calendar: { title: '万年历', description: '查农历、节气、节日与放假调休', mode: '展开', icon: '▦', color: 'text-amber-500' },
+  weather: { title: '天气', description: '查看所在城市近期天气与未来预报', mode: '展开', icon: '☀', color: 'text-sky-500' },
   greeting: { title: '随机问候语', description: '随时间、节日和天气，换一句好心情', mode: '展开', icon: '✦', color: 'text-emerald-500' },
   timestamp: { title: '时间戳与时区', description: '日期和时间戳互转，查看各地时间', mode: '展开', icon: '◷', color: 'text-sky-500' },
   json: { title: 'JSON 格式化', description: '排版、压缩与校验，保留长数字原值', mode: '展开', icon: '{}', color: 'text-violet-500' },
@@ -30,6 +32,14 @@ const tools = {
   random: { title: '随机选择', description: '今天吃什么、抽签或随机分组', mode: '展开', icon: '⚄', color: 'text-emerald-500' },
 };
 const control = 'min-h-11 rounded-xl border border-[var(--color-border)] px-3 py-2 text-sm hover:bg-[var(--color-bg-tertiary)] focus-visible:outline-2 focus-visible:outline-[var(--color-primary)] sm:min-h-0';
+
+function useToolVisit(id: ToolId | null, record: (id: ToolId) => void) {
+  const latestRecord = useRef(record);
+  useEffect(() => { latestRecord.current = record; });
+  useEffect(() => {
+    if (id) return scheduleToolUse(() => latestRecord.current(id));
+  }, [id]);
+}
 
 export default function ToolsPage() {
   const { user, status } = useAuth();
@@ -48,9 +58,8 @@ function ToolsContent({ storageKey, signedIn, checking }: { storageKey: string; 
     return () => { document.title = previous; };
   }, []);
   const toggleWide = () => setWide((value) => { try { localStorage.setItem('relay:tools:wide', String(!value)); } catch { /* Use current page preference. */ } return !value; });
-  const [filter, setFilter] = useState<'all' | 'frequent'>('all');
+  const [filter, setFilter] = useState<'all' | 'frequent'>('frequent');
   const [query, setQuery] = useState('');
-  const [panel, setPanel] = useState<'calendar' | 'weather' | null>(null);
   const [inlineTool, setInlineTool] = useState<ToolId | null>(null);
   const calendarRef = useRef<HTMLButtonElement>(null);
   const weatherRef = useRef<HTMLButtonElement>(null);
@@ -59,12 +68,17 @@ function ToolsContent({ storageKey, signedIn, checking }: { storageKey: string; 
   const pinned = state.pinned.filter(matches);
   const remaining = toolOrder(filter, usageAtLoad ?? {})
     .filter((id) => !state.pinned.includes(id) && matches(id));
+  const visibleInlineTool = inlineTool && (pinned.includes(inlineTool) || remaining.includes(inlineTool)) ? inlineTool : null;
+  useToolVisit(visibleInlineTool, (id) => change({ action: 'use', toolId: id }));
+  useEffect(() => {
+    if (inlineTool && !visibleInlineTool) setInlineTool(null);
+  }, [inlineTool, visibleInlineTool]);
 
   function open(id: ToolId) {
-    const inline = id === 'greeting' || (LOCAL_TOOL_IDS as readonly string[]).includes(id);
+    const inline = id !== 'news';
     if (inline && inlineTool === id) { setInlineTool(null); return; }
-    change({ action: 'use', toolId: id });
-    if (id === 'calendar' || id === 'weather') setPanel(id);
+    tracker.track('tool_open',{toolId:id});
+    if (id === 'news') change({ action: 'use', toolId: id });
     if (inline) setInlineTool(id);
   }
 
@@ -76,20 +90,24 @@ function ToolsContent({ storageKey, signedIn, checking }: { storageKey: string; 
   function card(id: ToolId) {
     const tool = tools[id];
     const isPinned = state.pinned.includes(id);
-    const selected = inlineTool === id || panel === id;
+    const selected = inlineTool === id;
+    const connected = inlineTool === id;
     const content = <><span aria-hidden="true" className={`mb-5 flex h-11 w-11 items-center justify-center rounded-2xl bg-[var(--color-bg-tertiary)] text-2xl ${tool.color}`}>{tool.icon}</span>
       <span className="block text-lg font-semibold">{tool.title}</span><span className="mt-2 block min-h-10 text-sm leading-5 text-[var(--color-text-secondary)]">{tool.description}</span>
       <span className="mt-4 block text-xs text-[var(--color-text-secondary)]">{inlineTool === id ? '收起 ↑' : `${tool.mode} →`}</span></>;
-    return <article key={id} data-selected={selected || undefined} className={`relative rounded-2xl border bg-[var(--color-surface)] transition-colors hover:border-[var(--color-primary)] ${selected ? 'border-[var(--color-primary)] ring-2 ring-[var(--color-primary)]' : 'border-[var(--color-border)]'}`}>
+    return <article key={id} data-selected={selected || undefined} className={`relative border bg-[var(--color-surface)] transition-colors ${connected ? 'tools-card-expanded rounded-t-3xl' : `rounded-2xl hover:border-[var(--color-primary)] ${selected ? 'border-[var(--color-primary)] ring-2 ring-[var(--color-primary)]' : 'border-[var(--color-border)]'}`}`}>
+      {connected && <ToolsExpansionBridge />}
       {id === 'news' ? <Link to="/news" target="_blank" rel="noopener noreferrer" onClick={() => open(id)} className="block rounded-2xl p-5 focus-visible:outline-2 focus-visible:outline-[var(--color-primary)]">{content}</Link>
-        : <button data-tool-id={id} ref={id === 'calendar' ? calendarRef : id === 'weather' ? weatherRef : undefined} type="button" onClick={() => open(id)} aria-expanded={id === 'calendar' || id === 'weather' ? panel === id : inlineTool === id} aria-haspopup={id === 'calendar' || id === 'weather' ? 'dialog' : undefined} aria-controls={id !== 'calendar' && id !== 'weather' ? 'tools-inline' : undefined} className="block w-full rounded-2xl p-5 text-left focus-visible:outline-2 focus-visible:outline-[var(--color-primary)]">{content}</button>}
+        : <button data-tool-id={id} ref={id === 'calendar' ? calendarRef : id === 'weather' ? weatherRef : undefined} type="button" onClick={() => open(id)} aria-expanded={inlineTool === id} aria-controls="tools-inline" className="block w-full rounded-2xl p-5 text-left focus-visible:outline-2 focus-visible:outline-[var(--color-primary)]">{content}</button>}
       <button type="button" disabled={checking || !ready || saving} aria-label={`${isPinned ? '取消置顶' : '置顶'}${tool.title}`} aria-pressed={isPinned} onClick={() => change({ action: 'pin', toolId: id, pinned: !isPinned })} className={`absolute right-3 top-3 min-h-11 rounded-lg px-2.5 py-2 text-xs hover:bg-[var(--color-bg-tertiary)] disabled:opacity-50 ${isPinned ? 'text-[var(--color-primary)]' : 'text-[var(--color-text-secondary)]'}`}>{isPinned ? '★ 已置顶' : '☆ 置顶'}</button>
     </article>;
   }
 
-  const inlinePanel = inlineTool && <section id="tools-inline" tabIndex={-1} aria-labelledby="tools-inline-title" className="scroll-mt-4 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 focus-visible:outline-2 focus-visible:outline-[var(--color-primary)] sm:p-6">
+  const inlinePanel = inlineTool && <section id="tools-inline" tabIndex={-1} aria-labelledby="tools-inline-title" className="scroll-mt-4 p-4 focus-visible:outline-2 focus-visible:outline-[var(--color-primary)] sm:p-6">
     <div className="mb-5 flex items-center justify-between gap-3"><h2 id="tools-inline-title" className="font-semibold">{tools[inlineTool].title}</h2><button type="button" className={control} onClick={closeInline}>收起</button></div>
-    {inlineTool === 'greeting' ? <><p aria-live="polite" className="my-7 text-lg leading-8">{greeting}</p><button type="button" className={control} onClick={rotateGreeting}>换一句 ↻</button></> : <>
+    {inlineTool === 'calendar' || inlineTool === 'weather' ? <Suspense fallback={<p role="status">正在打开工具…</p>}>
+      {inlineTool === 'calendar' ? <CalendarPanel placement="inline" today={today} anchorRef={calendarRef} onClose={closeInline} /> : <WeatherPanel placement="inline" today={today} anchorRef={weatherRef} onClose={closeInline} />}
+    </Suspense> : inlineTool === 'greeting' ? <><p aria-live="polite" className="my-7 text-lg leading-8">{greeting}</p><button type="button" className={control} onClick={rotateGreeting}>换一句 ↻</button></> : <>
       <p className="mb-4 text-xs text-[var(--color-text-secondary)]">内容仅在当前浏览器本地处理。</p>
       <Suspense fallback={<p role="status">正在打开工具…</p>}><LocalTools key={inlineTool} id={inlineTool as LocalToolId} storageKey={storageKey} /></Suspense>
     </>}
@@ -115,12 +133,8 @@ function ToolsContent({ storageKey, signedIn, checking }: { storageKey: string; 
       <div className="mb-6 mt-6 flex flex-wrap items-center gap-3"><div className="flex gap-2" role="group" aria-label="工具筛选">{(['all', 'frequent'] as const).map((value) => <button type="button" key={value} aria-pressed={filter === value} onClick={() => setFilter(value)} className={`${control} ${filter === value ? 'bg-[var(--color-bg-tertiary)] font-medium' : ''}`}>{value === 'all' ? '全部工具' : '常用工具'}</button>)}</div><input aria-label="搜索工具" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索工具…" className="w-full min-w-0 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-base sm:ml-auto sm:w-auto sm:max-w-64 sm:flex-1 sm:text-sm"  enterKeyHint="done" /></div>
       {pinned.length > 0 && <section aria-label="置顶工具" className="mb-8"><h2 className="mb-3 text-sm font-semibold">置顶工具</h2><ToolsGrid ids={pinned} active={inlineTool} card={card} panel={inlinePanel} /></section>}
       <section aria-label={filter === 'frequent' ? '常用工具' : '全部工具'}><h2 className="mb-3 text-sm font-semibold">{filter === 'frequent' ? '常用工具' : '全部工具'}{filter === 'frequent' && <span className="ml-2 font-normal text-[var(--color-text-secondary)]">刷新页面时更新排序</span>}</h2><ToolsGrid ids={remaining} active={inlineTool} card={card} panel={inlinePanel} />
-        {remaining.length === 0 && <p className="rounded-2xl border border-dashed border-[var(--color-border)] p-6 text-sm text-[var(--color-text-secondary)]">{query ? '没有匹配的其他工具。' : filter === 'frequent' ? '打开工具后，会在这里按使用次数排序；已置顶的工具在上方。' : '工具已全部置顶，可从上方打开。'}</p>}
+        {remaining.length === 0 && <p className="rounded-2xl border border-dashed border-[var(--color-border)] p-6 text-sm text-[var(--color-text-secondary)]">{query ? '没有匹配的其他工具。' : filter === 'frequent' ? <>还没有其他常用工具，<button type="button" className="underline" onClick={() => setFilter('all')}>查看全部工具</button>。展开或弹窗停留满 5 秒计入使用次数，刷新页面时更新排序；已置顶的工具在上方。</> : '工具已全部置顶，可从上方打开。'}</p>}
       </section>
     </main>
-    <Suspense fallback={<p role="status" className="fixed bottom-6 left-1/2 -translate-x-1/2 rounded-xl bg-[var(--color-surface)] px-5 py-3 shadow-lg">正在打开工具…</p>}>
-      {panel === 'calendar' && <CalendarPanel placement="card" today={today} anchorRef={calendarRef} onClose={() => setPanel(null)} />}
-      {panel === 'weather' && <WeatherPanel placement="card" today={today} anchorRef={weatherRef} onClose={() => setPanel(null)} />}
-    </Suspense>
   </div>;
 }

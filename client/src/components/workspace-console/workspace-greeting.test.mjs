@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { chooseWorkspaceGreeting, readCachedChinaDay, saveCachedChinaDay } from './workspace-greeting.ts';
+import { CHINA_DAY_CACHE_KEY, chooseWorkspaceGreeting, readCachedChinaDay, saveCachedChinaDay } from './workspace-greeting.ts';
 
 test('without day data, greeting responds to weekday and time of day', () => {
   assert.match(chooseWorkspaceGreeting(new Date(2026, 8, 28, 10), null, () => 0), /周一/);
@@ -103,6 +103,12 @@ test('day cache preserves the city and rejects the older cache without location'
   saveCachedChinaDay(storage, day, 1_800_000_000_000);
   assert.deepEqual(readCachedChinaDay(storage, 1_800_000_000_000, day.date), day);
 
-  storage.setItem('relay.workspace.china-day', JSON.stringify({ at: 1_800_000_000_000, day: { date: day.date, calendar: day.calendar, weather: null } }));
+  storage.setItem(CHINA_DAY_CACHE_KEY, JSON.stringify({ at: 1_800_000_000_000, day: { date: day.date, calendar: day.calendar, weather: null } }));
   assert.equal(readCachedChinaDay(storage, 1_800_000_000_000, day.date), null);
+});
+
+test('old provider cache is ignored after the API-only migration', () => {
+  const storage = { getItem: key => key === 'relay.workspace.china-day'
+    ? JSON.stringify({ at: 1_800_000_000_000, day: { date: '2026-10-01', location: { city: '北京' }, weather: { temperatureC: 20 } } }) : null };
+  assert.equal(readCachedChinaDay(storage, 1_800_000_000_000, '2026-10-01'), null);
 });

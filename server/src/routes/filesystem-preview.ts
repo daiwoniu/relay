@@ -1,6 +1,7 @@
 import { TextDecoder } from 'node:util';
 import { open } from 'node:fs/promises';
 import {
+  ArchivePreviewDtoSchema,
   PdfDocumentPreviewDtoSchema,
   SpreadsheetDocumentPreviewDtoSchema,
   SpreadsheetSheetResponseDtoSchema,
@@ -15,6 +16,21 @@ export const MAX_TEXT_HEAD_LINES = 100;
 export const MAX_IMAGE_PREVIEW_SIZE = 5 * 1024 * 1024; // 5MB
 export const MAX_COMPRESSIBLE_IMAGE_SIZE = 20 * 1024 * 1024; // 20MB
 const UTF8_DECODER = new TextDecoder('utf-8', { fatal: true });
+
+/** Reserve room for the response envelope below the file Worker's 32 MiB ceiling. */
+export function fitsTextPreviewResponse(content: string, maxBytes = 30 * 1024 * 1024): boolean {
+  const sourceBytes = Buffer.byteLength(content, 'utf8');
+  let encodedBytes = sourceBytes + 2;
+  if (encodedBytes > maxBytes) return false;
+  if (sourceBytes * 6 + 2 <= maxBytes) return true;
+  for (const character of content) {
+    const code = character.charCodeAt(0);
+    if (code < 32) encodedBytes += code === 8 || code === 9 || code === 10 || code === 12 || code === 13 ? 1 : 5;
+    else if (character === '"' || character === '\\') encodedBytes += 1;
+    if (encodedBytes > maxBytes) return false;
+  }
+  return true;
+}
 
 export function decodeTextPreview(buffer: Buffer): string | null {
   if (buffer.includes(0)) return null;
@@ -64,10 +80,10 @@ export function isImageFile(filePath: string): boolean {
 
 export type FilePreviewDisposition = 'text' | 'text-too-large' | 'image' | 'image-compressible' | 'image-too-large';
 
-export function getFilePreviewDisposition(filePath: string, size: number): FilePreviewDisposition {
-  if (!isImageFile(filePath)) return size > MAX_TEXT_PREVIEW_SIZE ? 'text-too-large' : 'text';
+export function getFilePreviewDisposition(filePath: string, size: number, textLimit = MAX_TEXT_PREVIEW_SIZE, imageLimit = MAX_IMAGE_PREVIEW_SIZE): FilePreviewDisposition {
+  if (!isImageFile(filePath)) return size > textLimit ? 'text-too-large' : 'text';
   if (size > MAX_COMPRESSIBLE_IMAGE_SIZE) return 'image-too-large';
-  if (size > MAX_IMAGE_PREVIEW_SIZE) return 'image-compressible';
+  if (size > imageLimit) return 'image-compressible';
   return 'image';
 }
 
@@ -94,7 +110,9 @@ export function presentDocumentPreviewResult(result: unknown) {
       ? WordDocumentPreviewDtoSchema.safeParse(result)
       : type === 'spreadsheet'
         ? SpreadsheetDocumentPreviewDtoSchema.safeParse(result)
-        : null;
+        : type === 'archive'
+          ? ArchivePreviewDtoSchema.safeParse(result)
+          : null;
   if (!parsed?.success) {
     throw new DocumentPreviewError('DOCUMENT_INVALID', '文档解析结果无效，无法预览，请下载后查看');
   }

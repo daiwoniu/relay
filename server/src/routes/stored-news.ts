@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { getConnInfo } from '@hono/node-server/conninfo';
+import { getHttpClientIp } from '../http-client-ip.js';
 import type { RelayEnv } from '../auth/authorization.js';
 import { createRequireStoredUserSession } from '../auth/stored-session.js';
 import type { CoreStoragePort } from '../storage/contracts.js';
@@ -11,8 +12,7 @@ export function createStoredNewsRouter(options:{port:CoreStoragePort;service:Pic
   router.use('*',(c,next)=>/^\/api\/public\/news(?:\/|$)/.test(c.req.path)?next():requireUser(c,next));
   router.all('*',async c=>{
     try{
-      let clientId=options.getClientId?.(c);
-      if(!clientId)try{clientId=getConnInfo(c).remote.address;}catch{/* Synthetic HTTP has no native socket. */}
+      const clientId=options.getClientId?.(c)||getHttpClientIp(c);
       return await options.service.request(c.get('relayStoragePrincipal')??null,c.req.raw,clientId??'local');
     }catch(error){const code=error instanceof StorageContractError?error.code:'STORAGE_UNAVAILABLE';return c.json(presentApiError('资讯操作暂不可用，请刷新状态核对',{code}),code==='FORBIDDEN'?403:code==='INVALID_ARGUMENT'?400:code==='PAYLOAD_TOO_LARGE'?413:503);}
   });return router;

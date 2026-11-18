@@ -1,4 +1,5 @@
 import type { ChinaDayData } from '../../api/china-day';
+import { formatDate } from '../../utils/date-display.ts';
 
 export function buildEmptyStateToday(date: string, day: ChinaDayData | null, hour: number) {
   const [year, month, dayOfMonth] = date.split('-').map(Number);
@@ -14,7 +15,7 @@ export function buildEmptyStateToday(date: string, day: ChinaDayData | null, hou
   const condition = hour >= 18 ? weather?.forecast?.nightText : weather?.forecast?.dayText;
   const weatherDetail = [temperature, condition].filter(Boolean).join(' · ');
   return {
-    date: `${month}月${dayOfMonth}日`,
+    date: formatDate(date, { short: true }),
     weekday,
     lunar: lunar ? `农历${lunar}` : null,
     festivals: [...new Set([...(calendar?.solarFestivals ?? []), ...(calendar?.lunarFestivals ?? [])])],

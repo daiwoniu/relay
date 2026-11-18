@@ -7,7 +7,7 @@ import { buildSync, build } from 'esbuild';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { captureProcessFlow } from './process-flow-session.ts';
-import { buildFlowNodes, groupFlowNodes, getFlowCategoryGroups, groupFlowCapabilities } from './process-flow-model.ts';
+import { buildFlowNodes, groupFlowNodes, getFlowCategoryGroups, groupFlowCapabilities, describeFlowCapability } from './process-flow-model.ts';
 
 const require = createRequire(import.meta.url);
 const result = buildSync({ stdin: { contents: readFileSync(new URL('./ProcessFlow.tsx', import.meta.url),'utf8')+'\nexport { FlowCapabilityGrid, FlowBranch, FlowTravel };', resolveDir: fileURLToPath(new URL('.',import.meta.url)), loader: 'tsx' }, bundle: true, platform: 'node', format: 'cjs', jsx: 'automatic', write: false, external: ['react', 'react/jsx-runtime', 'react-dom'] });
@@ -20,6 +20,59 @@ new Function('require','module','exports',panelResult.outputFiles[0].text)(requi
 const ProcessSteps = panelCompiled.exports.default;
 const root = { id: 'root', role: 'user', turn_id: 't', session_id: 's', content: '实现流程视图', created_at: 10 };
 const makeContext = (steps = []) => captureProcessFlow(null, { sessionId:'s', messages:[root], followups:[], steps, timeline:[], projectName:'Relay', projectPath:'D:/relay' });
+test('过程文件在时间流和分类流展开后显示，默认六项，删除禁用，分享不挂载本机预览', () => {
+  const step = { id: 'preview-files', type: 'fileChange', status: 'completed', details: { changes: Array.from({ length: 8 }, (_, index) => ({ path: `assets/${index}.png`, changeType: index === 1 ? 'delete' : 'add' })) } };
+  const context = makeContext([step]);
+  context.ui.details[step.id] = true;
+  const props = { context, steps: context.steps, timeline: [], mode: 'time', streaming: false, narrativeStatus: 'completed', renderDetail: () => null };
+  const time = renderToStaticMarkup(React.createElement(ProcessFlow, props));
+  assert.match(time, /aria-label="本步骤相关文件"/);
+  assert.match(time, /再显示 2 个文件/);
+  assert.match(time, /disabled="" aria-label="已删除：1.png/);
+  assert(!time.includes('aria-label="预览：6.png'));
+  const buckets = groupFlowCapabilities(buildFlowNodes(context, context.steps, [], { streaming: false }).filter(node => node.step), 'action');
+  for (const bucket of buckets) context.ui.expanded[`capability:preview:${bucket.id}`] = true;
+  for (const columns of [1, 2]) {
+    const category = renderToStaticMarkup(React.createElement(compiled.exports.FlowCapabilityGrid, { buckets, groupId: 'preview', columns, context, renderDetail: () => null }));
+    assert.match(category, /aria-label="本步骤相关文件"/);
+  }
+  context.ui.details[step.id] = false;
+  assert(!renderToStaticMarkup(React.createElement(ProcessFlow, props)).includes('aria-label="本步骤相关文件"'));
+  context.ui.details[step.id] = true;
+  context.readOnly = true;
+  assert(!renderToStaticMarkup(React.createElement(ProcessFlow, props)).includes('aria-label="本步骤相关文件"'));
+  const detail = renderToStaticMarkup(React.createElement(panelCompiled.exports.TestStepRow, { step, full: true, contentOnly: true, hideFileList: true }));
+  assert(!detail.includes('flow-file-list'));
+  assert(!detail.includes('process-step__main'));
+  const reportStep = { id: 'report', type: 'dynamicToolCall', status: 'completed', details: { tool: 'relay_report_file_changes', success: true, arguments: JSON.stringify({ version: 1, reportedFileChanges: [{ path: 'assets/a.png', changeType: 'added' }] }) } };
+  const reportDetail = renderToStaticMarkup(React.createElement(panelCompiled.exports.TestStepRow, { step: reportStep, full: true, contentOnly: true, hideFileList: true }));
+  assert(!reportDetail.includes('process-step__code'));
+  assert(!reportDetail.includes('process-step__main'));
+  assert.equal(reportDetail, '', '文件条目已替代上报正文时，不保留空步骤容器');
+  const imageDetail = renderToStaticMarkup(React.createElement(panelCompiled.exports.TestStepRow, { step: { id: 'image-view', type: 'imageView', status: 'completed', details: { path: 'assets/a.png' } }, full: true, contentOnly: true, hideFileList: true }));
+  assert.equal(imageDetail, '');
+});
+
+test('重载后截断上报参数仍按结构化文件清单分组与展开，时间流不重复路径正文', () => {
+  const step = { id: 'stored-report', type: 'dynamicToolCall', status: 'completed', details: { tool: 'relay_report_file_changes', success: true, arguments: '{truncated', fileChanges: [{ path: 'assets/result.png', changeType: 'added' }] } };
+  const context = makeContext([step]);
+  context.ui.details[step.id] = true;
+  const node = buildFlowNodes(context, context.steps, [], { streaming: false }).find(node => node.id === step.id);
+  assert.match(node.subtitle, /result.png/);
+  assert.equal(describeFlowCapability(node).family, 'file');
+  const html = renderToStaticMarkup(React.createElement(ProcessFlow, { context, steps: context.steps, timeline: [], mode: 'time', streaming: false, narrativeStatus: 'completed', renderDetail: () => null }));
+  assert.match(html, /aria-label="本步骤相关文件"/);
+  const article = html.match(/<article[^>]*data-flow-node="stored-report"[\s\S]*?<\/article>/)[0];
+  assert(!article.includes('class="flow-node__text"'));
+});
+test('原始输入未加载时处理面板仍提供三种展示方式，并显示子任务活动', () => {
+  const steps = [{ id: 'food', type: 'subAgentActivity', status: 'completed', details: { kind: 'interacted', agentPath: '/root/food_sample', message: '图片处理进度' } }];
+  const context = captureProcessFlow(null, { sessionId: 's', messages: [], followups: [], steps, timeline: [], allowMissingRoot: true });
+  const html = renderToStaticMarkup(React.createElement(ProcessSteps, { steps, sessionId: 's', flowContext: context, defaultCollapsed: false, settled: false }));
+  for (const text of ['普通列表', '时间流', '分类流', 'food_sample', '发生交互']) assert(html.includes(text));
+  assert(!html.includes('process-group--subtask'));
+  assert(!html.includes('process-step-status--success'));
+});
 const render = (context, extra = {}) => {
   const { expandOccurrences = true, ...props } = extra;
   if (props.mode === 'category' && expandOccurrences) {
@@ -34,6 +87,40 @@ const render = (context, extra = {}) => {
   }
   return renderToStaticMarkup(React.createElement(ProcessFlow, { context, steps:context.steps, timeline:[], mode:'time', streaming:true, renderDetail: step=>React.createElement('span',null,`detail:${step.id}`), ...props }));
 };
+
+test('三视图隐藏无正文通知，进度结果异常仍可见，不新增活动或维护入口', () => {
+  const activity = (id, kind, extra = {}) => ({ id, type: 'subAgentActivity', status: 'completed', details: { kind, agentPath: `/root/${id}`, ...extra } });
+  const steps = [activity('hidden_start', 'started'), activity('hidden_repeat', 'interacted'),
+    activity('real_progress', 'interacted', { message: '真实进度内容' }), activity('real_result', 'completed'),
+    { ...activity('real_failure', 'interacted'), status: 'incomplete' }, activity('real_exit_failure', 'interacted', { exitCode: 1 })];
+  const context = makeContext(steps);
+  const list = renderToStaticMarkup(React.createElement(ProcessSteps, { steps, flowContext: context, defaultCollapsed: false }));
+  context.ui.categoryOpen = { action: 'category:collaboration' };
+  for (const html of [list, render(context), render(context, { mode: 'category' })]) {
+    assert(!html.includes('hidden_start')); assert(!html.includes('hidden_repeat'));
+    for (const text of ['real_progress', 'real_result', 'real_failure', 'real_exit_failure']) assert(html.includes(text), text);
+    assert(!html.includes('活动记录')); assert(!html.includes('维护区'));
+  }
+  assert.equal(steps.length, 6);
+});
+
+test('完成回报入口仅在已保存且非分享的处理面板显示，通知本身没有空详情', () => {
+  const steps = [{ id: 'subagent-completed-first', type: 'subAgentActivity', status: 'completed', details: { kind: 'completed', agentThreadId: 'child', agentPath: '/root/food_sample' } }];
+  const props = { steps, sessionId: 's', messageId: 'm', defaultCollapsed: false, settled: true };
+  const html = renderToStaticMarkup(React.createElement(ProcessSteps, props));
+  assert(!html.includes('查看子任务回报')); assert(html.includes('执行结束'));
+  const row = source => source.match(/<button[^>]*class="process-step__main[^\"]*"[^>]*>/)?.[0] || '';
+  assert(row(html).includes('aria-expanded="false"')); assert(!row(html).includes('disabled'));
+  assert(!html.includes('process-step__details')); assert(!html.includes('process-step-status--success'));
+  assert(row(renderToStaticMarkup(React.createElement(ProcessSteps, { ...props, readOnly: true }))).includes('disabled'));
+  assert(row(renderToStaticMarkup(React.createElement(ProcessSteps, { ...props, messageId: undefined }))).includes('disabled'));
+  const context = makeContext(steps); context.ui.details[steps[0].id] = true;
+  assert(!render(context).includes(`detail:${steps[0].id}`));
+  context.canReadSubAgentReports = true;
+  assert(render(context).includes(`detail:${steps[0].id}`));
+  context.readOnly = true;
+  assert(!render(context).includes(`detail:${steps[0].id}`));
+});
 
 test('光线首次挂载不依赖尚未绑定的父ref，事件结束后由动画回调完成收尾', () => {
   const hooks = [], effects = [], cleanups = [];

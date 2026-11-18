@@ -1,17 +1,18 @@
 /* Tools use the page palette; workbench popovers retain their independent palette. */
-[data-tools-popover] {
+[data-tools-day-panel] {
   background: var(--color-surface);
   color: var(--color-text);
   border-color: var(--color-border);
   box-shadow: 0 16px 48px rgb(0 0 0 / .18);
 }
-[data-tools-popover] :is(.text-slate-100, .text-slate-300) { color: var(--color-text); }
-[data-tools-popover] .text-slate-400 { color: var(--color-text-secondary); }
-[data-tools-popover] :is(.text-cyan-200, .text-cyan-300, .text-violet-300) { color: var(--color-primary); }
-[data-tools-popover] :is(.text-emerald-200, .text-emerald-300) { color: var(--color-status-success); }
-[data-tools-popover] :is(.text-amber-200, .text-amber-300) { color: var(--color-status-warning); }
-[data-tools-popover] :is(.text-rose-200, .text-rose-300) { color: var(--color-status-danger); }
-[data-tools-popover] .bg-slate-900 { background: var(--color-bg-secondary); }
-[data-tools-popover] :is([class~="border-white/10"], [class~="border-white/15"]) { border-color: var(--color-border); }
-[data-tools-popover] :is([class~="bg-white/5"], [class~="bg-white/10"], [class~="bg-white/[0.03]"]) { background: var(--color-bg-secondary); }
-[data-tools-popover] [class~="hover:bg-white/10"]:hover { background: var(--color-bg-tertiary); }
+[data-tools-inline] { box-shadow: none; }
+[data-tools-day-panel] :is(.text-slate-100, .text-slate-300) { color: var(--color-text); }
+[data-tools-day-panel] .text-slate-400 { color: var(--color-text-secondary); }
+[data-tools-day-panel] :is(.text-cyan-200, .text-cyan-300, .text-violet-300) { color: var(--color-primary); }
+[data-tools-day-panel] :is(.text-emerald-200, .text-emerald-300) { color: var(--color-status-success); }
+[data-tools-day-panel] :is(.text-amber-200, .text-amber-300) { color: var(--color-status-warning); }
+[data-tools-day-panel] :is(.text-rose-200, .text-rose-300) { color: var(--color-status-danger); }
+[data-tools-day-panel] .bg-slate-900 { background: var(--color-bg-secondary); }
+[data-tools-day-panel] :is([class~="border-white/10"], [class~="border-white/15"]) { border-color: var(--color-border); }
+[data-tools-day-panel] :is([class~="bg-white/5"], [class~="bg-white/10"], [class~="bg-white/[0.03]"]) { background: var(--color-bg-secondary); }
+[data-tools-day-panel] [class~="hover:bg-white/10"]:hover { background: var(--color-bg-tertiary); }

@@ -12,7 +12,6 @@ interface Props {
   mobileDetails: ChatInputMobileDetails | null;
   onCloseMobileDetails: () => void;
   currentProject?: Project;
-  currentProjectSessionCount: number;
   contextUsageDetails: ReactNode;
   stopConfirmOpen: boolean;
   isAwaitingAction: boolean;
@@ -34,11 +33,11 @@ interface Props {
   onCancelHostFilePicker: () => void;
 }
 
-export default function ChatInputDialogs({ mobileDetails, onCloseMobileDetails, currentProject, currentProjectSessionCount, contextUsageDetails, stopConfirmOpen, isAwaitingAction, onCancelStop, onConfirmStop, clearConfirmOpen, onCancelClear, onConfirmClear, showDirPicker, initialDirectoryPath, onSelectDirectory, onCancelDirectoryPicker, showHostFilePicker, initialHostFilePath, remainingHostFileSlots, existingHostFilePaths, onHostFileDirectoryChange, onAddHostFiles, onCancelHostFilePicker }: Props) {
+export default function ChatInputDialogs({ mobileDetails, onCloseMobileDetails, currentProject, contextUsageDetails, stopConfirmOpen, isAwaitingAction, onCancelStop, onConfirmStop, clearConfirmOpen, onCancelClear, onConfirmClear, showDirPicker, initialDirectoryPath, onSelectDirectory, onCancelDirectoryPicker, showHostFilePicker, initialHostFilePath, remainingHostFileSlots, existingHostFilePaths, onHostFileDirectoryChange, onAddHostFiles, onCancelHostFilePicker }: Props) {
   return (
     <>
       <DetailsDialog open={mobileDetails !== null} onClose={onCloseMobileDetails} title={mobileDetails === 'project' ? '项目详情' : '上下文用量'}>
-        {mobileDetails === 'project' && (currentProject ? <ProjectDetailsContent project={currentProject} sessionCount={currentProjectSessionCount} /> : null)}
+        {mobileDetails === 'project' && (currentProject ? <ProjectDetailsContent project={currentProject} /> : null)}
         {mobileDetails === 'context' && contextUsageDetails}
       </DetailsDialog>
 

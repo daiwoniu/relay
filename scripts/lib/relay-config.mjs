@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import net from 'node:net';
+import { normalizeClientIp } from './client-ip.mjs';
 
 const SERVICE_CONFIG_KEYS = [
   'CODEX_HOST',
@@ -9,7 +10,7 @@ const SERVICE_CONFIG_KEYS = [
   'FRONTEND_LISTEN_HOST',
   'FRONTEND_LISTEN_PORT',
 ];
-const CONFIG_KEYS = new Set([...SERVICE_CONFIG_KEYS, 'PUBLIC_ALLOWED_ADDRESSES']);
+const CONFIG_KEYS = new Set([...SERVICE_CONFIG_KEYS, 'PUBLIC_ALLOWED_ADDRESSES', 'TRUSTED_PROXY_IPS']);
 const WILDCARD_ADDRESS = '0.0.0.0';
 
 export function loadRelayConfig(filePath) {
@@ -48,6 +49,12 @@ export function parseRelayConfig(content) {
   const wildcard = addressValues.includes(WILDCARD_ADDRESS);
   if (wildcard && addressValues.length > 1) throw new Error('0.0.0.0 不能与其他地址混用');
   const addresses = wildcard ? [] : deduplicateAddresses(addressValues.map(normalizeAddress));
+  const trustedProxyIps = [...new Set((values.get('TRUSTED_PROXY_IPS') || '').split(',').map(value => value.trim()).filter(Boolean).map(value => {
+    const ip = normalizeClientIp(value);
+    if (!ip || ip === '0.0.0.0' || ip === '::') throw new Error('TRUSTED_PROXY_IPS 必须是明确的代理 IP，不支持通配地址、域名或网段');
+    return ip;
+  }))];
+  if (trustedProxyIps.length && wildcard) throw new Error('TRUSTED_PROXY_IPS 要求 PUBLIC_ALLOWED_ADDRESSES 使用精确地址，不能使用通配模式');
 
   return {
     codex: {
@@ -59,6 +66,7 @@ export function parseRelayConfig(content) {
     },
     backend,
     frontend,
+    trustedProxyIps,
     publicAccess: {
       enabled: wildcard || addresses.length > 0,
       wildcard,

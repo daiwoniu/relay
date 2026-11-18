@@ -6,6 +6,25 @@ import test from 'node:test';
 import type { Message } from '../db/queries.js';
 import { presentMessage, presentMessageSummary, presentProcessItem } from './presenter.js';
 
+test('图片过程投影不携带二进制结果，原始运行项和其他工具输出保持不变', () => {
+  const bytes = 'A'.repeat(4 * 1024 * 1024);
+  const source = { result: bytes, output: { image: bytes }, aggregatedOutput: bytes, savedPath: 'images/桌牌.png', prompt: '桌牌设计', errorCode: 'IMAGE_FAILED' };
+  for (const wrap of [(value: object) => value, (value: object) => ({ details: value }), (value: object) => ({ raw: value })]) {
+    const item = { id: 'image', type: 'imageGeneration', status: 'failed', ...wrap(source) };
+    const projected = presentProcessItem(item)!;
+    assert.equal(projected.status, 'incomplete');
+    assert.equal(projected.details.prompt, '桌牌设计');
+    assert.equal(projected.details.errorCode, 'IMAGE_FAILED');
+    assert.equal(projected.details.savedPath, 'images/桌牌.png');
+    for (const key of ['result', 'output', 'aggregatedOutput']) assert.equal(key in projected.details, false);
+    assert.deepEqual(presentProcessItem(projected), projected);
+    assert.equal(source.result, bytes);
+    assert.equal(source.output.image, bytes);
+  }
+  const command = presentProcessItem({ id: 'command', type: 'commandExecution', aggregatedOutput: 'keep output' })!;
+  assert.equal(command.details.aggregatedOutput, 'keep output');
+});
+
 test('协作结果重复投影保持原结果与名称，过滤未知状态和私有字段', () => {
   const raw={id:'collab-roundtrip',type:'collabAgentToolCall',status:'completed',agentsStates:{child:{status:'completed',message:'done'}}};
   const once=presentProcessItem(raw)!;

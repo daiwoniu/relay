@@ -89,3 +89,38 @@ test('weather cache is shared by city and date for five hours', async () => {
     assert.equal(loads, 3);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
+
+test('API forecasts persist and refresh through the shared weather cache', async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'relay-api-weather-cache-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  let calls = 0;
+  const load = async () => { calls++; return { date: '2026-11-17', location: { city: '济宁', latitude: 35.4, longitude: 116.58 },
+    days: [], source: 'open-meteo' as const }; };
+  await new ChinaDayPanelCache(root).weather('济宁', '2026-11-17', load);
+  const reopened = new ChinaDayPanelCache(root);
+  assert.equal((await reopened.weather('济宁', '2026-11-17', load)).value.source, 'open-meteo');
+  assert.equal(calls, 1);
+  await reopened.weather('济宁', '2026-11-17', load, true);
+  assert.equal(calls, 2);
+});
+
+test('hourly weather expires after ten minutes and never reuses the previous hour window', async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'relay-hourly-cache-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  let now = Date.parse('2026-12-31T23:25:00+08:00'), calls = 0;
+  const cache = new ChinaDayPanelCache(root, () => now);
+  const load = async () => {
+    calls++;
+    const start = Math.floor(now / 3_600_000) * 3_600_000;
+    return { location: { city: '济宁', latitude: 35.4, longitude: 116.58 }, source: 'open-meteo' as const,
+      hours: Array.from({ length: 24 }, (_, i) => ({ time: new Date(start + (i + 8) * 3_600_000).toISOString().slice(0, 16),
+        temperatureC: 10, precipitationProbabilityPercent: 0, weatherCode: 0 })) };
+  };
+  await cache.hourly('济宁', load);
+  now += 9 * 60_000; await cache.hourly('济宁', load); assert.equal(calls, 1);
+  now += 60_000; await cache.hourly('济宁', load); assert.equal(calls, 2);
+  now = Date.parse('2027-01-01T00:00:00+08:00');
+  assert.equal((await cache.hourly('济宁', load)).value.hours[0].time, '2027-01-01T00:00');
+  assert.equal(calls, 3);
+  await cache.hourly('济宁', load, true); assert.equal(calls, 4);
+});

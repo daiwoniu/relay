@@ -7,7 +7,7 @@ export async function switchPreparedFrontendRelease({ root, expectedBuildId = nu
   if (!original.preparedBuildId) throw new Error('没有准备好的前端 release');
   if (expectedBuildId && original.preparedBuildId !== expectedBuildId) throw new Error('前端预构建身份不一致');
   const nextRelease = path.join(paths.releases, original.preparedBuildId);
-  if (!isCompleteFrontendRelease(nextRelease)) throw new Error('准备好的前端 release 不完整');
+  if (!isCompleteFrontendRelease(nextRelease,{requireVersion:true})) throw new Error('准备好的前端 release 不完整');
   const defaultRollbackBuildId = original.preparedBuildId === original.activeBuildId
     ? original.previousBuildId
     : original.activeBuildId;

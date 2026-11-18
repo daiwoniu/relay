@@ -1,3 +1,4 @@
+import { formatDateTime } from '../../utils/date-display.ts';
 type SourceMeta = { state: 'live' | 'snapshot' | 'failed_snapshot' | 'unavailable';
   lastSuccessAt: number | null; lastAttemptAt: number | null; error: string | null };
 
@@ -13,9 +14,7 @@ export function shouldRetryFailedSnapshot(meta: SourceMeta | undefined, now: num
 
 export function snapshotNotice(source: '飞书' | 'Codex', meta: SourceMeta | undefined): string | null {
   if (meta?.state !== 'failed_snapshot' || meta.lastSuccessAt === null) return null;
-  const time = new Date(meta.lastSuccessAt).toLocaleString('zh-CN', {
-    year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false,
-  });
+  const time = formatDateTime(meta.lastSuccessAt);
   return source === '飞书' ? `任务报表本次未完成更新，显示 ${time} 的上次成功数据。`
     : `Codex 更新失败，显示 ${time} 的旧数据。`;
 }

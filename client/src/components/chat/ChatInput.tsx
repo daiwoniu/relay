@@ -4,7 +4,6 @@ import IconActionButton from '../ui/IconActionButton';
 import { appendNoteToDraft } from '../../stores/local-notes';
 import { useChatInputHistory } from './use-chat-input-history';
 import { clearChatDraft, getChatDraftKey, readChatDraft, writeChatDraft } from './chat-drafts';
-import { resolveSessionProjectId } from '../layout/session-project';
 import type { EngineId, EnginePreferencesDto, EngineStatusDto, SendAttachmentDto } from '../../generated/relay-contracts';
 import { useEngineModelsStore } from '../../stores/engine-models';
 import { updateSessionEnginePreferences } from '../../api/sessions';
@@ -803,9 +802,6 @@ export default function ChatInput({ onSend, onEnsureProject, onStop, onCancelQue
   const rememberedHostFilePath = typeof sessionStorage !== 'undefined'
     ? readHostFileDirectory(sessionStorage, hostFileDirectoryKey)
     : '';
-  const currentProjectSessionCount = currentProject
-    ? sessions.filter((session) => resolveSessionProjectId(session, projects) === currentProject.id).length
-    : 0;
 
   // 显示名：优先 pendingProjectPath，其次当前项目名
   const pendingName = pendingProjectPath
@@ -933,7 +929,6 @@ export default function ChatInput({ onSend, onEnsureProject, onStop, onCancelQue
             projects={selectableProjects}
             currentProjectId={currentProjectId}
             currentProject={currentProject}
-            currentProjectSessionCount={currentProjectSessionCount}
             displayName={displayName}
             canSelectProject={canSelectProject}
             canCreateProject={user?.canCreateProject !== false}
@@ -1078,7 +1073,6 @@ export default function ChatInput({ onSend, onEnsureProject, onStop, onCancelQue
         mobileDetails={mobileDetails}
         onCloseMobileDetails={() => setMobileDetails(null)}
         currentProject={currentProject}
-        currentProjectSessionCount={currentProjectSessionCount}
         contextUsageDetails={contextUsageDetails}
         stopConfirmOpen={stopConfirmOpen}
         isAwaitingAction={isAwaitingAction}

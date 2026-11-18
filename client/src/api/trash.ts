@@ -11,15 +11,17 @@ import { jsonBody, requestJson } from './client';
 
 export const TRASH_PAGE_SIZE = 30;
 
-export function listTrashProjects(limit = TRASH_PAGE_SIZE, offset = 0, query = ''): Promise<TrashProjectListResponseDto> {
+export function listTrashProjects(limit = TRASH_PAGE_SIZE, offset = 0, query = '', creatorId = ''): Promise<TrashProjectListResponseDto> {
   const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
   if (query) params.set('q', query);
+  if (creatorId) params.set('creatorId', creatorId);
   return requestJson(`/api/trash/projects?${params}`);
 }
-export function listTrashSessions(limit = TRASH_PAGE_SIZE, offset = 0, query = '', projectId = ''): Promise<TrashSessionListResponseDto> {
+export function listTrashSessions(limit = TRASH_PAGE_SIZE, offset = 0, query = '', projectId = '', creatorId = ''): Promise<TrashSessionListResponseDto> {
   const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
   if (query) params.set('q', query);
   if (projectId) params.set('projectId', projectId);
+  if (creatorId) params.set('creatorId', creatorId);
   return requestJson(`/api/trash/sessions?${params}`);
 }
 export type TrashSessionProject = { id: string; name: string; path: string };

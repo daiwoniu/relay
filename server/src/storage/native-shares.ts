@@ -78,13 +78,20 @@ export function executeShare(db:DB,actor:Actor,command:Extract<CoreCommand,{name
 }
 export function listShares(db:DB,actor:Actor,limit:number,offset:number):Awaited<ReturnType<CoreStoragePort['listShares']>>{
   const params=actor.role==='admin'?[]:[actor.id],where=actor.role==='admin'?'':'WHERE r.owner_user_id=?';
-  const rows=db.all(`SELECT r.id,r.public_token,r.title,r.scope,r.message_count,r.include_process,r.source_session_id,r.created_at,r.expires_at,r.revoked_at,
-    s.id AS source_id,s.deleted_at AS source_deleted_at,s.title AS source_title,s.engine AS source_engine,s.owner_user_id AS source_owner_user_id,json_valid(r.snapshot_json) AS valid_snapshot,
-    CASE WHEN json_valid(r.snapshot_json) THEN json_extract(r.snapshot_json,'$.sourceEngine') ELSE NULL END AS saved_engine
+  const rows=db.all(`SELECT r.id,r.public_token,r.title,r.scope,r.include_process,r.source_session_id,r.created_at,r.expires_at,r.revoked_at,
+    s.id AS source_id,s.deleted_at AS source_deleted_at,s.title AS source_title,s.engine AS source_engine,s.owner_user_id AS source_owner_user_id,
+    CASE WHEN json_valid(r.snapshot_json) THEN json_extract(r.snapshot_json,'$.sourceEngine') ELSE NULL END AS saved_engine,
+    CASE WHEN json_valid(r.snapshot_json) THEN CASE WHEN json_type(r.snapshot_json,'$.messages')='array' THEN json_array_length(r.snapshot_json,'$.messages')
+      ELSE r.message_count END ELSE r.message_count END AS snapshot_message_count,
+    CASE WHEN json_valid(r.snapshot_json) THEN CASE WHEN json_type(r.snapshot_json,'$.messages')='array' THEN
+      (SELECT COUNT(*) FROM json_each(r.snapshot_json,'$.messages') entry
+        WHERE json_extract(CASE WHEN entry.type='object' THEN entry.value ELSE '{}' END,'$.role')='assistant')
+      ELSE NULL END ELSE NULL END AS assistant_message_count
     FROM shared_records r LEFT JOIN sessions s ON s.id=r.source_session_id ${where} ORDER BY r.created_at DESC,r.id DESC LIMIT ? OFFSET ?`,[...params,limit,offset]);
   return ShareListResponseDtoSchema.parse({items:rows.map((r)=>{const visible=actor.role==='admin'||r.source_owner_user_id===actor.id||r.source_session_id&&visibleResource(db,actor,{kind:'session',id:r.source_session_id});
     const engine=r.saved_engine??(visible?r.source_engine:null);
-    return {id:r.id,publicToken:r.public_token,title:r.title,scope:r.scope,messageCount:r.message_count,includeProcess:r.include_process===1,
+    return {id:r.id,publicToken:r.public_token,title:r.title,scope:r.scope,messageCount:Number(r.snapshot_message_count),
+    ...(r.assistant_message_count===null?{}:{assistantMessageCount:Number(r.assistant_message_count)}),includeProcess:r.include_process===1,
     sourceSessionId:r.source_session_id,sourceSessionTitle:visible?r.source_title??null:null,
     sourceState:!r.source_id?'deleted':!visible?'unavailable':r.source_deleted_at!==null?'deleted':'available',
     sourceEngine:EngineIdSchema.safeParse(engine).success?engine:'codex',createdAt:r.created_at,
@@ -92,11 +99,12 @@ export function listShares(db:DB,actor:Actor,limit:number,offset:number):Awaited
     total:Number(db.get(`SELECT count(*) AS count FROM shared_records r ${where}`,params)?.count)});
 }
 export function publicShare(db:DB,token:string):Awaited<ReturnType<CoreStoragePort['readPublicShare']>>{
-  const row=db.get(`SELECT title,message_count,created_at,expires_at,revoked_at,snapshot_version,length(CAST(snapshot_json AS BLOB)) AS bytes FROM shared_records WHERE public_token=?`,[token]);
+  const row=db.get(`SELECT title,created_at,expires_at,revoked_at,snapshot_version,length(CAST(snapshot_json AS BLOB)) AS bytes FROM shared_records WHERE public_token=?`,[token]);
   if(!row)return {state:'not_found'};
   const state=getShareManagementStatus({expiresAt:row.expires_at,revokedAt:row.revoked_at},Date.now());if(state!=='active')return {state};
   if(Number(row.bytes)>SHARE_SNAPSHOT_BYTES_MAX||row.snapshot_version!==1)return {state:'unreadable'};
   const body=db.get('SELECT snapshot_json FROM shared_records WHERE public_token=?',[token]);if(!body)deny('STORAGE_UNAVAILABLE');
-  try{return {state:'active',title:row.title,messageCount:row.message_count,createdAt:row.created_at,expiresAt:row.expires_at,snapshot:readShareSnapshot(row.snapshot_version,String(body.snapshot_json))};}
+  try{const snapshot=readShareSnapshot(row.snapshot_version,String(body.snapshot_json));
+    return {state:'active',title:row.title,messageCount:snapshot.messages.length,createdAt:row.created_at,expiresAt:row.expires_at,snapshot};}
   catch{return {state:'unreadable'};}
 }

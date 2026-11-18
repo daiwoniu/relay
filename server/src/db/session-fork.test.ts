@@ -29,6 +29,7 @@ test('分支事务写盘失败后补偿内存中的会话和消息', () => {
   const db = {
     exec: (sql: string) => operations.push(sql),
     run: (sql: string) => operations.push(sql),
+    all: () => [],
     get: (sql: string) => {
       operations.push(sql);
       if (sql.startsWith('SELECT updated_at')) return { updated_at: 100, message_revision: 0 };

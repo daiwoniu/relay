@@ -2,6 +2,8 @@ import Tooltip from '../ui/Tooltip';
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import MessageAttachmentList from './MessageAttachmentList';
+import ProcessFileList from './ProcessFileList';
+import { getProcessFileResources } from './process-file-resources';
 import { formatFlowTime, getFlowTimes, canLinkFlowNode, getFlowTravelRoute } from './process-flow-time';
 import { createFlowTravelController } from './process-flow-travel';
 import type { ProcessNarrativeStatus } from './process-timeline';
@@ -14,6 +16,7 @@ import type { MessageOutcome } from '../../generated/relay-contracts';
 import ExecutionStatusIcon from '../ui/ExecutionStatusIcon';
 import ProcessActionIcon from './ProcessActionIcon';
 import { resetFlowCategoryExpansion, hasFlowTextSelection } from './process-flow-input';
+import { getSubAgentActivityStepInfo, hasSubAgentReportReference } from './sub-agent-activity';
 
 interface Props {
   toolbarTarget?: HTMLDivElement | null;
@@ -28,7 +31,7 @@ interface Props {
   finalContent?: string;
   finalRecordedAt?: number;
   answeredIds?: Set<string>;
-  renderDetail: (step: ProcessStep) => ReactNode;
+  renderDetail: (step: ProcessStep, hasFilePreview?: boolean) => ReactNode;
 }
 
 const stateSummary = (...counts: number[]) => counts.map((count, index) => count ? `${count} ${['项待完成', '项失败', '项未确认', '项停止'][index]}` : '').filter(Boolean).join(' · ');
@@ -42,8 +45,11 @@ const FlowNodeCard = memo(function FlowNodeCard({ node, context, renderDetail, c
   const reportedDuration = node.step?.details.durationMs;
   const duration = times.duration ?? (node.state !== 'running' && node.state !== 'waiting' && typeof reportedDuration === 'number' && Number.isFinite(reportedDuration) && reportedDuration >= 0 ? reportedDuration / 1000 : undefined);
   const hint = categoryMode ? '' : node.hint || '';
-  const subtitle = categoryMode ? node.text ? node.subtitle : node.hint || '查看本次记录' : hint && node.subtitle.endsWith(` · ${hint}`) ? node.subtitle.slice(0, -hint.length - 3) : node.subtitle;
+  const activity = node.step?.type === 'subAgentActivity' ? getSubAgentActivityStepInfo(node.step.details) : undefined;
+  const canExpand = !activity || activity.expandable || Boolean(context.canReadSubAgentReports && !context.readOnly && node.step && hasSubAgentReportReference(node.step));
+  const subtitle = categoryMode ? activity ? node.subtitle : node.text ? node.subtitle : node.hint || '查看本次记录' : hint && node.subtitle.endsWith(` · ${hint}`) ? node.subtitle.slice(0, -hint.length - 3) : node.subtitle;
   const placeholder = node.id.startsWith('missing:');
+  const files = useMemo(() => node.step ? getProcessFileResources(node.step, context) : [], [node.step, context.projectPath, context.readOnly]);
   const placeholderTitle = context.readOnly ? '分享上下文提示' : '历史上下文提示';
   const placeholderDescription = context.readOnly ? '分享未包含关联输入' : '历史窗口未包含原始输入';
   const icon = placeholder ? 'system' : /approval/.test(String(node.step?.details.interactionKind)) ? 'approval' : undefined;
@@ -63,18 +69,19 @@ const FlowNodeCard = memo(function FlowNodeCard({ node, context, renderDetail, c
     {!bodyOnly && <>
     {showTime && !categoryMode && times.first !== undefined && <Tooltip content={`首次记录时间 · ${formatFlowTime(times.first, undefined, true)}（本地时区）`} asChild><time className="flow-node__time" dateTime={new Date(times.first).toISOString()}>{formatFlowTime(times.first)}</time></Tooltip>}
     {!categoryMode && <div className="flow-node__rail" data-flow-style={connected ? describeFlowCapability(nextNode!).family : appearance} data-flow-end={connected ? undefined : 'true'} aria-hidden="true"><span className="flow-node__line" /><span className="flow-node__arrow" /><span className="flow-node__dot" /></div>}
-    <button type="button" className="flow-node__summary" disabled={placeholder} aria-expanded={placeholder ? undefined : expanded} onClick={toggle}>
+    <button type="button" className="flow-node__summary" disabled={placeholder || !canExpand} aria-expanded={placeholder || !canExpand ? undefined : expanded} onClick={toggle}>
       <Tooltip content={placeholder ? '历史上下文' : categoryTitle} asChild><span className="flow-node__icon"><ProcessActionIcon kind={icon} action={['file', 'search'].includes(appearance) ? node.title : appearance} size={16} /></span></Tooltip>
-      <span className="flow-node__body"><Tooltip content={placeholder ? placeholderTitle : node.title} asChild><span className="flow-node__title">{node.sequence > 0 && <span className="flow-node__number" aria-label={`第 ${node.sequence} 步`}>{String(node.sequence).padStart(2, '0')}</span>}{placeholder ? placeholderTitle : node.title}</span></Tooltip><Tooltip content={placeholder ? placeholderDescription : categoryMode ? subtitle : node.subtitle} asChild><span className="flow-node__subtitle">{placeholder ? placeholderDescription : subtitle}</span></Tooltip>{hint && <Tooltip content={hint} asChild><span className="flow-node__hint">{hint}</span></Tooltip>}</span>
-      <span className="flow-node__meta"><span className="flow-node__status">{placeholder ? context.readOnly ? '未包含' : '未加载' : <><ExecutionStatusIcon status={status} />{getFlowStatusLabel(node)}</>}</span>{source && <Tooltip content={source} asChild><span className="flow-node__source">{source}</span></Tooltip>}{!categoryMode && duration !== undefined && <Tooltip content="按已记录回执计算的耗时" asChild><span className="flow-node__duration">{duration.toFixed(2)} 秒</span></Tooltip>}</span>
+      <span className="flow-node__body"><Tooltip overflowOnly content={placeholder ? placeholderTitle : node.title} asChild><span className="flow-node__title">{node.sequence > 0 && <span className="flow-node__number" aria-label={`第 ${node.sequence} 步`}>{String(node.sequence).padStart(2, '0')}</span>}{placeholder ? placeholderTitle : node.title}</span></Tooltip><Tooltip overflowOnly content={placeholder ? placeholderDescription : subtitle} asChild><span className="flow-node__subtitle">{placeholder ? placeholderDescription : subtitle}</span></Tooltip>{hint && <Tooltip overflowOnly content={hint} asChild><span className="flow-node__hint">{hint}</span></Tooltip>}</span>
+      <span className="flow-node__meta"><span className="flow-node__status">{placeholder ? context.readOnly ? '未包含' : '未加载' : <>{(!activity || node.state === 'failed') && <ExecutionStatusIcon status={status} />}{getFlowStatusLabel(node)}</>}</span>{source && <Tooltip overflowOnly content={source} asChild><span className="flow-node__source">{source}</span></Tooltip>}{!categoryMode && !activity && duration !== undefined && <Tooltip content="按已记录回执计算的耗时" asChild><span className="flow-node__duration">{duration.toFixed(2)} 秒</span></Tooltip>}</span>
     </button>
     </>}
     {Boolean(node.attachments?.length) && <div className="flow-node__attachments"><MessageAttachmentList attachments={node.attachments} readOnly={context.readOnly} /></div>}
-    {(bodyOnly || expanded) && <div className="flow-node__detail">
-      {bodyOnly && node.hint && <div className="flow-node__text">{node.hint}</div>}
+    {canExpand && (bodyOnly || expanded) && <div className="flow-node__detail">
+      {bodyOnly && node.hint && files.length === 0 && <div className="flow-node__text">{node.hint}</div>}
       {!categoryMode && (times.first !== undefined || times.completed !== undefined) && <div className="flow-node__timing">{times.first !== undefined && <>首次记录：{formatFlowTime(times.first)}</>}{times.completed !== undefined && <> · 完成回执：{formatFlowTime(times.completed)}</>}{times.duration !== undefined && <> · 耗时（按回执）：{times.duration.toFixed(2)} 秒</>}</div>}
-      {(!categoryMode || node.text || !node.step) && <div className="flow-node__text">{node.text || node.subtitle}</div>}
-      {node.step && renderDetail(node.step)}
+      {!activity && (!categoryMode || node.text || !node.step) && (files.length === 0 || node.text) && <div className="flow-node__text">{node.text || node.subtitle}</div>}
+      {files.length > 0 && <ProcessFileList files={files} />}
+      {node.step && renderDetail(node.step, files.length > 0)}
     </div>}
     {Boolean(node.children?.length) && <div className="flow-node__children">
       <button type="button" className="flow-children-toggle" aria-expanded={childrenExpanded} onClick={() => { context.ui.expanded[childKey] = !childrenExpanded; setChildrenChoice(!childrenExpanded); }}>{childrenExpanded ? '−' : '+'} {node.children!.length} 个子任务 · 引擎明确关联</button>
@@ -108,9 +115,9 @@ function FlowCapabilityCard({ bucket, context, renderDetail, section = 'card', o
     {section === 'body' && <div className="flow-branch__connection" aria-hidden="true" style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }}><span style={{ gridColumn: anchorColumn }} /></div>}
     {section !== 'body' && <button type="button" className="flow-capability__heading" aria-expanded={open} onClick={onToggle}>
       <span className="flow-capability__toggle" aria-hidden="true"><ProcessActionIcon action={appearance} kind={/approval/.test(String(bucket.nodes[0].step?.details.interactionKind)) ? 'approval' : undefined} size={16} />{open ? '▾' : '▸'}</span>
-      <span className="flow-capability__identity"><Tooltip content={bucket.label} asChild><strong>{bucket.label}</strong></Tooltip>{bucket.detail && <Tooltip content={bucket.detail} asChild><small>{bucket.detail}</small></Tooltip>}{bucket.summary && <Tooltip content={bucket.summary} asChild><small className="flow-capability__operations">{bucket.summary}</small></Tooltip>}</span>
+      <span className="flow-capability__identity"><Tooltip overflowOnly content={bucket.label} asChild><strong>{bucket.label}</strong></Tooltip>{bucket.detail && <Tooltip overflowOnly content={bucket.detail} asChild><small>{bucket.detail}</small></Tooltip>}{bucket.summary && <Tooltip overflowOnly content={bucket.summary} asChild><small className="flow-capability__operations">{bucket.summary}</small></Tooltip>}</span>
       <span className="flow-capability__count">{bucket.nodes.length} {['消息', '记录'].includes(bucket.unit) ? '条' : '次'}{bucket.unit}</span>
-      {summary && <Tooltip content={summary} asChild><small className={`flow-capability__state${failed ? ' flow-capability__state--failed' : active.length ? ' flow-capability__state--active' : ''}`}>{summary}</small></Tooltip>}
+      {summary && <Tooltip overflowOnly content={summary} asChild><small className={`flow-capability__state${failed ? ' flow-capability__state--failed' : active.length ? ' flow-capability__state--active' : ''}`}>{summary}</small></Tooltip>}
     </button>}
     {section !== 'header' && open && <div className="flow-capability__occurrences">
       {start > 0 && <button type="button" className="flow-more" onClick={() => setWindow({ start: Math.max(0, start - 20), limit: limit + Math.min(20, start) })}>展开此前 {Math.min(20, start)} 次记录</button>}
@@ -191,8 +198,8 @@ function FlowBranch({ group, context, renderDetail, abilityGroup = false, sectio
     {section === 'body' && <div className="flow-branch__connection" aria-hidden="true" style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }}><span style={{ gridColumn: anchorColumn }} /></div>}
     {section === 'header' && <button type="button" className="flow-branch__heading" aria-expanded={expanded} onClick={onToggle}>
       <span className="flow-branch__toggle" aria-hidden="true"><ProcessActionIcon action={appearance} size={16} />{expanded ? '▾' : '▸'}</span>
-      <Tooltip content={group.title} asChild><span className="flow-branch__name">{title[0]}{title.length > 1 && <small className="flow-branch__location"> · {title.slice(1).join(' · ')}</small>}</span></Tooltip><Tooltip content={`${nested ? `${categories.length} 个${appearance === 'skill' ? '技能' : '类别'} · ` : ''}${capabilities.length} 个${appearance === 'skill' ? '能力' : '对象'} · ${group.nodes.length} 条记录`} asChild><span className="flow-branch__count">{nested ? `${categories.length}${appearance === 'skill' ? '技能' : '类'}` : `${capabilities.length}${appearance === 'skill' ? '能力' : '对象'}`} · {group.nodes.length}条</span></Tooltip>
-      {summary !== '已结束' && <Tooltip content={summary} asChild><span className="flow-branch__state">{active.length > 0 && <ExecutionStatusIcon status={active.some(node => node.state === 'running') ? 'processing' : 'awaiting_action'} />}<span>{summary.replace(/项/g, '')}</span></span></Tooltip>}
+      <Tooltip overflowOnly content={group.title} asChild><span className="flow-branch__name">{title[0]}{title.length > 1 && <small className="flow-branch__location"> · {title.slice(1).join(' · ')}</small>}</span></Tooltip><Tooltip content={`${nested ? `${categories.length} 个${appearance === 'skill' ? '技能' : '类别'} · ` : ''}${capabilities.length} 个${appearance === 'skill' ? '能力' : '对象'} · ${group.nodes.length} 条记录`} asChild><span className="flow-branch__count">{nested ? `${categories.length}${appearance === 'skill' ? '技能' : '类'}` : `${capabilities.length}${appearance === 'skill' ? '能力' : '对象'}`} · {group.nodes.length}条</span></Tooltip>
+      {summary !== '已结束' && <Tooltip overflowOnly content={summary} asChild><span className="flow-branch__state">{active.length > 0 && <ExecutionStatusIcon status={active.some(node => node.state === 'running') ? 'processing' : 'awaiting_action'} />}<span>{summary.replace(/项/g, '')}</span></span></Tooltip>}
     </button>}
     {section === 'body' && <div className="flow-capability-sections">
       {capabilityStart > 0 && <button type="button" className="flow-more" onClick={() => setWindow({ start: Math.max(0, capabilityStart - 40), limit: limit + Math.min(40, capabilityStart) })}>展开此前汇总项</button>}
@@ -225,7 +232,7 @@ function FlowActivity({ title, detail, waiting, motion, steps, timeline, finalCo
   }, [motion, settled]);
   return <div className={`process-flow__activity${waiting ? ' process-flow__activity--waiting' : ''}`}>
     {settled ? <ExecutionStatusIcon status={outcome === 'interrupted' ? 'interrupted' : outcome || 'completed'} /> : <span className="process-flow__live-dot" aria-hidden="true" />}
-    <div className="process-flow__activity-body"><Tooltip content={title} asChild><div role="status" className="process-flow__activity-title">{title}</div></Tooltip><Tooltip content={detail} asChild><div className="process-flow__activity-detail">{detail}</div></Tooltip></div>
+    <div className="process-flow__activity-body"><Tooltip overflowOnly content={title} asChild><div role="status" className="process-flow__activity-title">{title}</div></Tooltip><Tooltip overflowOnly content={detail} asChild><div className="process-flow__activity-detail">{detail}</div></Tooltip></div>
     {!settled && <span className="process-flow__quiet" aria-hidden={quietSeconds < 5}>{quietSeconds >= 5 ? `${quietSeconds} 秒无新事件` : '\u00a0'}</span>}
     <span className="process-flow__activity-action">{action}</span>
   </div>;
@@ -381,7 +388,7 @@ export default function ProcessFlow({ context, steps, timeline, mode, streaming,
   const caption = mode === 'time' ? '首次记录顺序 · 非依赖、并发或完成顺序' : `${grouping === 'action' ? '按能力类别' : grouping === 'tool' ? '按执行通道' : '按项目/仓库'}汇总 · 展开查看每次记录`;
   const header = <div className="process-flow__toolbar-content" data-flow-motion={headerMotion ? 'on' : 'off'}>
     {mode === 'category' && <select className="process-flow__group-select" aria-label="查看方式" value={grouping} onChange={event => { const value = event.target.value as FlowGrouping; resetFlowCategoryExpansion(context.ui); context.ui.grouping = value; setOpenGroups({}); setGrouping(value); setWindows({}); }}><option value="action">按能力类别</option><option value="tool">按执行通道</option><option value="resource">按项目/仓库</option></select>}
-    <div className="process-flow__caption"><Tooltip content={caption} asChild><span>{caption}</span></Tooltip></div>
+    <div className="process-flow__caption"><Tooltip overflowOnly content={caption} asChild><span>{caption}</span></Tooltip></div>
     <FlowActivity title={streaming ? activityTitle : terminal?.title || ''} detail={streaming ? activityDetail : terminal?.subtitle || ''} settled={!streaming} outcome={outcome} waiting={streaming && Boolean(waiting)} motion={headerMotion} steps={steps} timeline={timeline} finalContent={finalContent} runtimeState={runtimeStatus?.state} action={active.length > 0 ? <button type="button" onClick={goToActive}>{streaming ? '回到当前' : '查看待答'}</button> : undefined} />
   </div>;
   return <div ref={rootRef} className={`process-flow process-flow--${mode}`} data-flow-motion={motion && streaming ? 'on' : 'off'} aria-label={mode === 'time' ? '时间流' : '分类流'} onClickCapture={event => {

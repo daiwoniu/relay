@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState, type Dispatch, type RefObject, type SetStateAction } from 'react';
+import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type Dispatch, type RefObject, type SetStateAction } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
@@ -31,6 +31,8 @@ import {
 const PdfDocumentPreview = lazy(() => import('./PdfDocumentPreview'));
 const WordDocumentPreview = lazy(() => import('./WordDocumentPreview'));
 const SpreadsheetPreview = lazy(() => import('./SpreadsheetPreview'));
+const ArchivePreview = lazy(() => import('./ArchivePreview'));
+const MediaFilePreview = lazy(() => import('./MediaFilePreview'));
 const MarkdownFilePreview = lazy(() => import('./MarkdownFilePreview'));
 
 type MobileInfo = 'force-access' | 'file-info' | null;
@@ -99,6 +101,11 @@ function FileMetadataContent({ filePath, metadata, loading, error, copiedPath, o
 }
 
 interface RightPanelContentProps {
+  settingsOpen?: boolean;
+  settingsPanel?: ReactNode;
+  onOpenSettings?: () => void;
+  onCloseSettings?: () => void;
+  updating?: boolean;
   tabs: RightPanelTab[];
   activeTab: RightPanelTab | undefined;
   activeTabId: string | null;
@@ -133,6 +140,7 @@ interface RightPanelContentProps {
 }
 
 export default function RightPanelContent({
+  settingsOpen = false, settingsPanel, onOpenSettings, onCloseSettings, updating = false,
   tabs,
   activeTab,
   activeTabId,
@@ -275,7 +283,7 @@ export default function RightPanelContent({
           {tabs.map((tab) => (
             <div key={tab.id} ref={tab.id === activeTabId ? selectedTabRef : undefined} className="workspace-preview-tab-wrap">
               <div className={`workspace-preview-tab group${tab.id === activeTabId ? ' is-active theme-region-section' : ''}`}>
-                <Tooltip content={getFileName(tab.title)} disabled={isMobile} placement="bottom" className="workspace-preview-tab-label">
+                <Tooltip overflowOnly content={getFileName(tab.title)} disabled={isMobile} placement="bottom" className="workspace-preview-tab-label">
                 <button
                   type="button"
                   aria-pressed={tab.id === activeTabId}
@@ -301,6 +309,7 @@ export default function RightPanelContent({
           ))}
         </div>
         <div className="workspace-preview-panel-actions">
+          {onOpenSettings && <IconActionButton label="预览设置" variant="neutral" tooltip={!isMobile} aria-pressed={settingsOpen} onClick={settingsOpen ? onCloseSettings : onOpenSettings} className="workspace-preview-panel-action"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M10 3h4l.6 2.4 1.3.8 2.4-.7 2 3.5-1.8 1.7v2.6l1.8 1.7-2 3.5-2.4-.7-1.3.8L14 21h-4l-.6-2.4-1.3-.8-2.4.7-2-3.5 1.8-1.7v-2.6L3.7 9l2-3.5 2.4.7 1.3-.8L10 3Z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round"/><circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="1.5"/></svg></IconActionButton>}
           {isMobile ? (
             <IconActionButton
               label="返回会话并保留预览文件"
@@ -358,7 +367,9 @@ export default function RightPanelContent({
         </div>
       </div>
 
-      <div className="flex-1 flex flex-col overflow-hidden">
+      <div className="preview-settings-layout">
+      {settingsOpen && !isMobile && <aside className="preview-settings-sidebar">{settingsPanel}</aside>}
+      <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
         {!hasTabs ? (
           <PreviewState title="还没有打开文件" description="在会话消息中点击文件链接，即可在这里预览内容。" />
         ) : !activeTab ? null : activeTab.loading ? (
@@ -367,7 +378,7 @@ export default function RightPanelContent({
           <>
             <div className="workspace-preview-context theme-region-section">
               <div className="workspace-preview-identity">
-                <Tooltip content={activeTab.title} disabled={isMobile} placement="bottom" className="workspace-preview-path-hint">
+                <Tooltip overflowOnly content={activeTab.title} disabled={isMobile} placement="bottom" className="workspace-preview-path-hint">
                 <input type="text" readOnly value={activeTab.title} onFocus={(event) => event.currentTarget.select()} className="workspace-preview-path" aria-label="文件路径" />
                 </Tooltip>
               </div>
@@ -413,14 +424,16 @@ export default function RightPanelContent({
               </div>
             </div>
             {previewModeControl}
+            {updating && <div className="workspace-preview-git-status" role="status">正在更新预览…</div>}
             {!showGitDiff && gitDiffError?.tabId === activeTab.id && <div className="workspace-preview-git-status" role="status">Git 变更暂不可用<button type="button" onClick={() => onRefresh(activeTab)}>重试</button></div>}
             <div ref={htmlPreviewScrollRef} className="workspace-preview-viewport flex-1 min-h-0 overflow-auto" role="region" aria-label="文件内容" tabIndex={0}>
-              {activeTab.textPreviewTruncated && !activeTab.previewError && <div className="workspace-preview-notice is-warning is-compact" role="status">文件 {formatFileMetadataSize(activeTab.contentSize ?? activeTab.fileMetadata?.size ?? NaN)}，超过 3 MB；仅显示开头（最多 100 行 / 64 KB）。</div>}
+              {activeTab.textPreviewTruncated && !activeTab.previewError && <div className="workspace-preview-notice is-warning is-compact" role="status">文件 {formatFileMetadataSize(activeTab.contentSize ?? activeTab.fileMetadata?.size ?? NaN)}，{activeTab.textPreviewTruncationReason === 'output-size' ? '转换后的内容超过输出保护上限，请下载查看完整文件' : '超过当前预览容量'}；仅显示开头（最多 100 行 / 64 KB）。{activeTab.textPreviewTruncationReason !== 'output-size' && <button type="button" onClick={onOpenSettings}>调整预览容量</button>}</div>}
               {activeTab.previewError ? (
                 <PreviewState
                   tone={activeTab.forceAccessAvailable ? 'warning' : 'danger'}
                   title="文件预览失败"
                   description={activeTab.previewError}
+                  action={/上限|过大|预览容量/.test(activeTab.previewError) && onOpenSettings ? <button type="button" className="workspace-preview-state__button" onClick={onOpenSettings}>调整预览容量</button> : undefined}
                 />
               ) : showGitDiff && gitDiffError?.tabId === activeTab.id ? (
                 <PreviewState tone="danger" title="Git 变更不可用" description={gitDiffError.message} action={<button type="button" className="workspace-preview-state__button" onClick={() => onRefresh(activeTab)}>刷新重试</button>} />
@@ -437,12 +450,18 @@ export default function RightPanelContent({
                     return <div key={index} className={`git-diff-row ${line[0] === '+' ? 'added' : line[0] === '-' ? 'removed' : hunk ? 'hunk' : ''}`}>{hunk ? formatGitDiffHunkHeader(line, newFileDiff) : line}</div>;
                   })}
                 </div>
+              ) : activeTab.mediaPreview ? (
+                <Suspense fallback={<PreviewState tone="loading" title="正在加载播放器" />}>
+                  <MediaFilePreview key={activeTab.mediaPreview.previewUrl} media={activeTab.mediaPreview} title={getFileName(activeTab.title)} downloading={downloading} onDownload={() => onDownload(activeTab)} />
+                </Suspense>
               ) : activeTab.documentPreview ? (
               <Suspense fallback={<PreviewState tone="loading" title="正在加载文档预览" />}>
                   {activeTab.documentPreview.type === 'pdf-document' ? (
                   <PdfDocumentPreview document={activeTab.documentPreview} downloading={downloading} onDownload={() => onDownload(activeTab)} />
                   ) : activeTab.documentPreview.type === 'word-document' ? (
                     <WordDocumentPreview document={activeTab.documentPreview} />
+                  ) : activeTab.documentPreview.type === 'archive' ? (
+                    <ArchivePreview key={activeTab.id} archive={activeTab.documentPreview} />
                   ) : (
                     <SpreadsheetPreview document={activeTab.documentPreview} sourcePath={activeTab.sourcePath || activeTab.title} accessToken={activeTab.fileAccessToken} requestSignal={requestSignal} />
                   )}
@@ -498,6 +517,8 @@ export default function RightPanelContent({
         )}
       </div>
 
+      </div>
+      <Modal open={settingsOpen && isMobile} onClose={() => onCloseSettings?.()} labelledBy="mobile-preview-settings-title" containerClassName="!items-end !p-0" contentClassName="preview-settings-mobile"><h2 id="mobile-preview-settings-title" className="sr-only">预览设置</h2>{settingsPanel}</Modal>
       <Modal open={mobileInfo !== null} onClose={() => setMobileInfo(null)} labelledBy="preview-mobile-info-title" containerClassName={isMobile ? '!items-end !p-0' : ''} contentClassName={`w-full border border-[var(--color-overlay-border)] bg-[var(--color-overlay-surface)] p-4 shadow-[var(--color-overlay-shadow)] ${isMobile ? 'max-w-none rounded-t-2xl border-b-0' : 'max-w-sm rounded-2xl'}`}>
         <div className="mb-3 flex items-center justify-between gap-3">
           <div id="preview-mobile-info-title" className="text-sm font-medium text-[var(--color-text)]">{mobileInfo === 'file-info' ? '文件信息' : '临时授权说明'}</div>

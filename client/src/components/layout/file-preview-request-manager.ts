@@ -32,16 +32,18 @@ export class FilePreviewRequestManager {
     this.releaseObjectUrl = releaseObjectUrl;
   }
 
-  begin(tabId: string, options: { retainAccessToken?: boolean } = {}): { generation: number; signal: AbortSignal } {
+  begin(tabId: string, options: { retainAccessToken?: boolean; retainObjectUrls?: boolean } = {}): { generation: number; signal: AbortSignal } {
     const previous = this.entries.get(tabId);
     const generation = (this.generations.get(tabId) ?? 0) + 1;
     this.generations.set(tabId, generation);
     const retainedAccessToken = options.retainAccessToken ? previous?.accessToken : undefined;
+    const retainedUrls = options.retainObjectUrls ? new Set(previous?.objectUrls) : new Set<string>();
+    if (previous && options.retainObjectUrls) previous.objectUrls.clear();
     if (previous) this.disposeEntry(previous, { releaseAccessToken: !options.retainAccessToken });
     const entry: RequestEntry = {
       generation,
       controller: new AbortController(),
-      objectUrls: new Set<string>(),
+      objectUrls: retainedUrls,
       ...(retainedAccessToken ? { accessToken: retainedAccessToken } : {}),
     };
     this.entries.set(tabId, entry);
@@ -51,6 +53,14 @@ export class FilePreviewRequestManager {
   isCurrent(tabId: string, generation: number): boolean {
     const entry = this.entries.get(tabId);
     return Boolean(entry && entry.generation === generation && !entry.controller.signal.aborted);
+  }
+
+  replaceObjectUrls(tabId: string, generation: number, nextUrl?: string): void {
+    const entry = this.entries.get(tabId);
+    if (!entry || entry.generation !== generation) return;
+    for (const url of entry.objectUrls) if (url !== nextUrl) this.releaseObjectUrl(url);
+    entry.objectUrls.clear();
+    if (nextUrl) entry.objectUrls.add(nextUrl);
   }
 
   getSignal(tabId: string): AbortSignal | undefined {
@@ -100,4 +110,5 @@ export function disposeFilePreviewTab(tab: RightPanelTab): void {
   const managed = filePreviewRequestManager.dispose(tab.id);
   if (!managed && tab.fileAccessToken) revokeAccessToken(tab.fileAccessToken);
   if (!managed && tab.documentPreview?.type === 'pdf-document') URL.revokeObjectURL(tab.documentPreview.previewUrl);
+  if (!managed && tab.mediaPreview) URL.revokeObjectURL(tab.mediaPreview.previewUrl);
 }

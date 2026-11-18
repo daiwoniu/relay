@@ -11,22 +11,23 @@ async function loadPdf(buffer: Buffer): Promise<PDFDocument> {
   }
 }
 
-export async function inspectPdf(buffer: Buffer): Promise<Omit<PdfDocumentPreviewDto, 'size'>> {
+export async function inspectPdf(buffer: Buffer, maxPages = MAX_PDF_PREVIEW_PAGES): Promise<Omit<PdfDocumentPreviewDto, 'size'>> {
   const document = await loadPdf(buffer);
   const totalPages = document.getPageCount();
   if (totalPages < 1) throw normalizeDocumentPreviewError(new Error('PDF has no pages'));
-  const displayedPages = Math.min(totalPages, MAX_PDF_PREVIEW_PAGES);
+  const displayedPages = Math.min(totalPages, maxPages);
   return { type: 'pdf-document', totalPages, displayedPages, truncated: totalPages > displayedPages };
 }
 
 export async function createPdfPreview(
   buffer: Buffer,
   maxOutputSize = MAX_PDF_PREVIEW_OUTPUT_SIZE,
+  maxPages = MAX_PDF_PREVIEW_PAGES,
 ): Promise<{ bytes: Uint8Array; totalPages: number; displayedPages: number }> {
   const source = await loadPdf(buffer);
   const totalPages = source.getPageCount();
   if (totalPages < 1) throw normalizeDocumentPreviewError(new Error('PDF has no pages'));
-  const displayedPages = Math.min(totalPages, MAX_PDF_PREVIEW_PAGES);
+  const displayedPages = Math.min(totalPages, maxPages);
   const target = await PDFDocument.create();
   const copiedPages = await target.copyPages(source, Array.from({ length: displayedPages }, (_, index) => index));
   for (const page of copiedPages) {

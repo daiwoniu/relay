@@ -78,6 +78,7 @@ export default function ChatHeader({
             disabled={isMobile || renaming}
             placement="bottom"
             title="会话详情"
+            maxWidth="min(26rem, calc(100vw - 1rem))"
             content={sessionDetails}
           >
             <div className="workspace-header__title-group">

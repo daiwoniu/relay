@@ -1,3 +1,4 @@
+import { formatDate, formatDateTime } from '../../utils/date-display.ts';
 import Tooltip from '../ui/Tooltip';
 import FailureNotice from '../ui/FailureNotice';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type FormEvent } from 'react';
@@ -10,6 +11,7 @@ import NewsPreferences, { type NewsRuleOptions } from './NewsPreferences';
 import { canTranslateNewsInBrowser, translateNewsInBrowser, type ChineseNewsText } from './news-browser-translation';
 import { TOPICS } from './news-topics';
 import '../../styles/news.css';
+import { tracker } from '../../analytics/tracker';
 
 const CATEGORIES = [
   ['all', '全部'], ['models_products', '模型与产品'], ['research', '研究'],
@@ -21,7 +23,7 @@ const DAY_MS = 86_400_000;
 const newsTimeBucket = () => Math.floor(Date.now() / 30_000) * 30_000;
 
 function readableDate(time: number) {
-  return new Intl.DateTimeFormat('zh-CN', { month: 'long', day: 'numeric', weekday: 'long' }).format(time);
+  return `${formatDate(time)} ${new Intl.DateTimeFormat('zh-CN', { weekday: 'long' }).format(time)}`;
 }
 
 type NewsDisplayItem = NewsPublicEventDto | NewsMemberPageDto['items'][number];
@@ -48,21 +50,21 @@ function NewsCard({ item, category, authenticated, canTranslate, onFollow, onMut
       <span>{item.sourceName}</span>
       {item.sourceId.startsWith('social-') && item.originalPublisher && <><span aria-hidden="true">·</span><span>作者 {item.originalPublisher}</span></>}
       <span aria-hidden="true">·</span>
-      <Tooltip content={new Date(item.publishedAt).toLocaleString('zh-CN')} asChild><time dateTime={new Date(item.publishedAt).toISOString()}>{relativeNewsTime(item.publishedAt)}</time></Tooltip>
+      <Tooltip content={formatDateTime(item.publishedAt, { seconds: true })} asChild><time dateTime={new Date(item.publishedAt).toISOString()}>{relativeNewsTime(item.publishedAt)}</time></Tooltip>
       {item.timeIsFallback && <Tooltip content="来源未提供准确发布时间" asChild><span>时间待核对</span></Tooltip>}
     </div>
-    <h3><a href={item.url} target="_blank" rel="noopener noreferrer">{visible.title}</a></h3>
+    <h3><a href={item.url} target="_blank" rel="noopener noreferrer" onClick={()=>tracker.track('news_click',{newsId:item.id})}>{visible.title}</a></h3>
     {visible.description && <p className="news-card-description">{visible.description}</p>}
     {translation && !showOriginal && <span className="news-translation-note">浏览器本机翻译 · 请以原文为准</span>}
     {translationError && <p className="news-translation-error" role="status"><FailureNotice error={translationError} /></p>}
     <div className="news-card-footer">
       <span className="news-tag news-tag--category">{category}</span>
       {item.topicIds.slice(0, 2).map((tag) => <span className="news-tag" key={tag}>{TOPICS.find(([id]) => id === tag)?.[1] ?? tag}</span>)}
-      {item.sources.length > 1 && <details className="news-source-count"><summary>{item.sources.length} 个出处</summary><div>{item.sources.map((source) => <a key={source.id} href={source.url} target="_blank" rel="noopener noreferrer">{source.sourceName}</a>)}</div></details>}
+      {item.sources.length > 1 && <details className="news-source-count"><summary>{item.sources.length} 个出处</summary><div>{item.sources.map((source) => <a key={source.id} href={source.url} target="_blank" rel="noopener noreferrer" onClick={()=>tracker.track('news_click',{newsId:source.id})}>{source.sourceName}</a>)}</div></details>}
       {'matchReason' in item && item.matchReason && <span className="news-match-reason">{item.matchReason}</span>}
       {item.language === 'en' && canTranslate && (translation ? <button type="button" onClick={() => setShowOriginal((value) => !value)}>{showOriginal ? '看中文' : '看原文'}</button> : <button type="button" onClick={() => void translate()} disabled={translating}>{translating ? '翻译中…' : '翻成中文'}</button>)}
       {authenticated && <><button type="button" onClick={() => onFollow(item)}>关注相关</button><button type="button" onClick={() => onMute(item)}>不感兴趣</button></>}
-      <a className="news-card-open" href={item.url} target="_blank" rel="noopener noreferrer">读原文 ↗</a>
+      <a className="news-card-open" href={item.url} target="_blank" rel="noopener noreferrer" onClick={()=>tracker.track('news_click',{newsId:item.id})}>读原文 ↗</a>
     </div>
   </article>;
 }

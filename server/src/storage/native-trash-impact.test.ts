@@ -28,10 +28,10 @@ function prepared() {
   const impact=(kind:'project'|'session'='project',id=project,userId='owner')=>store.readTrash({principal:principal(userId),name:'impact',input:{kind,id}});
   return {f,store,impact,cleanup:()=>{store.close();f.cleanup();}};
 }
-test('impact is a stable six-field projection, read-only and scoped to the target',()=>{
+test('impact is a stable projection including assistant count, read-only and scoped to the target',()=>{
   const p=prepared();try{
     const value=p.impact();
-    assert.deepEqual({...value,impactRevision:'revision'},{sessionCount:1,messageCount:1,shareCount:1,attachmentCount:0,releasableBytes:0,impactRevision:'revision'});
+    assert.deepEqual({...value,impactRevision:'revision'},{sessionCount:1,messageCount:1,assistantMessageCount:0,shareCount:1,attachmentCount:0,releasableBytes:0,impactRevision:'revision'});
     assert.match(value.impactRevision,/^[a-f0-9]{64}$/);assert.deepEqual(p.impact(),value);assert.deepEqual(p.impact('project',project,'admin'),value);
     p.f.mutate(`UPDATE messages SET content='unrelated change' WHERE id='other-message'`);assert.deepEqual(p.impact(),value);
     const output=JSON.stringify(value);for(const secret of ['private','owner','thread','auth-','D:/'])assert.ok(!output.includes(secret));
@@ -49,6 +49,14 @@ test('session impact requires the session owner, even when its parent belongs to
     p.f.mutate(`INSERT INTO project_members(project_id,user_id,role,can_view_sessions,created_at,updated_at) VALUES('${project}','other','manager',1,1,1)`);
     assert.throws(()=>p.impact('project',project,'other'),{code:'FORBIDDEN'});
     p.f.mutate("UPDATE users SET disabled_at=1 WHERE id='admin'");assert.throws(()=>p.impact('project',project,'admin'),{code:'FORBIDDEN'});
+  }finally{p.cleanup();}
+});
+
+test('impact counts assistant rows before metadata parsing, not revisions or process item quantities',()=>{
+  const p=prepared();try{
+    p.f.mutate(`UPDATE sessions SET message_revision=999 WHERE id='${session}';
+      INSERT INTO messages(id,session_id,role,content,items,created_at) VALUES('assistant-count','${session}','assistant','answer','[{"id":"one"},{"id":"two"}]',2)`);
+    assert.equal(p.impact().messageCount,2);assert.equal(p.impact().assistantMessageCount,1);
   }finally{p.cleanup();}
 });
 test('impact includes managed attachment references and bytes, never local source files',()=>{
@@ -131,7 +139,7 @@ test('Worker and HTTP expose only authenticated no-store impact DTOs, with stric
     const app=new Hono().route('/api/trash',createStoredTrashRouter({port,service})),url=`http://localhost:9081/api/trash/projects/${project}/impact`;
     assert.equal((await app.request(url)).status,401);
     const headers={cookie:serializeSessionCookie(token,Date.now()+600000,false)};
-    const response=await app.request(url,{headers});assert.equal(response.status,200);assert.equal(response.headers.get('cache-control'),'private, no-store');assert.equal(Object.keys(await response.json()).length,6);
+    const response=await app.request(url,{headers});assert.equal(response.status,200);assert.equal(response.headers.get('cache-control'),'private, no-store');assert.equal(Object.keys(await response.json()).length,7);
     assert.equal((await app.request(url+'?path=secret',{headers})).status,400);
     assert.equal((await app.request(url.replace(project,'bad'),{headers})).status,400);
     await assert.rejects(port.readTrash({principal:principal(),name:'impact',input:{kind:'project',id:project,path:'injected'} as any}),{code:'INVALID_ARGUMENT'});

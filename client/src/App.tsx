@@ -6,6 +6,7 @@ import { OverlayProvider } from './components/ui/OverlayProvider';
 import { isPublicSharePath } from './components/sharing/public-share-route';
 import InitializationScreen from './components/system/InitializationScreen';
 import ErrorBoundary from './components/ErrorBoundary';
+import PageTracker from './analytics/PageTracker';
 
 const Layout = lazy(() => import('./components/layout/Layout'));
 const ChatView = lazy(() => import('./components/chat/ChatView'));
@@ -16,6 +17,8 @@ const ToolsPage = lazy(() => import('./components/tools/ToolsPage'));
 const NewsAdminPage = lazy(() => import('./components/news/NewsAdminPage'));
 const PasswordChangeRequired = lazy(() => import('./components/auth/PasswordChangeRequired'));
 const WorkspaceConsolePage = lazy(() => import('./components/workspace-console/WorkspaceConsolePage'));
+const PageHostingPage = lazy(() => import('./components/page-hosting/PageHostingPage'));
+const AnalyticsPage = lazy(() => import('./components/analytics/AnalyticsPage'));
 
 function ApplicationShellLoading() {
   return (
@@ -62,6 +65,7 @@ function App() {
   const isPublicShare = isPublicSharePath(location.pathname);
   return (
     <OverlayProvider>
+      <PageTracker />
       <ErrorBoundary fallback={<InitializationScreen stage="page" error="页面加载失败" onRetry={() => window.location.reload()} retryLabel="刷新页面" />}>
         <Suspense fallback={<RouteLoading />}>
           {location.pathname === '/tools' ? <ToolsPage /> : location.pathname === '/news' ? <NewsPage /> : isPublicShare ? (
@@ -72,8 +76,10 @@ function App() {
           ) : status === 'loading' || status === 'error' ? <AuthLoading error={status === 'error' ? initialError : undefined} onRetry={status === 'error' ? retryInitialCheck : undefined} /> : status === 'guest' ? <LoginPage /> : user?.mustChangePassword ? <PasswordChangeRequired /> : (
             <Routes>
               {user?.role === 'admin' && <Route path="/admin/news" element={<NewsAdminPage />} />}
+              {user?.role === 'admin' && <Route path="/admin/analytics" element={<AnalyticsPage />} />}
               <Route path="/" element={<Layout />}>
                 <Route index element={<ChatView />} />
+                {user?.role === 'admin' && <Route path="admin/page-hosting" element={<PageHostingPage />} />}
                 <Route path="admin/task-workbench" element={<WorkspaceConsolePage />} />
               </Route>
             </Routes>

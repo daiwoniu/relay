@@ -1,3 +1,5 @@
+import { usePreviewPreferences } from '../stores/preview-preferences';
+import { tracker } from '../analytics/tracker';
 import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { ApiError, AUTH_REQUIRED_EVENT } from '../api/client';
 import { getCurrentUser, login as loginRequest, logout as logoutRequest, type AuthUser } from '../api/auth';
@@ -29,6 +31,11 @@ export function AuthProvider({ children, skipInitialCheck = false }: { children:
   const [initialError, setInitialError] = useState('');
   const [initialCheckVersion, setInitialCheckVersion] = useState(0);
   const userRef = useRef<AuthUser | null>(null);
+  useEffect(() => {
+    usePreviewPreferences.getState().configure(user?.id ?? null, user?.role === 'admin');
+    if (user) void usePreviewPreferences.getState().load();
+    return () => usePreviewPreferences.getState().configure(null);
+  }, [user?.id, user?.role]);
   const userSyncRef = useRef<ReturnType<typeof createAuthUserSync> | null>(null);
 
   useEffect(() => {
@@ -95,6 +102,7 @@ export function AuthProvider({ children, skipInitialCheck = false }: { children:
   }, [becomeGuest]);
 
   const login = useCallback(async (username: string, password: string): Promise<string | null> => {
+    tracker.reset();
     try {
       await resetAuthenticatedClientState().catch(() => undefined);
       const payload = await loginRequest(username, password);
@@ -109,6 +117,7 @@ export function AuthProvider({ children, skipInitialCheck = false }: { children:
   }, []);
 
   const logout = useCallback(async () => {
+    tracker.reset();
     try {
       await logoutRequest();
     } catch {

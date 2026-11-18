@@ -1,10 +1,8 @@
+import { formatDateTime } from '../../utils/date-display.ts';
 import type { WorkspaceConsoleDashboardDto, WorkspaceConsoleResponsibilityDto } from '../../generated/relay-contracts';
 
 const formatTime = (value: string | number | null | undefined, empty: string) => {
-  if (value == null || value === '' || !Number.isFinite(new Date(value).getTime()) || value === 0) return empty;
-  return new Date(value).toLocaleString('zh-CN', {
-    year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false,
-  });
+  return formatDateTime(value === 0 ? null : value, { fallback: empty });
 };
 
 interface Props {

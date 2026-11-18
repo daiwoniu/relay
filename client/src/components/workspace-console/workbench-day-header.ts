@@ -1,4 +1,5 @@
 import type { ChinaDayData } from '../../api/china-day';
+import { formatDate } from '../../utils/date-display.ts';
 
 export function buildWorkbenchDayHeader(date: string, day: ChinaDayData | null, hour: number) {
   const [year, month, dayOfMonth] = date.split('-').map(Number);
@@ -21,7 +22,7 @@ export function buildWorkbenchDayHeader(date: string, day: ChinaDayData | null, 
   const weatherDetail = [temperature, condition].filter(Boolean).join(' · ');
 
   return {
-    date: `${month}月${dayOfMonth}日`,
+    date: formatDate(date, { short: true }),
     weekday,
     lunar: lunar ? `农历${lunar}` : null,
     occasion,

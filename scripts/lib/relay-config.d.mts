@@ -15,6 +15,7 @@ export interface RelayConfig {
   };
   backend: RelayHttpEndpoint;
   frontend: RelayHttpEndpoint;
+  trustedProxyIps?: string[];
   publicAccess: {
     enabled: boolean;
     wildcard: boolean;

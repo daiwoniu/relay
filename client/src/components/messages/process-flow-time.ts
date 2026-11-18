@@ -1,15 +1,14 @@
 import type { FlowNode } from './process-flow-model';
+import { formatClockTime, formatDateTime } from '../../utils/date-display.ts';
 
 const validTime = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 && value <= 8.64e15;
 export function formatFlowTime(value: unknown, now = Date.now(), precise = false): string {
   if (!validTime(value)) return '时间未记录';
   const date = new Date(value), today = new Date(now);
-  const pad = (part: number, width = 2) => String(part).padStart(width, '0');
-  const clock = `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
   const sameYear = date.getFullYear() === today.getFullYear();
   const sameDay = sameYear && date.getMonth() === today.getMonth() && date.getDate() === today.getDate();
-  const day = `${precise || !sameYear ? `${date.getFullYear()}年` : ''}${date.getMonth() + 1}月${date.getDate()}日`;
-  return `${sameDay && !precise ? '' : `${day} `}${clock}${precise ? `.${pad(date.getMilliseconds(), 3)}` : ''}`;
+  return sameDay && !precise ? formatClockTime(date, { seconds: true })
+    : formatDateTime(date, { short: sameYear && !precise, seconds: true, milliseconds: precise });
 }
 
 export function getFlowTimes(node: FlowNode) {

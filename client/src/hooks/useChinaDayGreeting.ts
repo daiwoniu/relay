@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { getChinaDay, type ChinaDayData } from '../api/china-day';
 import { chooseWorkspaceGreeting, readCachedChinaDay, saveCachedChinaDay, WORKSPACE_GREETING_STORAGE_KEY } from '../components/workspace-console/workspace-greeting';
 
@@ -13,6 +13,7 @@ export function useChinaDayGreeting() {
     catch { return null; }
   });
   const [day, setDay] = useState<ChinaDayData | null>(cachedDay);
+  const greetingDataKey = useRef(cachedDay ? `${cachedDay.date}:${Boolean(cachedDay.weather)}` : null);
   const [greetingHistory, setGreetingHistory] = useState(() => {
     let previous: string | null = null;
     try { previous = typeof window === 'undefined' ? null : window.localStorage.getItem(WORKSPACE_GREETING_STORAGE_KEY); }
@@ -38,7 +39,11 @@ export function useChinaDayGreeting() {
   }, [greeting]);
 
   useEffect(() => {
-    if (cachedDay?.date === today) return;
+    // Recheck expiry each minute; a calendar-only result must not suppress weather recovery.
+    try {
+      const current = readCachedChinaDay(window.sessionStorage, Date.now(), today);
+      if (current?.location?.city && current.weather) { setDay(current); return; }
+    } catch { /* Storage can be disabled. */ }
     let active = true;
     const controller = new AbortController();
     void getChinaDay(controller.signal).then((received) => {
@@ -46,12 +51,16 @@ export function useChinaDayGreeting() {
       try { saveCachedChinaDay(window.sessionStorage, received, Date.now()); }
       catch { /* Storage can be disabled. */ }
       setDay(received);
-      setGreetingHistory((history) => [
-        ...history.slice(-31), chooseWorkspaceGreeting(new Date(), history, Math.random, received, 'varied'),
-      ]);
+      const key = `${received.date}:${Boolean(received.weather)}`;
+      if (greetingDataKey.current !== key) {
+        greetingDataKey.current = key;
+        setGreetingHistory((history) => [
+          ...history.slice(-31), chooseWorkspaceGreeting(new Date(), history, Math.random, received, 'varied'),
+        ]);
+      }
     }).catch(() => { /* Day data is optional; keep the local greeting. */ });
     return () => { active = false; controller.abort(); };
-  }, [cachedDay, today]);
+  }, [now, today]);
 
   return { now, today, day, greeting, rotateGreeting };
 }

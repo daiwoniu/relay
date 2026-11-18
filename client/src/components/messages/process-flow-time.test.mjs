@@ -26,9 +26,9 @@ test('按本地日历显示今天秒级时间、今年月日和跨年年份，�
   const now = new Date(2026, 0, 1, 12).getTime();
   const today = new Date(2026, 0, 1, 9, 2, 3, 456).getTime();
   assert.equal(formatFlowTime(today, now), '09:02:03');
-  assert.equal(formatFlowTime(new Date(2025, 11, 31, 23, 59, 58).getTime(), now), '2025年12月31日 23:59:58');
-  assert.equal(formatFlowTime(new Date(2026, 0, 1, 9, 2, 3).getTime(), new Date(2026, 10, 12).getTime()), '1月1日 09:02:03');
-  assert.equal(formatFlowTime(today, now, true), '2026年1月1日 09:02:03.456');
+  assert.equal(formatFlowTime(new Date(2025, 11, 31, 23, 59, 58).getTime(), now), '2025-12-31 23:59:58');
+  assert.equal(formatFlowTime(new Date(2026, 0, 1, 9, 2, 3).getTime(), new Date(2026, 10, 12).getTime()), '01-01 09:02:03');
+  assert.equal(formatFlowTime(today, now, true), '2026-01-01 09:02:03.456');
   for (const value of [undefined, null, -1, Infinity, '1000', 9e15]) assert.equal(formatFlowTime(value, now), '时间未记录');
 });
 

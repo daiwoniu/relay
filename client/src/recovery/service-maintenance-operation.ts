@@ -16,6 +16,9 @@ export function canIgnoreRecoveryConfirmationError(error: unknown): boolean {
     || error.status === 502
     || error.status === 503
     || error.status === 504
+    // A restart can interrupt the response body after successful headers arrive.
+    // Its outcome must be established by observing a new instance, not by retrying.
+    || (error.status >= 200 && error.status < 300 && error.data === null)
     || (error.status === 409 && error.data?.code === 'RECOVERY_CONFIRMATION_EXPIRED')
   );
 }

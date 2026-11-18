@@ -20,6 +20,7 @@ export class ApiError extends Error {
 interface RequestOptions extends RequestInit {
   notifyUnauthorized?: boolean;
   timeoutMs?: number;
+  allowNullJson?: boolean;
 }
 
 interface RequestLifecycle {
@@ -54,7 +55,7 @@ function createRequestLifecycle(signal?: AbortSignal | null, timeoutMs?: number)
 }
 
 async function readJson(response: Response): Promise<unknown> {
-  return response.json().catch(() => null);
+  return response.json().catch(() => undefined);
 }
 
 export function parseApiErrorDto(value: unknown): ApiErrorDto | null {
@@ -83,7 +84,7 @@ function notifyAuthRequired(): void {
 
 export async function parseApiResponse<T>(
   response: Response,
-  options: { notifyUnauthorized?: boolean } = {},
+  options: { notifyUnauthorized?: boolean; allowNullJson?: boolean } = {},
 ): Promise<T> {
   const data = await readJson(response);
   if (response.status === 401 && options.notifyUnauthorized !== false) notifyAuthRequired();
@@ -94,12 +95,14 @@ export async function parseApiResponse<T>(
       : null;
     throw new ApiError(response.status, parseApiErrorDto(data), undefined, retryAfterSeconds);
   }
-  if (data === null) throw new ApiError(response.status, null, '服务端返回了无效数据');
+  if (data === undefined || (data === null && !options.allowNullJson)) {
+    throw new ApiError(response.status, null, '服务端返回了无效数据');
+  }
   return data as T;
 }
 
 export async function requestJson<T>(input: RequestInfo | URL, options: RequestOptions = {}): Promise<T> {
-  const { notifyUnauthorized, timeoutMs, signal, ...requestOptions } = options;
+  const { notifyUnauthorized, timeoutMs, signal, allowNullJson, ...requestOptions } = options;
   const method = (requestOptions.method ?? (input instanceof Request ? input.method : 'GET')).toUpperCase();
   if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) {
     const headers = new Headers(requestOptions.headers ?? (input instanceof Request ? input.headers : undefined));
@@ -114,7 +117,7 @@ export async function requestJson<T>(input: RequestInfo | URL, options: RequestO
       ...requestOptions,
       signal: lifecycle.signal,
     });
-    return await parseApiResponse<T>(response, { notifyUnauthorized });
+    return await parseApiResponse<T>(response, { notifyUnauthorized, allowNullJson });
   } catch (error) {
     if (lifecycle.timedOut()) throw new ApiError(0, null, '请求超时，请重试');
     if (error instanceof ApiError) throw error;
@@ -126,7 +129,7 @@ export async function requestJson<T>(input: RequestInfo | URL, options: RequestO
 }
 
 export async function requestBlob(input: RequestInfo | URL, options: RequestOptions = {}): Promise<Blob> {
-  const { notifyUnauthorized, timeoutMs, signal, ...requestOptions } = options;
+  const { notifyUnauthorized, timeoutMs, signal, allowNullJson: _allowNullJson, ...requestOptions } = options;
   const lifecycle = createRequestLifecycle(signal, timeoutMs);
   try {
     const response = await fetch(input, {

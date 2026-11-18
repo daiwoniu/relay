@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type {
+  ArchivePreviewDto,
   MessageDto,
   MessageSummaryDto,
   ProcessItemDto,
@@ -64,6 +65,7 @@ export interface StreamingBlock {
 
 /** 右侧面板 tab 项 */
 export type RightPanelDocumentPreview =
+  | ArchivePreviewDto
   | (PdfDocumentPreviewDto & { previewUrl: string })
   | WordDocumentPreviewDto
   | SpreadsheetDocumentPreviewDto;
@@ -74,6 +76,7 @@ export interface RightPanelTab {
   content: string;
   contentSize?: number;
   textPreviewTruncated?: boolean;
+  textPreviewTruncationReason?: 'file-size' | 'output-size';
   language?: string;
   isImage?: boolean;
   imageUrl?: string;
@@ -84,6 +87,7 @@ export interface RightPanelTab {
   fileAccessToken?: string;
   compressedPreviewAvailable?: boolean;
   documentPreview?: RightPanelDocumentPreview;
+  mediaPreview?: { kind: 'audio' | 'video'; previewUrl: string };
   fileMetadata?: FileMetadataResult;
   fileMetadataLoading?: boolean;
   fileMetadataError?: string | { message: string; code?: string; status?: number };
@@ -488,9 +492,6 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         error: null,
       },
     },
-    sessions: state.sessions.map((session) => session.id === sessionId
-      ? { ...session, message_count: revision }
-      : session),
   })),
   applyMessageSaved: (sessionId, message, revision, settleStreaming = false) => set((state) => {
     const current = state.messageLoadBySession[sessionId] ?? createMessageRegionLoadState();
@@ -515,7 +516,6 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       sessions: state.sessions.map((session) => session.id === sessionId
         ? {
             ...session,
-            message_count: Math.max(session.message_count ?? 0, revision),
             ...(shouldApplyTerminalStatus ? { status: message.outcome } : {}),
           }
         : session),

@@ -158,29 +158,35 @@ test('WebSocket 重连快照保留未返回会话并拒绝覆盖请求后的本�
   assert.equal(state.sessions.find((session) => session.id === 'old')?.status, 'processing');
 });
 
-test('WebSocket revision 连续合并，跳号标记 dirty，权威快照清除 dirty', () => {
+test('WebSocket revision 控制同步但不覆盖权威消息计数，跳号标记 dirty', () => {
   useChatStore.setState({
-    sessions: [{ id: sessionId, title: '测试会话', created_at: 1, updated_at: 1, pinned: 0, pinned_at: null, project_id: null, engine: 'codex', codex_archived: false, status: 'processing', message_count: 2 }],
+    sessions: [{ id: sessionId, title: '测试会话', created_at: 1, updated_at: 1, pinned: 0, pinned_at: null, project_id: null, engine: 'codex', codex_archived: false, status: 'processing', message_count: 2, assistant_message_count: 1 }],
     messages: {},
     messageLoadBySession: {},
   });
   useChatStore.getState().applyMessageSync(sessionId, [], 3, true, { beforeCreatedAt: 1, beforeId: 'message-1' });
-  assert.equal(useChatStore.getState().sessions[0]?.message_count, 3);
+  assert.equal(useChatStore.getState().sessions[0]?.message_count, 2);
   useChatStore.getState().applyMessageSaved(sessionId, {
     id: 'message-5', session_id: sessionId, turn_id: 'turn-5', role: 'assistant', content: '第五条',
     phase: 'final_answer', created_at: 5, duration: null, stopped: false,
   }, 5);
   assert.equal(useChatStore.getState().messageLoadBySession[sessionId].dirty, true);
   assert.equal(useChatStore.getState().messageLoadBySession[sessionId].revision, 5);
-  assert.equal(useChatStore.getState().sessions[0]?.message_count, 5);
+  assert.equal(useChatStore.getState().sessions[0]?.message_count, 2);
   useChatStore.getState().applyMessageSaved(sessionId, {
     id: 'message-4', session_id: sessionId, turn_id: 'turn-4', role: 'assistant', content: '迟到的第四条',
     phase: 'final_answer', created_at: 4, duration: null, stopped: false, outcome: 'completed',
   }, 4);
-  assert.equal(useChatStore.getState().sessions[0]?.message_count, 5);
+  assert.equal(useChatStore.getState().sessions[0]?.message_count, 2);
   assert.equal(useChatStore.getState().sessions[0]?.status, 'processing');
   useChatStore.getState().applyMessageSync(sessionId, [], 5, false, null);
   assert.equal(useChatStore.getState().messageLoadBySession[sessionId].dirty, false);
+  assert.equal(useChatStore.getState().sessions[0]?.assistant_message_count, 1);
+  useChatStore.getState().updateSession({ id: sessionId, message_count: 4, assistant_message_count: 2 });
+  const replay = useChatStore.getState().messages[sessionId].find(message => message.id === 'message-5');
+  useChatStore.getState().applyMessageSaved(sessionId, replay, 5);
+  assert.equal(useChatStore.getState().sessions[0]?.message_count, 4);
+  assert.equal(useChatStore.getState().sessions[0]?.assistant_message_count, 2);
 });
 
 test('后台仅收到末条消息时标记稀疏缓存 dirty', () => {

@@ -19,6 +19,39 @@ test('解析桌面 Edge、Windows 和 Relay 来源', () => {
   });
 });
 
+test('明确的常见浏览器标识优先于兼容Chrome与Client Hints品牌',()=>{
+  const cases=[['MicroMessenger/8.0.60','微信内置浏览器'],['MiuiBrowser/18.5.1','小米浏览器'],['MQQBrowser/15.8','QQ浏览器'],['UCBrowser/17.2','UC浏览器'],['Quark/7.9','夸克浏览器'],['SamsungBrowser/24.0','Samsung Internet'],['OPR/90.0','Opera'],['HuaweiBrowser/6.1.7.302','华为浏览器']];
+  for(const [token,expected] of cases){
+    const result=parseClientEnvironment({userAgent:`Mozilla/5.0 (Linux; Android 14) Chrome/130.0.0.0 Mobile Safari/537.36 ${token}`,uaData:{brands:[{brand:'Google Chrome',version:'130'}]},relayVersion:'test'});
+    assert.equal(result.browserName,expected,token);
+  }
+  const embedded=parseClientEnvironment({userAgent:'Mozilla/5.0 (Linux; Android 14) Chrome/130.0 Mobile HuaweiBrowser/6.1 MicroMessenger/8.0',relayVersion:'test'});
+  assert.equal(embedded.browserName,'微信内置浏览器');
+});
+
+test('系统只认明确标识，不从小米浏览器或华为品牌猜操作系统',()=>{
+  const make=(ua,uaData)=>parseClientEnvironment({userAgent:ua,uaData,relayVersion:'test'});
+  const harmony=make('Mozilla/5.0 (Phone; OpenHarmony; Android 10) Mobile HuaweiBrowser/6.1',{platform:'Android',platformVersion:'10.0'});
+  assert.equal(harmony.osName,'HarmonyOS');assert.equal(harmony.osVersion,undefined);
+  for(const [token,os,version] of [['HyperOS/2.0','HyperOS','2.0'],['MIUI/V14.0.1','MIUI','14.0.1']]){
+    const result=make(`Mozilla/5.0 (Linux; Android 14; ${token}) Chrome/130.0 Mobile`,{platform:'Android',platformVersion:'14'});
+    assert.equal(result.osName,os);assert.equal(result.osVersion,version);
+  }
+  assert.equal(make('Mozilla/5.0 (Linux; Android 14; Xiaomi 14) MiuiBrowser/18.0 Mobile').osName,'Android 兼容环境');
+  assert.equal(make('Mozilla/5.0 (Linux; Android 14; HUAWEI) HuaweiBrowser/6.1 Mobile').osName,'Android 兼容环境');
+});
+
+test('高熵Chrome品牌和Android版本不覆盖明确的小米系统及应用浏览器',async()=>{
+  const originalNavigator=globalThis.navigator,originalWindow=globalThis.window,originalVersion=globalThis.__RELAY_VERSION__;
+  try{
+    Object.defineProperty(globalThis,'window',{configurable:true,value:{matchMedia:()=>({matches:false})}});globalThis.__RELAY_VERSION__='test';
+    for(const [token,browserName] of [['MiuiBrowser/18.0','小米浏览器'],['MicroMessenger/8.0','微信内置浏览器']]){
+      Object.defineProperty(globalThis,'navigator',{configurable:true,value:{userAgent:`Mozilla/5.0 (Linux; Android 14; HyperOS/2.0) Chrome/130.0 Mobile ${token}`,userAgentData:{platform:'Android',brands:[{brand:'Google Chrome',version:'130'}],getHighEntropyValues:async()=>({platformVersion:'14.0',fullVersionList:[{brand:'Google Chrome',version:'130.0.1'}]})}}});
+      const result=await collectClientEnvironment();assert.equal(result.browserName,browserName);assert.equal(result.osName,'HyperOS');assert.equal(result.osVersion,'2.0');
+    }
+  }finally{Object.defineProperty(globalThis,'navigator',{configurable:true,value:originalNavigator});Object.defineProperty(globalThis,'window',{configurable:true,value:originalWindow});globalThis.__RELAY_VERSION__=originalVersion;}
+});
+
 test('Client Hints 品牌信息可识别 PWA', () => {
   assert.deepEqual(parseClientEnvironment({
     userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',

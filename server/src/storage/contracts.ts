@@ -1,5 +1,6 @@
 import type { EngineTurnFact, EngineTerminalDecision } from '../engine/turn-facts.js';
 import type { EngineId } from '../engine/types.js';
+import type { AnalyticsStoragePort } from '../analytics/contract.js';
 import type { ApprovalTrustSetting } from '../db/approval-trust.js';
 import type { ApprovalTrustState } from '../services/approval-trust.js';
 
@@ -77,6 +78,8 @@ export interface StoredSessionSync {
 export type CreditResetOutcome='reset'|'nothingToReset'|'noCredit'|'alreadyRedeemed';
 export interface CreditResetJob{jobId:string;actorUserId:string;identityKey:string;creditId:string|null;phase:'prepared'|'dispatched'|'completed'|'rejected';claimToken:string|null;outcome:CreditResetOutcome|null}
 export interface CoreCommandInputs {
+  'hosting.save': import('../page-hosting/contract.js').HostingSaveInput;
+  'hosting.delete': {id:string;expectedToken:string};
   'creditReset.prepare':{jobId:string;identityKey:string;creditId:string|null};
   'creditReset.claim':{jobId:string;identityKey:string;claimToken:string};
   'creditReset.confirm':{jobId:string;claimToken:string;outcome:CreditResetOutcome};
@@ -158,6 +161,7 @@ export interface CoreCommandInputs {
   'account.setDefaultEngine': { engine: EngineId };
   'account.setDefaultModel': { expectedEngine: EngineId; modelId: string | null };
   'account.setNotifications':{changes:Partial<import('../contracts/index.js').NotificationPreferencesDto>};
+  'account.setPreviewPreferences':{changes:Partial<import('../contracts/preview-preferences.js').PreviewPreferences>};
   'account.setTheme':{settings:import('../contracts/index.js').AccountThemeSettingsDto|import('../contracts/index.js').ThemeSettingsV1};
   'account.changeTools':import('./tools-contract.js').ToolsAction;
   'themeAsset.prepareUpload':{jobId:string;assetId:string;desktop:ThemeAssetFile;mobile:ThemeAssetFile};
@@ -213,6 +217,8 @@ export interface CoreCommandInputs {
 }
 
 export interface CoreCommandOutputs {
+  'hosting.save': {id:string};
+  'hosting.delete': {id:string};
   'creditReset.prepare':CreditResetJob;
   'creditReset.claim':CreditResetJob;
   'creditReset.confirm':CreditResetJob;
@@ -285,6 +291,7 @@ export interface CoreCommandOutputs {
   'account.setDefaultEngine': { user: PublicUserDto };
   'account.setDefaultModel': { user: PublicUserDto };
   'account.setNotifications':{userId:string};
+  'account.setPreviewPreferences':{userId:string};
   'account.setTheme':{userId:string};
   'account.changeTools':{userId:string};
   'themeAsset.prepareUpload':ThemeAssetJob;
@@ -380,7 +387,8 @@ export interface StorageResponseEnvelope<K extends CoreCommandName> {
 }
 
 /** This core interface is not wired to production; other domain ports are added in their own batches. */
-export interface CoreStoragePort {
+export interface CoreStoragePort extends AnalyticsStoragePort {
+  readHostedSites(input:{principal:Extract<StoragePrincipal,{kind:'user'}>|{kind:'system';purpose:'recovery'}}|{siteId:string}):Promise<import('../page-hosting/contract.js').HostedSite[]>;
   readCreditResetJob(request:{principal:Extract<StoragePrincipal,{kind:'user'}>;jobId:string}):Promise<CreditResetJob|null>;
   readMaintenanceState(request:{principal:{kind:'system';purpose:'maintenance'}}):Promise<{activeTasks:number;queuedTasks:number;pendingFollowups:number;byEngine:Record<import('../contracts/index.js').EngineId,number>;projectRoots:string[];fence:{fenceId:string;engineId:EngineId|null}|null}>;
   readResourceEvent(input:{principal:Extract<StoragePrincipal,{kind:'user'}>;resource:{kind:'project'|'session';id:string};scope:'mine'|'all'}):Promise<Extract<import('../contracts/index.js').FrontendEvent,{type:'project_updated'|'project_deleted'|'session_updated'|'session_deleted'}>|null>;
@@ -433,6 +441,7 @@ export interface CoreStoragePort {
   readSessionDetails(request: { principal: Extract<StoragePrincipal, { kind: 'user' }>; sessionId: string }): Promise<SessionDetailsDto | null>;
   readSessionReadReceipt(request:{principal:Extract<StoragePrincipal,{kind:'user'}>;sessionId:string}):Promise<{messageId:string|null}>;
   readNotificationPreferences(request:{principal:Extract<StoragePrincipal,{kind:'user'}>}):Promise<import('../contracts/index.js').NotificationPreferencesDto>;
+  readPreviewPreferences(request:{principal:Extract<StoragePrincipal,{kind:'user'}>}):Promise<import('../contracts/preview-preferences.js').PreviewPreferences>;
   readThemeSettings(request:{principal:Extract<StoragePrincipal,{kind:'user'}>}):Promise<import('../contracts/index.js').AccountThemeSettingsDto>;
   readToolsSettings(request:{principal:Extract<StoragePrincipal,{kind:'user'}>}):Promise<import('./tools-contract.js').ToolsState>;
   readThemeAssetJob(request:{principal:StoragePrincipal;jobId:string}):Promise<ThemeAssetJob|null>;
@@ -535,7 +544,7 @@ export interface PurgeJob {
 }
 export interface TrashRestoreResult {kind:'project'|'session';resourceId:string;ownerUserId:string;projectId:string;sessionIds:string[];unarchive:Array<{sessionId:string;threadId:string}>}
 export interface TrashReadInputs {
-  projects:{limit:number;offset:number;q:string};sessions:{limit:number;offset:number;q:string;projectId:string|null};
+  projects:{limit:number;offset:number;q:string;creatorId?:string};sessions:{limit:number;offset:number;q:string;projectId:string|null;creatorId?:string};
   projectSessions:{projectId:string;limit:number;offset:number};options:Record<string,never>;
   preview:{sessionId:string};matches:{sessionId:string;q:string;offset:number};restorePlan:{kind:'project'|'session';id:string};impact:{kind:'project'|'session';id:string};
 }

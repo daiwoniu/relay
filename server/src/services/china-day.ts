@@ -1,4 +1,6 @@
 import { isIP } from 'node:net';
+import { boundedWeatherFetch, ChinaDayInputError, openMeteoCurrent } from './weather-api.js';
+export { ChinaDayInputError } from './weather-api.js';
 import lunar from 'lunar-javascript';
 
 const { Solar } = lunar;
@@ -10,8 +12,6 @@ export interface ChinaDayOptions {
   date?: string;
   fetcher?: typeof fetch;
 }
-
-export class ChinaDayInputError extends Error {}
 
 export function chinaToday(): string {
   return new Intl.DateTimeFormat('sv-SE', {
@@ -66,53 +66,20 @@ export async function locationFor(fetcher: typeof fetch, ip?: string) {
   };
 }
 
-async function weatherFor(fetcher: typeof fetch, city: string, date: string) {
-  const query = new URLSearchParams({ q: city, limit: '10', timestamp: String(Date.now()) });
-  const search = await readJson(fetcher, `https://weather.cma.cn/api/autocomplete?${query}`);
-  if (search?.code !== 0 || !Array.isArray(search.data)) throw new Error('气象站搜索失败');
-  const cityName = city.replace(/市$/, '');
-  const station = search.data.map((item: unknown) => String(item).split('|'))
-    .find((parts: string[]) => parts[1]?.replace(/市$/, '') === cityName && parts[3] === '中国');
-  if (!station?.[0]) throw new Error(`未找到 ${city} 的气象站`);
-  const body = await readJson(fetcher,
-    `https://weather.cma.cn/api/weather/view?stationid=${encodeURIComponent(station[0])}`);
-  if (body?.code !== 0 || !body.data?.now) throw new Error('气象站未返回实况');
-  const data = body.data;
-  const forecast = Array.isArray(data.daily)
-    ? data.daily.find((item: any) => item.date?.replaceAll('/', '-') === date)
-    : null;
-  return {
-    stationId: data.location?.id || station[0],
-    stationName: data.location?.name || station[1],
-    observedAt: data.lastUpdate || null,
-    temperatureC: data.now.temperature ?? null,
-    humidityPercent: data.now.humidity ?? null,
-    precipitationMm: data.now.precipitation ?? null,
-    windDirection: data.now.windDirection || null,
-    windSpeedMs: data.now.windSpeed ?? null,
-    forecast: forecast ? {
-      dayText: forecast.dayText || null,
-      nightText: forecast.nightText || null,
-      highC: forecast.high ?? null,
-      lowC: forecast.low ?? null,
-    } : null,
-    source: 'cma' as const,
-  };
-}
-
 export async function buildChinaDay({ ip, city, date = chinaToday(), fetcher = fetch }: ChinaDayOptions = {}) {
   if (ip && !isIP(ip)) throw new ChinaDayInputError('无效 IP 地址');
   if (city !== undefined && (typeof city !== 'string' || !city.trim() || city.length > 30)) {
     throw new ChinaDayInputError('无效城市名称');
   }
   if (!validDate(date)) throw new ChinaDayInputError('日期必须是有效的 YYYY-MM-DD');
+  fetcher = boundedWeatherFetch(fetcher);
 
   const calendar = calendarFor(date);
   const warnings: string[] = [];
   let location: Awaited<ReturnType<typeof locationFor>> | {
     country: string; province: null; city: string; latitude: null; longitude: null; source: 'manual';
   } | null = null;
-  let weather: Awaited<ReturnType<typeof weatherFor>> | null = null;
+  let weather: Awaited<ReturnType<typeof openMeteoCurrent>> | null = null;
 
   if (city) {
     location = { country: '中国', province: null, city: city.trim(), latitude: null, longitude: null, source: 'manual' };
@@ -122,7 +89,7 @@ export async function buildChinaDay({ ip, city, date = chinaToday(), fetcher = f
   }
 
   if (location) {
-    try { weather = await weatherFor(fetcher, location.city, date); }
+    try { weather = await openMeteoCurrent(fetcher, location, date); }
     catch (error) { warnings.push(`天气获取失败：${error instanceof Error ? error.message : String(error)}`); }
   }
 

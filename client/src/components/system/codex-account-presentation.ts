@@ -1,3 +1,5 @@
+import { formatClockTime, formatDateTime } from '../../utils/date-display.ts';
+
 export function formatCodexAccountEmail(email: string | null): string {
   if (!email) return '未显示邮箱';
   const at = email.indexOf('@');
@@ -9,17 +11,13 @@ export function formatCodexResetTime(resetsAt: number | null): string | null {
   if (!resetsAt) return null;
   const value = new Date(resetsAt * 1000);
   if (Number.isNaN(value.getTime())) return null;
-  const month = String(value.getMonth() + 1).padStart(2, '0');
-  const day = String(value.getDate()).padStart(2, '0');
-  const hour = String(value.getHours()).padStart(2, '0');
-  const minute = String(value.getMinutes()).padStart(2, '0');
-  return `下次重置：${month}-${day} ${hour}:${minute}`;
+  return `下次重置：${formatDateTime(value, { short: true })}`;
 }
 
 export function formatCodexFetchedAt(fetchedAt: number): string {
   const value = new Date(fetchedAt);
   if (Number.isNaN(value.getTime())) return '读取时间未知';
-  return `读取于 ${String(value.getHours()).padStart(2, '0')}:${String(value.getMinutes()).padStart(2, '0')}:${String(value.getSeconds()).padStart(2, '0')}`;
+  return `读取于 ${formatClockTime(value, { seconds: true })}`;
 }
 
 export function formatCodexPlanType(planType: string | null): string {

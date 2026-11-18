@@ -2,7 +2,7 @@ import path from 'node:path';
 import os from 'node:os';
 import fs from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
-import { getConnInfo } from '@hono/node-server/conninfo';
+import { getHttpClientIp } from './http-client-ip.js';
 import { loadRelayConfig } from '../../scripts/lib/relay-config.mjs';
 import { initializeLocalStorage } from './storage/local-storage-initializer.js';
 import { prepareStoredProductionApplication } from './stored-production-application.js';
@@ -43,11 +43,7 @@ try{
     newsRoot:path.join(path.dirname(filename),'news'),repairSourceRoot:path.join(codexHome,'sessions'),
     chinaDayCacheRoot:path.join(path.dirname(filename),'china-day-cache'),diagnostic,
     runtimeDiagnostic:(code,detail)=>console.warn(`[Relay] ${/^[A-Z_]{1,80}$/.test(code)?code:'NATIVE_DIAGNOSTIC'} ${formatRuntimeFailure(detail)}`),
-    publicShares:{getClientId:context=>{
-      const trusted=context.req.header('x-relay-client-address')?.trim();
-      const forwarded=process.env.RELAY_TRUST_PROXY==='1'?context.req.header('x-forwarded-for')?.split(',')[0]?.trim():undefined;
-      return(trusted||forwarded||getConnInfo(context).remote.address||'local').slice(0,128);
-    }}});
+    publicShares:{getClientId:getHttpClientIp}});
   const application=prepared;
   listener=await listenStoredManagedApplication({...application,get status(){return application.host.status;}},{hostname:config.backend.listenHost,port:config.backend.port});
   startRuntimeDiagnostics();console.log('[Relay] Native 持久化服务已就绪');

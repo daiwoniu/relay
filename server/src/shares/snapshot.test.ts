@@ -1,7 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { Message } from '../db/queries.js';
-import { buildShareSnapshot, readShareSnapshot } from './snapshot.js';
+import { buildShareSnapshot, readShareSnapshot, sanitizeProcessItems } from './snapshot.js';
+
+test('图片生成步骤的本机结果路径不进入公开分享', () => {
+  const [item] = sanitizeProcessItems([{ id: 'image-path', type: 'imageGeneration', status: 'completed', details: { savedPath: 'D:/private/image.png' } }])!;
+  assert.equal(item.details.savedPath, undefined);
+  assert(!JSON.stringify(item).includes('D:/private'));
+});
 
 function message(overrides: Partial<Message> & Pick<Message, 'id' | 'role' | 'content' | 'created_at'>): Message {
   return {

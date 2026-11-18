@@ -1,7 +1,7 @@
 import type { ChinaDayData } from '../../api/china-day';
 
 export const WORKSPACE_GREETING_STORAGE_KEY = 'relay.workspace.greeting.last';
-export const CHINA_DAY_CACHE_KEY = 'relay.workspace.china-day';
+export const CHINA_DAY_CACHE_KEY = 'relay.workspace.china-day.v2';
 const CHINA_DAY_CACHE_MS = 10 * 60_000;
 
 const everydayDay = [

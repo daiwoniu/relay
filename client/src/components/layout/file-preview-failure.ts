@@ -5,6 +5,7 @@ export function buildForceAccessFailureUpdate(error: unknown, accessToken?: stri
     imageUrl: undefined,
     language: undefined,
     documentPreview: undefined,
+    mediaPreview: undefined,
     compressedPreviewAvailable: false,
     content: accessToken ? detail : `强制访问失败：${detail}`,
     previewError: accessToken ? detail : `强制访问失败：${detail}`,

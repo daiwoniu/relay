@@ -21,6 +21,7 @@ export interface Project {
   deletion_protected?: number;
   access_role?: 'owner' | 'viewer' | 'collaborator' | 'manager';
   members_can_view_sessions?: number;
+  session_count?: number;
 }
 export interface Session {
   id: string;
@@ -49,6 +50,8 @@ export interface Session {
   active_turn_started_at?: number | null;
   recovery_previous_status?: string | null;
   message_revision?: number;
+  message_count?: number;
+  assistant_message_count?: number;
   context_compaction_count?: number;
   selected_model_id?: string | null;
   selected_reasoning_effort?: string | null;

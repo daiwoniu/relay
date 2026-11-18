@@ -297,10 +297,12 @@ test('会话页只返回父项目仍有效的独立删除会话', async () => {
       id: SESSION_INDEPENDENT,
       title: '单独删除',
       projectId: PROJECT_ACTIVE,
+      engineSessionId: 'hidden',
       projectName: '有效项目',
       engine: 'codex',
       deletedAt: 300,
       messageCount: 1,
+      assistantMessageCount: 0,
     }]);
     assert.equal(body.total, 1);
     assert.equal(JSON.stringify(body).includes('hidden-thread'), false);
@@ -538,6 +540,7 @@ test('永久删除影响摘要只返回计数、字节和稳定 revision', async
     assert.deepEqual({ ...project, impactRevision: '<revision>' }, {
       sessionCount: 2,
       messageCount: 2,
+      assistantMessageCount: 1,
       shareCount: 1,
       attachmentCount: 1,
       releasableBytes: 12,
@@ -548,7 +551,7 @@ test('永久删除影响摘要只返回计数、字节和稳定 revision', async
       (await (await current.app.request(`/api/trash/projects/${PROJECT_DELETED}/impact`)).json() as any).impactRevision,
       project.impactRevision,
     );
-    assert.deepEqual(Object.keys(project).sort(), ['attachmentCount', 'impactRevision', 'messageCount', 'releasableBytes', 'sessionCount', 'shareCount'].sort());
+    assert.deepEqual(Object.keys(project).sort(), ['assistantMessageCount', 'attachmentCount', 'impactRevision', 'messageCount', 'releasableBytes', 'sessionCount', 'shareCount'].sort());
     const plan = buildProjectPermanentDeletePlanInDatabase(current.db, PROJECT_DELETED)!;
     assert.deepEqual(TRASH_PERMANENT_DELETE_RELATION_TABLES, [
       'shared_records', 'context_compaction_events', 'engine_terminal_decisions', 'engine_turn_facts',
@@ -578,6 +581,7 @@ test('永久删除影响摘要只返回计数、字节和稳定 revision', async
     assert.deepEqual({ ...session, impactRevision: '<revision>' }, {
       sessionCount: 1,
       messageCount: 1,
+      assistantMessageCount: 0,
       shareCount: 1,
       attachmentCount: 1,
       releasableBytes: 5,

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { formatClockTime } from '../../utils/date-display.ts';
 import { useLocalNotes } from '../../hooks/useLocalNotes';
 import {
   LOCAL_NOTES_LIMIT,
@@ -25,11 +26,7 @@ function NoteIcon() {
 }
 
 function formatUpdatedAt(timestamp: number) {
-  return new Intl.DateTimeFormat('zh-CN', {
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  }).format(timestamp);
+  return formatClockTime(timestamp);
 }
 
 function resizeTextarea(textarea: HTMLTextAreaElement, initialHeight?: number) {

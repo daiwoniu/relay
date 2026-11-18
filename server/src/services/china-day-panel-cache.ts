@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { buildChinaCalendarMonth } from './china-calendar.js';
 import type { buildChinaWeatherRange } from './china-weather-range.js';
+import type { buildChinaWeatherHourly } from './china-weather-hourly.js';
 
 type CalendarMonth = Awaited<ReturnType<typeof buildChinaCalendarMonth>>;
 type WeatherRange = Awaited<ReturnType<typeof buildChinaWeatherRange>>;
@@ -35,12 +36,22 @@ export class ChinaDayPanelCache {
   }
 
   weather(city: string, date: string, load: () => Promise<WeatherRange>, refresh = false): Promise<CachedPanel<WeatherRange>> {
-    // Discard forecasts cached before full Chinese city names were resolved correctly.
-    return this.load(`weather:v2:${city}`, load, refresh,
+    // Discard entries from the removed webpage provider.
+    return this.load(`weather:v5:${city}`, load, refresh,
       (value): value is WeatherRange => Boolean(value && typeof value === 'object'
         && (value as WeatherRange).date === date && (value as WeatherRange).source === 'open-meteo'
         && Array.isArray((value as WeatherRange).days)),
       () => 5 * 60 * 60 * 1000);
+  }
+
+  hourly(city: string, load: () => Promise<Awaited<ReturnType<typeof buildChinaWeatherHourly>>>, refresh = false) {
+    type Hourly = Awaited<ReturnType<typeof buildChinaWeatherHourly>>;
+    const hour = Math.floor(this.clock() / 3_600_000);
+    return this.load(`hourly:v1:${city}`, load, refresh,
+      (value): value is Hourly => Boolean(value && typeof value === 'object' && (value as Hourly).source === 'open-meteo'
+        && Array.isArray((value as Hourly).hours) && (value as Hourly).hours.length === 24
+        && Date.parse(`${(value as Hourly).hours[0]?.time}+08:00`) === hour * 3_600_000),
+      () => 10 * 60_000);
   }
 
   private filePath(key: string): string {

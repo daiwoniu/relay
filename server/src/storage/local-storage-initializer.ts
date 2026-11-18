@@ -21,7 +21,7 @@ export async function initializeLocalStorage(filename: string, workspacePath = p
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
     const normalize = (value: string) => process.platform === 'win32' ? value.toLowerCase() : value;
     const entries = (await fs.readdir(path.dirname(filename))).map(normalize), name = normalize(path.basename(filename));
-    if (entries.some(entry => entry === 'news' || entry === 'theme-assets' || entry.startsWith(name + '.pre-')
+    if (entries.some(entry => entry === 'news' || entry === 'theme-assets' || entry === 'page-hosting' || entry.startsWith(name + '.pre-')
       || entry.startsWith(name + '.relay-owner') || ['-wal','-shm','-journal'].some(suffix => entry === name + suffix)))
       throw Error('STORAGE_MAIN_DATABASE_MISSING');
   }

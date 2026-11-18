@@ -1,3 +1,5 @@
+import { formatDateTime } from '../../utils/date-display.ts';
+
 export interface NamedFileBrowserEntry {
   name: string;
 }
@@ -9,7 +11,5 @@ export function filterFileBrowserEntries<T extends NamedFileBrowserEntry>(entrie
 }
 
 export function formatFileBrowserModifiedTime(timestamp: number): string {
-  const value = new Date(timestamp);
-  const pad = (part: number) => String(part).padStart(2, '0');
-  return `${value.getFullYear()}-${pad(value.getMonth() + 1)}-${pad(value.getDate())} ${pad(value.getHours())}:${pad(value.getMinutes())}`;
+  return formatDateTime(timestamp);
 }

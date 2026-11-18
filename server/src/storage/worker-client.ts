@@ -28,11 +28,14 @@ export interface StorageWorkerOptions {
 
 /** No network or arbitrary SQL interface. Not imported by the production application yet. */
 export class StorageWorkerClient implements CoreStoragePort, CredentialStoragePort {
+  appendAnalytics(input:Parameters<CoreStoragePort['appendAnalytics']>[0]):ReturnType<CoreStoragePort['appendAnalytics']>{return this.request('appendAnalytics',input);}
+  readAnalytics(input:Parameters<CoreStoragePort['readAnalytics']>[0]):ReturnType<CoreStoragePort['readAnalytics']>{return this.request('readAnalytics',input);}
   readCreditResetJob(input:Parameters<CoreStoragePort['readCreditResetJob']>[0]):ReturnType<CoreStoragePort['readCreditResetJob']>{return this.request('readCreditResetJob',input);}
   readMaintenanceState(input:Parameters<CoreStoragePort['readMaintenanceState']>[0]):ReturnType<CoreStoragePort['readMaintenanceState']>{return this.request('readMaintenanceState',input);}
   readResourceEvent(input:Parameters<CoreStoragePort['readResourceEvent']>[0]):ReturnType<CoreStoragePort['readResourceEvent']>{return this.request('readResourceEvent',input);}
   readStartupWorkPage(input:Parameters<CoreStoragePort['readStartupWorkPage']>[0]):ReturnType<CoreStoragePort['readStartupWorkPage']>{return this.request('readStartupWorkPage',input);}
   readConcurrency(input:Parameters<CoreStoragePort['readConcurrency']>[0]):ReturnType<CoreStoragePort['readConcurrency']>{return this.request('readConcurrency',input);}
+  readHostedSites(input:Parameters<CoreStoragePort['readHostedSites']>[0]):ReturnType<CoreStoragePort['readHostedSites']>{return this.request('readHostedSites',input);}
   readSidebar(input:Parameters<CoreStoragePort['readSidebar']>[0]):ReturnType<CoreStoragePort['readSidebar']>{return this.request('readSidebar',input);}
   private queue: Pending[] = [];
   private current: Pending | undefined;
@@ -207,6 +210,7 @@ export class StorageWorkerClient implements CoreStoragePort, CredentialStoragePo
   async readUploadCleanupJob(input:Parameters<CoreStoragePort['readUploadCleanupJob']>[0]):ReturnType<CoreStoragePort['readUploadCleanupJob']>{return this.request('readUploadCleanupJob',input);}
   async readSessionReadReceipt(input:Parameters<CoreStoragePort['readSessionReadReceipt']>[0]):ReturnType<CoreStoragePort['readSessionReadReceipt']>{return this.request('readSessionReadReceipt',input);}
   async readNotificationPreferences(input:Parameters<CoreStoragePort['readNotificationPreferences']>[0]):ReturnType<CoreStoragePort['readNotificationPreferences']>{return this.request('readNotificationPreferences',input);}
+  async readPreviewPreferences(input:Parameters<CoreStoragePort['readPreviewPreferences']>[0]):ReturnType<CoreStoragePort['readPreviewPreferences']>{return this.request('readPreviewPreferences',input);}
   async readThemeSettings(input:Parameters<CoreStoragePort['readThemeSettings']>[0]):ReturnType<CoreStoragePort['readThemeSettings']>{return this.request('readThemeSettings',input);}
   async readToolsSettings(input:Parameters<CoreStoragePort['readToolsSettings']>[0]):ReturnType<CoreStoragePort['readToolsSettings']>{return this.request('readToolsSettings',input);}
   async readThemeAssetJob(input:Parameters<CoreStoragePort['readThemeAssetJob']>[0]):ReturnType<CoreStoragePort['readThemeAssetJob']>{return this.request('readThemeAssetJob',input);}

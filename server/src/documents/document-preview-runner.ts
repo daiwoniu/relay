@@ -53,6 +53,7 @@ function finishCurrent(slot: WorkerSlot, callback: (task: PendingTask) => void, 
   slot.timer = null;
   slot.deadline = null;
   slot.current = null;
+  slot.worker.unref();
   callback(current);
   if (shouldDispatch) dispatch();
 }
@@ -98,6 +99,7 @@ function dispatch(): void {
     const pending = queue.shift();
     if (!pending) return;
     slot.current = pending;
+    slot.worker.ref();
     slot.deadline = performance.now() + pending.timeoutMs;
     slot.timer = setTimeout(() => {
       timeoutCurrent(slot);

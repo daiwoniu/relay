@@ -6,10 +6,20 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { loadRelayConfig } from '../scripts/lib/relay-config.mjs'
+import { analyticsRelayOrigins } from '../scripts/lib/analytics-source.mjs'
 import { configurePublicProxy, createPublicAccessPlugin, getAllowedHosts } from './vite-public-access.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const relayVersion = JSON.parse(fs.readFileSync(path.resolve(__dirname, '..', 'package.json'), 'utf8')).version
+
+export function createFrontendVersionPlugin(): Plugin {
+  return {
+    name: 'relay-frontend-version',
+    generateBundle() {
+      this.emitFile({ type: 'asset', fileName: 'relay-version.json', source: JSON.stringify({ version: relayVersion }) })
+    },
+  }
+}
 
 export function createFrontendStatusPlugin(startedAt = Date.now()): Plugin {
   return {
@@ -66,8 +76,9 @@ export default defineConfig(({ command, mode }) => {
     envDir: '..',
     define: {
       __RELAY_VERSION__: JSON.stringify(relayVersion),
+      __RELAY_SOURCE_ORIGINS__: JSON.stringify(analyticsRelayOrigins(relayConfig)),
     },
-    plugins: [createPublicAccessPlugin(relayConfig), createFrontendStatusPlugin(), react(), tailwindcss()],
+    plugins: [createPublicAccessPlugin(relayConfig), createFrontendStatusPlugin(), createFrontendVersionPlugin(), react(), tailwindcss()],
     build: {
       manifest: true,
       target: 'es2022',
@@ -88,6 +99,11 @@ export default defineConfig(({ command, mode }) => {
       port: relayConfig.frontend.port,
       allowedHosts: getAllowedHosts(relayConfig),
       proxy: {
+        '^/p(?:-preview)?(?:/|$)': {
+          target: relayHttpTarget,
+          headers: proxyHeaders,
+          configure: (proxy) => configurePublicProxy(proxy, relayConfig),
+        },
         '/api': {
           target: relayHttpTarget,
           headers: proxyHeaders,

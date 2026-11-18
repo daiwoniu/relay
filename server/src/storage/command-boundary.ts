@@ -1,3 +1,5 @@
+import { PreviewPreferencesPatchSchema } from '../contracts/preview-preferences.js';
+import { HostingSaveSchema, HostingDeleteSchema } from '../page-hosting/contract.js';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { MoveSidebarOrderRequestSchema } from '../contracts/index.js';
@@ -110,6 +112,8 @@ export const RepairCandidateSchema = z.object({ decisionId: id, sessionId: id, a
 export const RepairEntrySchema = z.object({ candidate: RepairCandidateSchema,
   snapshot: z.object({ messageId: id, content: z.string().min(1), items: z.string().nullable(), durationMs: z.number().finite().nonnegative().max(Number.MAX_SAFE_INTEGER).nullable(), metadata: object.nullable() }).strict() }).strict();
 const inputs = {
+  'hosting.save': HostingSaveSchema,
+  'hosting.delete': HostingDeleteSchema,
   'creditReset.prepare':z.object({jobId:z.string().uuid(),identityKey:z.string().min(1).max(512),creditId:z.string().min(1).max(256).nullable()}).strict(),
   'creditReset.claim':z.object({jobId:z.string().uuid(),identityKey:z.string().min(1).max(512),claimToken:z.string().uuid()}).strict(),
   'creditReset.confirm':z.object({jobId:z.string().uuid(),claimToken:z.string().uuid(),outcome:z.enum(['reset','nothingToReset','noCredit','alreadyRedeemed'])}).strict(),
@@ -201,6 +205,7 @@ const inputs = {
   'account.setDefaultEngine': z.object({engine}).strict(),
   'account.setDefaultModel': z.object({expectedEngine:engine,modelId:z.string().trim().min(1).max(200).nullable()}).strict(),
   'account.setNotifications':z.object({changes:NotificationPreferencesPatchSchema}).strict(),
+  'account.setPreviewPreferences':z.object({changes:PreviewPreferencesPatchSchema}).strict(),
   'account.setTheme':z.object({settings:ThemeSettingsInputSchema}).strict(),
   'account.changeTools':ToolsActionSchema,
   'themeAsset.prepareUpload':z.object({jobId:z.string().uuid(),assetId:z.string().uuid(),desktop:z.object({digest:z.string().regex(/^[a-f0-9]{64}$/),size:z.number().int().min(1).max(4194304)}).strict(),mobile:z.object({digest:z.string().regex(/^[a-f0-9]{64}$/),size:z.number().int().min(1).max(4194304)}).strict()}).strict(),
@@ -259,6 +264,8 @@ const envelope = z.object({ protocolVersion: z.literal(1), storeId: id, requestI
 }).strict();
 
 export const CORE_COMMAND_POLICIES = {
+  'hosting.save':{callers:['user'],confirmation:'commit',afterCommit:'none'},
+  'hosting.delete':{callers:['user'],confirmation:'commit',afterCommit:'none'},
   'creditReset.prepare':{callers:['user'],confirmation:'commit',afterCommit:'none'},
   'creditReset.claim':{callers:['user'],confirmation:'commit',afterCommit:'none'},
   'creditReset.confirm':{callers:['system'],confirmation:'commit',afterCommit:'none'},
@@ -330,6 +337,7 @@ export const CORE_COMMAND_POLICIES = {
   'account.setDefaultEngine': { callers: ['user'], confirmation: 'commit', afterCommit: 'publish' },
   'account.setDefaultModel': { callers: ['user'], confirmation: 'commit', afterCommit: 'publish' },
   'account.setNotifications':{callers:['user'],confirmation:'commit',afterCommit:'publish'},
+  'account.setPreviewPreferences':{callers:['user'],confirmation:'commit',afterCommit:'none'},
   'account.setTheme':{callers:['user'],confirmation:'commit',afterCommit:'publish'},
   'account.changeTools':{callers:['user'],confirmation:'commit',afterCommit:'publish'},
   'themeAsset.prepareUpload':{callers:['user'],confirmation:'commit',afterCommit:'none'},

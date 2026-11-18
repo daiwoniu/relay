@@ -1,5 +1,6 @@
 import WebSocket from 'ws';
 import { resolveCodexEndpoint } from './endpoint.js';
+import { selectSubAgentReport } from './sub-agent-report.js';
 
 const ARCHIVE_CACHE_TTL_MS = 15_000;
 const RPC_TIMEOUT_MS = 10_000;
@@ -86,14 +87,23 @@ export function createArchivedThreadCache(
   };
 }
 
-async function openRpcClient(): Promise<RpcClient> {
-  const ws = new WebSocket(resolveCodexEndpoint().wsUrl);
+async function openRpcClient(maxPayload?: number): Promise<RpcClient> {
+  const ws = new WebSocket(resolveCodexEndpoint().wsUrl, maxPayload === undefined ? {} : { maxPayload });
   let requestId = 0;
   const pending = new Map<number, {
     resolve: (value: any) => void;
     reject: (error: Error) => void;
     timer: ReturnType<typeof setTimeout>;
   }>();
+  const rejectPending = () => {
+    for (const callback of pending.values()) {
+      clearTimeout(callback.timer);
+      callback.reject(new Error('Codex 管理连接已断开'));
+    }
+    pending.clear();
+  };
+  ws.on('error', rejectPending);
+  ws.on('close', rejectPending);
 
   ws.on('message', (raw: Buffer) => {
     const message = JSON.parse(raw.toString());
@@ -302,6 +312,14 @@ export async function archiveCodexThread(threadId: string): Promise<void> {
   } finally {
     client.close();
   }
+}
+
+export async function readCodexSubAgentReport(childThreadId: string, completionItemId: string): Promise<string | null> {
+  const client = await openRpcClient(32 * 1024 * 1024);
+  try {
+    const result = await client.request('thread/read', { threadId: childThreadId, includeTurns: true });
+    return selectSubAgentReport(result?.thread, childThreadId, completionItemId);
+  } finally { client.close(); }
 }
 
 export async function archiveCodexThreadGuarded(threadId:string,mayDispatch:()=>Promise<boolean>):Promise<void>{

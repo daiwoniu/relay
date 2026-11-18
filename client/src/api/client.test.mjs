@@ -44,6 +44,18 @@ test('统一 API 响应拒绝损坏的成功响应', async () => {
   );
 });
 
+test('统一 API 仅显式允许JSON null，仍拒绝空响应和读取中断', async () => {
+  await assert.rejects(() => parseApiResponse(Response.json(null)), ApiError);
+  assert.equal(await parseApiResponse(Response.json(null), { allowNullJson: true }), null);
+  for (const response of [
+    new Response('', { status: 202 }),
+    new Response(new ReadableStream({ start(controller) { controller.error(new TypeError('terminated')); } }), { status: 202 }),
+  ]) {
+    await assert.rejects(() => parseApiResponse(response, { allowNullJson: true }),
+      (error) => error instanceof ApiError && error.status === 202 && error.data === null);
+  }
+});
+
 test('统一 API 响应保留服务端错误状态和内容', async () => {
   await assert.rejects(
     () => parseApiResponse(new Response(JSON.stringify({ error: '会话不存在', code: 'NOT_FOUND' }), {

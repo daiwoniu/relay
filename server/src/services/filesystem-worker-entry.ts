@@ -5,7 +5,7 @@ import { Hono } from 'hono';
 import type { RelayEnv } from '../auth/authorization.js';
 import { createFilesystemCore } from '../routes/filesystem-core.js';
 
-const input=workerData as {actor:{userId:string;role:'admin'|'member'};roots:string[];allowedPath:string|null;url:string;method:string;body:string|undefined;
+const input=workerData as {previewPreferences?:ReturnType<typeof import('../contracts/preview-preferences.js').effectivePreviewPreferences>;actor:{userId:string;role:'admin'|'member'};roots:string[];allowedPath:string|null;url:string;method:string;body:string|undefined;
   proof:null|{path:string;realPath:string;dev:number;ino:number;size:number;mtimeMs:number}};
 const grants:Array<{token:string;path:string}>=[],revoked:string[]=[];
 function verify(){
@@ -14,7 +14,7 @@ function verify(){
 }
 try{
   verify();const app=new Hono<RelayEnv>();app.use('*',async(c,next)=>{c.set('relayActor',input.actor);await next();});
-  app.route('/',createFilesystemCore({getAllowedProjectRoots:async()=>input.roots,grants:{
+  app.route('/',createFilesystemCore({previewPreferences:input.previewPreferences,getAllowedProjectRoots:async()=>input.roots,grants:{
     allows:(path,_token,userId)=>userId===input.actor.userId&&path===input.allowedPath,
     grant:(path,userId)=>{if(userId!==input.actor.userId||grants.length>=10)throw Error('INVALID_GRANT');const token=randomUUID();grants.push({token,path});return token;},
     revoke:(token,userId)=>{if(userId!==input.actor.userId||revoked.length)throw Error('INVALID_GRANT');revoked.push(token);},

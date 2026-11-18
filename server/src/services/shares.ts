@@ -61,12 +61,13 @@ export function createShareService({
     audit({ ...input, result: 'succeeded' });
     return result;
   };
-  const sourceEngineForRecord = (record: SharedRecordWithSourceTitle) => {
-    if (record.source_session_engine) return record.source_session_engine;
+  const snapshotSummaryForRecord = (record: SharedRecordWithSourceTitle) => {
     try {
-      return readShareSnapshot(record.snapshot_version, record.snapshot_json).sourceEngine;
+      const snapshot = readShareSnapshot(record.snapshot_version, record.snapshot_json);
+      return { messageCount: snapshot.messages.length, sourceEngine: snapshot.sourceEngine ?? record.source_session_engine ?? 'codex',
+        assistantMessageCount: snapshot.messages.filter(message => message.role === 'assistant').length };
     } catch {
-      return 'codex' as const;
+      return { messageCount: record.message_count, sourceEngine: record.source_session_engine ?? 'codex' as const };
     }
   };
 
@@ -162,11 +163,10 @@ export function createShareService({
           publicToken: record.public_token,
           title: record.title,
           scope: record.scope,
-          messageCount: record.message_count,
           includeProcess: record.include_process === 1,
           sourceSessionId: record.source_session_id,
           sourceSessionTitle: record.source_session_title,
-          sourceEngine: sourceEngineForRecord(record),
+          ...snapshotSummaryForRecord(record),
           createdAt: record.created_at,
           expiresAt: record.expires_at,
           revokedAt: record.revoked_at,
@@ -185,9 +185,9 @@ export function createShareService({
       return ShareListResponseDtoSchema.parse({
         items: records.map((record) => ({
           id: record.id, publicToken: record.public_token, title: record.title, scope: record.scope,
-          messageCount: record.message_count, includeProcess: record.include_process === 1,
+          includeProcess: record.include_process === 1,
           sourceSessionId: record.source_session_id, sourceSessionTitle: record.source_session_title,
-          sourceEngine: sourceEngineForRecord(record), createdAt: record.created_at, expiresAt: record.expires_at,
+          ...snapshotSummaryForRecord(record), createdAt: record.created_at, expiresAt: record.expires_at,
           revokedAt: record.revoked_at,
           status: getShareManagementStatus({ expiresAt: record.expires_at, revokedAt: record.revoked_at }, currentTime),
         })),
@@ -244,13 +244,14 @@ export function createShareService({
       if (status === 'expired') return { state: 'expired' };
       if (status === 'revoked') return { state: 'revoked' };
       try {
+        const snapshot = readShareSnapshot(record.snapshot_version, record.snapshot_json);
         return {
           state: 'active',
           title: record.title,
-          messageCount: record.message_count,
+          messageCount: snapshot.messages.length,
           createdAt: record.created_at,
           expiresAt: record.expires_at,
-          snapshot: readShareSnapshot(record.snapshot_version, record.snapshot_json),
+          snapshot,
         };
       } catch {
         return { state: 'unreadable' };

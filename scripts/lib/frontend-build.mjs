@@ -5,6 +5,7 @@ import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 import { runCommandSync } from './command.mjs';
+import { readFrontendVersion } from './frontend-version.mjs';
 
 export const FRONTEND_BUILD_SCHEMA_VERSION = 1;
 
@@ -32,6 +33,11 @@ export function getFrontendFingerprintFiles(root) {
     ...['index.html', 'vite.config.ts', 'vite-public-access.mjs', 'package.json', 'package-lock.json', 'tsconfig.json', 'tsconfig.app.json', 'tsconfig.node.json'].map((file) => path.join(client, file)),
     path.join(root, 'package.json'),
     path.join(root, 'scripts', 'lib', 'frontend-access.mjs'),
+    path.join(root, 'scripts', 'lib', 'client-environment.mjs'),
+    path.join(root, 'scripts', 'lib', 'client-environment.d.mts'),
+    path.join(root, 'scripts', 'lib', 'analytics-source.mjs'),
+    path.join(root, 'scripts', 'lib', 'analytics-source.d.mts'),
+    path.join(root, 'config', 'relay.conf'),
   ];
   return [...new Set(candidates.filter(fs.existsSync).map((file) => path.resolve(file)))].sort();
 }
@@ -136,13 +142,14 @@ export function promoteFrontendRelease({
   }
 }
 
-export function assertCompleteFrontendRelease(distPath) {
+export function assertCompleteFrontendRelease(distPath,{requireVersion=true}={}) {
   if (!fs.existsSync(path.join(distPath, 'index.html'))
     || !fs.existsSync(path.join(distPath, 'assets'))
     || !fs.statSync(path.join(distPath, 'assets')).isDirectory()) {
     throw new Error('前端构建缺少 index.html 或 assets 目录');
   }
   const html = fs.readFileSync(path.join(distPath, 'index.html'), 'utf8');
+  readFrontendVersion(distPath,{required:requireVersion});
   for (const match of html.matchAll(/(?:src|href)=["']([^"']+)["']/g)) {
     const reference = match[1];
     if (/^(?:https?:|data:|#)/.test(reference)) continue;
@@ -153,9 +160,9 @@ export function assertCompleteFrontendRelease(distPath) {
   }
 }
 
-export function isCompleteFrontendRelease(releasePath) {
+export function isCompleteFrontendRelease(releasePath,{requireVersion=false}={}) {
   try {
-    assertCompleteFrontendRelease(releasePath);
+    assertCompleteFrontendRelease(releasePath,{requireVersion});
     return true;
   } catch {
     return false;
@@ -182,7 +189,7 @@ export function prepareFrontendBuild({ root, run = defaultRun, now = Date.now, o
   const buildId = fingerprint.slice(0, 12);
   const releasePath = path.join(paths.releases, buildId);
   const state = readFrontendBuildState(paths.state);
-  if (state.builds?.[buildId]?.fingerprint === fingerprint && isCompleteFrontendRelease(releasePath)) {
+  if (state.builds?.[buildId]?.fingerprint === fingerprint && isCompleteFrontendRelease(releasePath,{requireVersion:true})) {
     // The source/policy fingerprints do not prove that lazy resources still exist.
     // Recheck the release on reuse without running typecheck or Vite again.
     onProgress(state.builds[buildId].budgetFingerprint !== budgetFingerprint
@@ -208,7 +215,7 @@ export function prepareFrontendBuild({ root, run = defaultRun, now = Date.now, o
     run('node', ['scripts/check-build-budget.mjs', distPath], { cwd: clientDir, timeoutMs: 60_000, captureOutput: true, onOutput });
     assertCompleteFrontendRelease(distPath);
     if (fs.existsSync(releasePath)) {
-      if (!isCompleteFrontendRelease(releasePath)) fs.rmSync(assertInside(paths.releases, releasePath), { recursive: true, force: true });
+      if (!isCompleteFrontendRelease(releasePath,{requireVersion:true})) fs.rmSync(assertInside(paths.releases, releasePath), { recursive: true, force: true });
       else throw new Error(`前端 release 已存在但状态不匹配：${buildId}`);
     }
     promoteFrontendRelease({ distPath, releasePath });
@@ -289,7 +296,7 @@ export function verifyPreparedFrontendBuild(root, expectedBuildId) {
   const state = readFrontendBuildState(paths.state);
   if (state.preparedBuildId !== expectedBuildId) throw new Error('前端预构建身份不一致');
   const releasePath = path.join(paths.releases, expectedBuildId);
-  if (!isCompleteFrontendRelease(releasePath)) throw new Error('准备好的前端 release 不完整');
+  if (!isCompleteFrontendRelease(releasePath,{requireVersion:true})) throw new Error('准备好的前端 release 不完整');
   return { buildId: expectedBuildId, releasePath, state };
 }
 
@@ -301,7 +308,7 @@ export function activatePreparedFrontendBuild(root) {
   const paths = getFrontendBuildPaths(root);
   const state = readFrontendBuildState(paths.state);
   if (!state.preparedBuildId) throw new Error('没有可激活的前端构建');
-  if (!isCompleteFrontendRelease(path.join(paths.releases, state.preparedBuildId))) throw new Error('准备好的前端 release 不完整');
+  if (!isCompleteFrontendRelease(path.join(paths.releases, state.preparedBuildId),{requireVersion:true})) throw new Error('准备好的前端 release 不完整');
   const nextState = { ...state, previousBuildId: state.activeBuildId === state.preparedBuildId ? state.previousBuildId : state.activeBuildId, activeBuildId: state.preparedBuildId, preparedBuildId: null };
   writeFrontendBuildState(paths.state, nextState);
   return nextState;
@@ -313,7 +320,7 @@ export function getFrontendBuildStatus(root) {
   const fingerprint = computeFrontendFingerprint(root);
   const expectedBuildId = fingerprint.slice(0, 12);
   const activeRelease = state.activeBuildId ? path.join(paths.releases, state.activeBuildId) : null;
-  const fresh = state.activeBuildId === expectedBuildId && activeRelease && isCompleteFrontendRelease(activeRelease);
+  const fresh = state.activeBuildId === expectedBuildId && activeRelease && isCompleteFrontendRelease(activeRelease,{requireVersion:true});
   return { ...state, activeBuildLabel: getFrontendBuildLabel(state, state.activeBuildId), fingerprint, expectedBuildId, fresh: Boolean(fresh), reason: fresh ? null : !state.activeBuildId ? '尚未激活生产构建' : state.activeBuildId !== expectedBuildId ? '前端源码较活动构建更新' : '活动构建不完整' };
 }
 

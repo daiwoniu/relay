@@ -4,6 +4,7 @@ interface ProcessStepDisclosureInput {
   command?: string;
   metadata?: string[];
   output?: string;
+  expandable?: boolean;
 }
 
 export function getProcessStepDisclosureState(info: ProcessStepDisclosureInput) {
@@ -15,7 +16,7 @@ export function getProcessStepDisclosureState(info: ProcessStepDisclosureInput) 
   );
 
   return {
-    canExpand: Boolean(fullTitle || hasSupplementalDetails),
+    canExpand: info.expandable ?? Boolean(fullTitle || hasSupplementalDetails),
     fullTitle,
     hasSupplementalDetails,
   };

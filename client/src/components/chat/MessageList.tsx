@@ -112,7 +112,7 @@ export default function MessageList({ sessionId, messages, hasOlderMessages, onL
     if (engine !== 'codex' || !sessionId) { setFlowContext(null); return; }
     if (!runningMessage.show) { setFlowContext(previous => previous?.sessionId === sessionId ? previous : null); return; }
     setFlowContext(previous => captureProcessFlow(previous, {
-      sessionId, messages, followups, steps: streamingSteps || [], timeline: streamingProcessTimeline || [], projectName, projectPath, knownProjects,
+      sessionId, messages, followups, steps: streamingSteps || [], timeline: streamingProcessTimeline || [], projectName, projectPath, knownProjects, allowMissingRoot: true,
     }) || (getFlowCompletionMessage(previous, messages) ? previous : null));
   }, [engine, sessionId, runningMessage.show, messages, followups, streamingSteps, streamingProcessTimeline, projectName, projectPath, knownProjects]);
   const currentFlowContext = engine === 'codex' && flowContext && flowContext.sessionId === sessionId ? flowContext : undefined;

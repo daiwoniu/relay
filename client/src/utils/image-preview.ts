@@ -65,11 +65,11 @@ function blobToDataUrl(blob: Blob, signal?: AbortSignal): Promise<string> {
   });
 }
 
-export async function compressImageForPreview(blob: Blob, signal?: AbortSignal): Promise<string> {
+export async function compressImageForPreview(blob: Blob, signal?: AbortSignal, options = { maxDimension: IMAGE_PREVIEW_MAX_DIMENSION, qualityPercent: IMAGE_PREVIEW_QUALITY * 100 }): Promise<string> {
   throwIfAborted(signal);
   const image = await loadImage(blob, signal);
   throwIfAborted(signal);
-  const size = fitImageWithin(image.naturalWidth, image.naturalHeight);
+  const size = fitImageWithin(image.naturalWidth, image.naturalHeight, options.maxDimension);
   const canvas = document.createElement('canvas');
   canvas.width = size.width;
   canvas.height = size.height;
@@ -78,8 +78,8 @@ export async function compressImageForPreview(blob: Blob, signal?: AbortSignal):
   context.drawImage(image, 0, 0, size.width, size.height);
   throwIfAborted(signal);
 
-  const compressed = await canvasToBlob(canvas, 'image/webp', IMAGE_PREVIEW_QUALITY)
-    || await canvasToBlob(canvas, 'image/jpeg', IMAGE_PREVIEW_QUALITY);
+  const compressed = await canvasToBlob(canvas, 'image/webp', options.qualityPercent / 100)
+    || await canvasToBlob(canvas, 'image/jpeg', options.qualityPercent / 100);
   throwIfAborted(signal);
   if (!compressed) throw new Error('图片压缩失败');
   return blobToDataUrl(compressed, signal);

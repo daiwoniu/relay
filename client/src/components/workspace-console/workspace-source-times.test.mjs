@@ -5,6 +5,7 @@ import test from 'node:test';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import ts from 'typescript';
+import { formatDateTime } from '../../utils/date-display.ts';
 
 const componentUrl = new URL('./WorkspaceSourceTimes.tsx', import.meta.url).href;
 const hooks = registerHooks({
@@ -23,9 +24,7 @@ finally { hooks.deregister(); }
 const generatedAt = '2026-11-15T17:53:00+08:00';
 const success = Date.parse('2026-11-16T11:26:00+08:00');
 const attempt = success + 60_000;
-const time = (value) => new Date(value).toLocaleString('zh-CN', {
-  year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false,
-});
+const time = (value) => formatDateTime(value);
 const render = (props) => renderToStaticMarkup(React.createElement(WorkspaceSourceTimes, {
   dashboard: null, responsibility: null, localFailed: false, projectFailed: false, ...props,
 }));
@@ -56,6 +55,11 @@ test('首次失败不将本次采集时间冒充成功刷新；兼容旧接口�
     responsibility: { generatedAt, fetchedAt: success } });
   assert.equal((legacy.match(new RegExp(time(success), 'g')) ?? []).length, 2);
   assert.doesNotMatch(legacy, /Invalid Date|1970/);
+  for (const value of [0, null, '', 'bad']) {
+    const missing = render({ dashboard: { registryGeneratedAt: value, capturedAt: value } });
+    assert.doesNotMatch(missing, /Invalid Date|1970|未记录/);
+    assert.match(missing, /尚未成功刷新/);
+  }
   assert.equal(render({}), '');
 });
 

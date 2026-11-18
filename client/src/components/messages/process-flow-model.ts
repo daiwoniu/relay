@@ -3,10 +3,11 @@ import type { MessageOutcome, MessageAttachmentDto, MessageAttachmentSummaryDto 
 import type { MessageVisualState } from './message-status';
 import { describeCommandInvocation, describeCommandTarget, describeReadRange, describeReadCommands } from './process-flow-command.ts';
 import { describeWebOperation, describeFileChanges } from '../../stores/process-event-summary.ts';
-import { getReasoningDisplayText, getProcessCommand } from '../../stores/process-step-visibility.ts';
+import { getReasoningDisplayText, getProcessCommand, hasVisibleProcessStep } from '../../stores/process-step-visibility.ts';
 import { getFlowTimes } from './process-flow-time.ts';
 import { getProcessStepStatus } from './process-step-status.ts';
 import { getProcessNarrativeStatus, type ProcessNarrativeStatus } from './process-timeline.ts';
+import { getSubAgentActivityLabel, getSubAgentActivityStepInfo } from './sub-agent-activity.ts';
 
 export interface FlowRuntimeStatus { state: MessageVisualState; label: string }
 
@@ -44,6 +45,7 @@ export interface FlowInput {
 export interface FlowUiState { expanded: Record<string, boolean>; details: Record<string, boolean>; panelExpanded?: boolean; panelSettled?: boolean; selectedNodeId?: string; grouping?: FlowGrouping; categoryOpen?: Partial<Record<FlowGrouping, string>>; view?: ProcessView }
 export interface ProcessFlowContext {
   readOnly?: boolean;
+  canReadSubAgentReports?: boolean;
   id: string;
   sessionId: string;
   turnId: string;
@@ -221,6 +223,7 @@ export function getFlowStepState(step: ProcessStep, outcome?: MessageOutcome): F
 export function getFlowStatusLabel(node: FlowNode): string {
   if (node.state === 'failed') return FLOW_STATES.failed;
   if (node.statusLabel) return node.statusLabel;
+  if (node.step?.type === 'subAgentActivity') return getSubAgentActivityLabel(node.step.details);
   if (node.step?.type === 'plan' && node.state === 'completed') return '已记录';
   if (node.step?.type === 'interaction') {
     const d = node.step.details;
@@ -340,7 +343,7 @@ function describeFlowStep(step: ProcessStep, context: ResourceContext, outcome?:
       const toolSubtitle = tool;
       if (mcp && friendly) return { ...node, category: friendly[0], title: friendly[1], subtitle: toolSubtitle, source };
       if (tool === 'relay_report_file_changes') {
-        const files = Array.isArray(input.reportedFileChanges) ? input.reportedFileChanges : [];
+        const files = Array.isArray(d.fileChanges) ? d.fileChanges : Array.isArray(input.reportedFileChanges) ? input.reportedFileChanges : [];
         const paths = [...new Set(files.map(value => string(value?.path)).filter(Boolean))];
         return { ...node, category: 'execution', title: '登记文件变更', subtitle: paths.length ? `${fileIdentity(paths[0], toolContext)}${paths.length > 1 ? ` 等 ${paths.length} 个文件` : ''}` : '变更文件清单', hint: otherFiles(paths), source, resource: resources(paths, toolContext) };
       }
@@ -367,7 +370,8 @@ function describeFlowStep(step: ProcessStep, context: ResourceContext, outcome?:
       const actions: Record<string, string> = { spawnAgent: '创建子任务', sendInput: '发送子任务消息', resumeAgent: '恢复子任务', wait: '等待子任务', closeAgent: '关闭子任务' };
       const states: Partial<Record<FlowState, string>> = { running: '进行中', completed: '已完成', failed: '失败', stopped: '已停止', unknown: '结果未确认' };
       const summary = Object.entries(states).flatMap(([state, label]) => { const count = children.filter(child => child.state === state).length; return count ? [`${count} ${label}`] : []; });
-      return { ...node, category: 'collaboration', title: actions[string(d.tool)] || '执行子任务', subtitle: firstString(d.agentName, d.name) || clip(firstString(d.prompt, d.content)) || '子任务信息未记录', hint: detailLine(children.length ? `${children.length} 个子任务` : undefined, summary.join(' · ')), source: '子代理', children };
+      const activity = step.type === 'subAgentActivity' ? getSubAgentActivityStepInfo(d) : undefined;
+      return { ...node, category: 'collaboration', title: activity ? '子任务活动' : actions[string(d.tool)] || '执行子任务', subtitle: activity?.title || firstString(d.agentName, d.name) || clip(firstString(d.prompt, d.content)) || '子任务信息未记录', hint: detailLine(children.length ? `${children.length} 个子任务` : undefined, summary.join(' · ')), source: '子代理', children };
     }
     case 'interaction': {
       const kind = string(d.interactionKind);
@@ -418,6 +422,7 @@ export function buildFlowNodes(context: ProcessFlowContext, steps: ProcessStep[]
   const addStep = (step: ProcessStep) => {
     if (seen.has(step.id)) return;
     seen.add(step.id);
+    if (step.type === 'subAgentActivity' && !hasVisibleProcessStep(step)) { insertInputs(step.id); return; }
     const node = { ...presentFlowStep(step, context, outcome) };
     if (node.text && (step.type === 'userMessage' || step.type === 'agentMessage')) {
       const text = normalizeText(node.text);
@@ -508,7 +513,7 @@ export function describeFlowCapability(node: FlowNode): FlowCapability {
   const toolPath = firstString(input.path, input.filePath, input.file_path, input.filename);
   const toolFileRead = d.readOnlyHint !== false && /(?:^|\.)(?:read|read_file|read_text_file|get_file|read_skill)$/i.test(firstString(d.tool, d.toolName, d.name).split('__').pop() || node.subtitle) && toolPath;
   const fileAction = node.step?.type === 'fileChange' || ['查看文件', '编辑文件', '登记文件变更'].includes(node.title);
-  const changes = node.step?.type === 'fileChange' ? d : node.title === '登记文件变更' ? input : undefined;
+  const changes = node.step?.type === 'fileChange' ? d : node.title === '登记文件变更' ? Array.isArray(d.fileChanges) ? { fileChanges: d.fileChanges } : input : undefined;
   const changedPaths = changes ? describeFileChanges(changes).paths : [];
   const explicitSkill = node.title === '读取技能' || toolFileRead && /(?:^|[\\/])SKILL\.md$/i.test(toolPath);
   const root = /MCP/.test(node.source) ? undefined : node.contextProject?.id.replace(/^(?:project|directory):/, '');
@@ -561,6 +566,10 @@ export function describeFlowCapability(node: FlowNode): FlowCapability {
       family = 'search'; title = '检索与网页'; label = node.title; identity = label; unit = '调用';
     } else if (node.category === 'execution') {
       title = '终端命令'; label = invocation.label || node.subtitle; identity = invocation.label || node.id; unit = '执行';
+    } else if (node.step?.type === 'subAgentActivity') {
+      label = getSubAgentActivityStepInfo(d).title;
+      identity = string(d.agentThreadId) || node.id;
+      detail = getFlowStatusLabel(node); unit = '记录';
     } else if (['input', 'assistant'].includes(node.category) && !node.id.startsWith('missing:')) {
       identity = node.title; label = node.title === '说明进度' ? '进度说明' : node.title; unit = '消息';
     } else if (node.category === 'other' || node.id.startsWith('missing:')) {
@@ -605,6 +614,7 @@ export function groupFlowCapabilities(nodes: FlowNode[], grouping: FlowGrouping)
   return [...buckets.values()].map(bucket => {
     const family = bucket.family;
     const latest = bucket.nodes[bucket.nodes.length - 1];
+    if (latest.step?.type === 'subAgentActivity') bucket.detail = getFlowStatusLabel(latest);
     if (bucket.unit === '消息') bucket.detail = `${bucket.nodes.length > 1 ? '最新：' : ''}${clip((latest.text || latest.subtitle).replace(/\s+/g, ' '), 100)}`;
     if (family === 'file' || family === 'rule') {
       const actions = new Map<string, number>();

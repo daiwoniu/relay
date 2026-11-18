@@ -1,3 +1,4 @@
+import { effectivePreviewPreferences } from '../contracts/preview-preferences.js';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { Worker } from 'node:worker_threads';
@@ -48,7 +49,9 @@ export class StoredFilesystem{
       if(this.options.grants.allows(realPath,url.searchParams.get('accessToken')??undefined,principal.userId))allowedPath=realPath;
     }
     await this.options.assertExclusiveWriter();if(!current())throw new StorageContractError('NOT_SUBMITTED');
-    const worker=new Worker(new URL('./filesystem-worker-bootstrap.mjs',import.meta.url),{workerData:{actor:{userId:principal.userId,role:user.role},roots:beforeRoots.map(root=>root.path),allowedPath,url:url.pathname+url.search,method,body,proof}});
+    const preferences=['/read','/preview-pdf-source','/preview-spreadsheet-sheet'].includes(url.pathname)?effectivePreviewPreferences(await this.options.port.readPreviewPreferences({principal}),user.role==='admin'):undefined;
+    if(!current())throw new StorageContractError('NOT_SUBMITTED');
+    const worker=new Worker(new URL('./filesystem-worker-bootstrap.mjs',import.meta.url),{workerData:{previewPreferences:preferences,actor:{userId:principal.userId,role:user.role},roots:beforeRoots.map(root=>root.path),allowedPath,url:url.pathname+url.search,method,body,proof}});
     let result:any;
     try{result=await new Promise<any>((resolve,reject)=>{worker.once('message',resolve);worker.once('error',()=>reject(new StorageContractError('STORAGE_UNAVAILABLE')));worker.once('exit',()=>reject(new StorageContractError('STORAGE_UNAVAILABLE')));});}
     finally{await worker.terminate();}

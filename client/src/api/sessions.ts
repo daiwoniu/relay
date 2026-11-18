@@ -3,6 +3,7 @@ import type {
   EnginePreferencesDto,
   MessageDto,
   MessageDetailsDto,
+  SubAgentReportDto,
   MessageCursorDto,
   MessagePageResultDto,
   OkDto,
@@ -17,6 +18,13 @@ import { jsonBody, requestJson } from './client';
 import { cancelLocalResourceDeletion, markLocalResourceDeletion } from '../stores/resource-deletion-notice';
 
 export const MESSAGE_PAGE_SIZE = 30;
+
+export function getSubAgentReport(sessionId: string, messageId: string, itemId: string, signal: AbortSignal): Promise<SubAgentReportDto> {
+  return requestJson(`/api/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(messageId)}/subagent-report?${new URLSearchParams({ itemId })}`, {
+    // Codex allows 10 s each for connection, initialization and reading; leave room for permission checks.
+    signal, timeoutMs: 35_000, cache: 'no-store',
+  });
+}
 
 interface ListMessagesOptions {
   signal?: AbortSignal;

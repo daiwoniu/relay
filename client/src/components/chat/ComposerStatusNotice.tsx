@@ -23,7 +23,7 @@ export default function ComposerStatusNotice({ scopeKey, notice, notices }: { sc
     <>
       {notice && !dismissed && <div role={notice.tone === 'danger' ? 'alert' : 'status'} className={`mb-2 flex min-w-0 items-center gap-2 rounded-lg border px-2.5 py-1.5 text-xs ${TONE_CLASS[notice.tone]}`}>
         <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-current opacity-70" aria-hidden="true" />
-        <Tooltip content={notice.message} asChild><button type="button" onClick={openDetails} aria-label={`查看完整提示：${notice.message}`} className="min-w-0 flex-1 truncate rounded-sm text-left leading-5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus-ring)]">{notice.message}</button></Tooltip>
+        <Tooltip overflowOnly content={notice.message} asChild><button type="button" onClick={openDetails} aria-label={`查看完整提示：${notice.message}`} className="min-w-0 flex-1 truncate rounded-sm text-left leading-5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus-ring)]">{notice.message}</button></Tooltip>
         {notices.length > 1 && <button type="button" onClick={openDetails} className="shrink-0 rounded-sm font-medium underline underline-offset-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus-ring)]" aria-label={`查看全部 ${notices.length} 条提示`}>另有 {notices.length - 1} 条</button>}
         <button
           type="button"

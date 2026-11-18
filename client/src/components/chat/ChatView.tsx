@@ -792,6 +792,10 @@ export default function ChatView() {
     () => normalizeSelectedMessageIds(currentMessages, selectedShareMessageIds),
     [currentMessages, selectedShareMessageIds],
   );
+  const selectedShareAssistantCount = useMemo(() => {
+    const selected = new Set(normalizedSelectedShareIds);
+    return currentMessages.filter(message => selected.has(message.id) && message.role === 'assistant').length;
+  }, [currentMessages, normalizedSelectedShareIds]);
   useEffect(() => {
     setShareSelectionMode(false);
     setSelectedShareMessageIds(new Set());
@@ -1248,6 +1252,7 @@ export default function ChatView() {
         shareSelectionMode={shareSelectionMode}
         shareSelectionProps={{
           count: normalizedSelectedShareIds.length,
+          assistantCount: selectedShareAssistantCount,
           onCancel: () => { setShareSelectionMode(false); setSelectedShareMessageIds(new Set()); },
           onNext: () => openShareDraft('selection', normalizedSelectedShareIds),
         }}

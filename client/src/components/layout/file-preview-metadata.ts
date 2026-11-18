@@ -1,4 +1,5 @@
 import { getFileIconType } from '../messages/file-icon-type.ts';
+import { formatDateTime } from '../../utils/date-display.ts';
 
 const EXACT_TYPE_LABELS: Record<string, string> = {
   md: 'Markdown 文档', markdown: 'Markdown 文档', mdx: 'MDX 文档',
@@ -49,8 +50,5 @@ export function formatFileMetadataSize(size: number): string {
 
 export function formatFileMetadataTime(timestamp: number | null | undefined): string {
   if (typeof timestamp !== 'number' || !Number.isFinite(timestamp) || timestamp <= 0) return '系统未提供';
-  const value = new Date(timestamp);
-  if (Number.isNaN(value.getTime())) return '系统未提供';
-  const pad = (part: number) => String(part).padStart(2, '0');
-  return `${value.getFullYear()}-${pad(value.getMonth() + 1)}-${pad(value.getDate())} ${pad(value.getHours())}:${pad(value.getMinutes())}:${pad(value.getSeconds())}`;
+  return formatDateTime(timestamp, { seconds: true, fallback: '系统未提供' });
 }

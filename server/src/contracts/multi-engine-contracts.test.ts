@@ -35,7 +35,7 @@ test('多引擎会话契约要求稳定 engine 且不暴露底层会话字段', 
     codex_archived: 0,
     engine_session_id: 'internal-session',
     engine_metadata: '{"secret":true}',
-  }), { ...session, message_count: 0, context_compaction_count: 0 });
+  }), { ...session, context_compaction_count: 0 });
 });
 
 test('会话详情单独暴露统一引擎会话 ID', () => {
@@ -45,7 +45,6 @@ test('会话详情单独暴露统一引擎会话 ID', () => {
     engine_session_id: 'codebuddy-session-1',
   }), {
     ...session,
-    message_count: 0,
     context_compaction_count: 0,
     engine_session_id: 'codebuddy-session-1',
   });

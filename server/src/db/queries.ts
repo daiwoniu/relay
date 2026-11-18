@@ -22,6 +22,7 @@ import type {
 } from './query-types.js';
 import { getSession } from './queries-session-preferences.js';
 import { withSessionResults } from './session-attention.js';
+import { withSessionMessageCounts } from './session-message-counts.js';
 
 export * from './query-types.js';
 export * from './queries-account.js';
@@ -34,11 +35,11 @@ export * from './queries-trash.js';
 export * from './engine-concurrency.js';
 
 function presentSessionRow(session: Session): Session {
-  return withSessionResults(getDB(), [{ ...session, engine: session.engine_bound === 0 ? null : session.engine }])[0]!;
+  return presentSessionRows([session])[0]!;
 }
 
 function presentSessionRows(sessions: Session[]): Session[] {
-  return withSessionResults(getDB(), sessions.map((session) => ({ ...session, engine: session.engine_bound === 0 ? null : session.engine })));
+  return withSessionResults(getDB(), withSessionMessageCounts(getDB(), sessions.map((session) => ({ ...session, engine: session.engine_bound === 0 ? null : session.engine }))));
 }
 
 function sessionVisibleToActorSql(alias: string): string {
@@ -92,6 +93,8 @@ export function createSession(
     active_turn_started_at: null,
     recovery_previous_status: null,
     message_revision: 0,
+    message_count: 0,
+    assistant_message_count: 0,
     selected_model_id: null,
     selected_reasoning_effort: null,
     selected_service_tier: null,
@@ -149,7 +152,7 @@ export function createForkedSession(input: CreateForkedSessionInput): Session {
 }
 
 export function createForkedSessionInDatabase(
-  db: Pick<SQLiteDB, 'exec' | 'run' | 'get' | 'saveToFile'>,
+  db: Pick<SQLiteDB, 'exec' | 'run' | 'get' | 'all' | 'saveToFile'>,
   input: CreateForkedSessionInput,
 ): Session {
   const now = input.now ?? Date.now();
@@ -230,7 +233,7 @@ export function createForkedSessionInDatabase(
     throw error;
   }
   const stored = db.get('SELECT * FROM sessions WHERE id = ?', [session.id]) as Session;
-  return { ...stored, engine: stored.engine_bound === 0 ? null : stored.engine };
+  return withSessionMessageCounts(db, [{ ...stored, engine: stored.engine_bound === 0 ? null : stored.engine }])[0]!;
 }
 
 export function repairSessionProjectAssignments(defaultProjectId: string): number {
@@ -828,8 +831,7 @@ export function syncCodexArchivedStatusesInDatabase(
   db: Pick<SQLiteDB, 'all' | 'get' | 'run' | 'saveToFile'>,
   archivedThreadIds: string[],
 ): Session[] {
-  const present = (rows: Session[]) => withSessionResults(db, rows.map((session) => ({ ...session, engine: session.engine_bound === 0 ? null : session.engine })));
-  const sessions = present(db.all('SELECT * FROM sessions WHERE archived = 0 AND deleted_at IS NULL') as Session[]);
+  const sessions = db.all('SELECT * FROM sessions WHERE archived = 0 AND deleted_at IS NULL') as Session[];
   const archived = new Set(archivedThreadIds);
   const changedIds = sessions
     .filter((session) => {
@@ -845,9 +847,11 @@ export function syncCodexArchivedStatusesInDatabase(
     db.run('UPDATE sessions SET codex_archived = 1 WHERE archived = 0 AND deleted_at IS NULL AND codex_thread_id = ?', [threadId]);
   }
   db.saveToFile();
-  return present(changedIds
+  const changed = changedIds
     .map((id) => db.get('SELECT * FROM sessions WHERE id = ?', [id]) as Session | undefined)
-    .filter((session): session is Session => Boolean(session)));
+    .filter((session): session is Session => Boolean(session))
+    .map((session) => ({ ...session, engine: session.engine_bound === 0 ? null : session.engine }));
+  return withSessionResults(db, withSessionMessageCounts(db, changed));
 }
 
 export function countActiveSessions(): number {

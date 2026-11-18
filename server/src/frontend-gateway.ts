@@ -9,6 +9,8 @@ import {
 import { loadRelayConfig, type RelayConfig } from '../../scripts/lib/relay-config.mjs';
 import { loadFrontendGatewayToken } from './frontend-gateway-token.js';
 import { createNativeReverseProxy } from './native-reverse-proxy.js';
+import { readFrontendVersion } from '../../scripts/lib/frontend-version.mjs';
+import { handleFrontendIpDiagnostic, IP_DIAGNOSTIC_PATH } from './frontend-ip-diagnostic.js';
 
 const MIME_TYPES: Record<string, string> = {
   '.css': 'text/css; charset=utf-8',
@@ -65,6 +67,7 @@ export function createFrontendGateway(options: {
   backendTarget?: string;
   relayConfig: RelayConfig;
   startedAt?: number;
+  diagnosticWindowFile?: string;
 }) {
   const releaseRoot = path.resolve(options.releaseDir);
   const indexPath = path.join(releaseRoot, 'index.html');
@@ -72,6 +75,7 @@ export function createFrontendGateway(options: {
   if (!options.accessToken.trim()) throw new Error('正式前端网关缺少内部访问令牌');
   if (!fs.existsSync(releaseRoot) || !fs.statSync(releaseRoot).isDirectory()) throw new Error('正式前端 release 不存在');
   if (!fs.existsSync(indexPath) || !fs.statSync(indexPath).isFile()) throw new Error('正式前端 release 缺少 index.html');
+  const frontendVersion=readFrontendVersion(releaseRoot);
 
   const backendTarget = options.backendTarget || options.relayConfig.backend.origin;
   const startedAt = options.startedAt ?? Date.now();
@@ -79,6 +83,7 @@ export function createFrontendGateway(options: {
     target: backendTarget,
     accessToken: options.accessToken,
     relayConfig: options.relayConfig,
+    frontendVersion,
   });
 
   const server = http.createServer((request, response) => {
@@ -87,6 +92,13 @@ export function createFrontendGateway(options: {
       return;
     }
     const url = new URL(request.url || '/', 'http://relay.local');
+    if (url.pathname === IP_DIAGNOSTIC_PATH) {
+      void handleFrontendIpDiagnostic(request, response, {
+        windowFile: options.diagnosticWindowFile, backendTarget,
+        accessToken: options.accessToken, relayConfig: options.relayConfig,
+      }).catch(() => { if (!response.writableEnded) sendText(response, 503, '诊断暂不可用'); });
+      return;
+    }
     if (url.pathname === '/__relay/frontend-status') {
       response.statusCode = 200;
       response.setHeader('Content-Type', 'application/json; charset=utf-8');
@@ -94,7 +106,7 @@ export function createFrontendGateway(options: {
       response.end(JSON.stringify({ startedAt, mode: 'production', buildId: options.buildId, buildLabel: options.buildLabel || null }));
       return;
     }
-    if (url.pathname === '/api' || url.pathname.startsWith('/api/')) {
+    if (url.pathname === '/api' || url.pathname.startsWith('/api/') || /^\/p(?:-preview)?(?:\/|$)/.test(url.pathname)) {
       proxy.web(request, response);
       return;
     }
@@ -153,6 +165,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === currentFile) {
     accessToken,
     backendTarget: relayConfig.backend.origin,
     relayConfig,
+    diagnosticWindowFile: path.join(root, '.relay-dev', 'source-ip-diagnostic.json'),
   });
   const host = relayConfig.frontend.listenHost;
   const port = relayConfig.frontend.port;

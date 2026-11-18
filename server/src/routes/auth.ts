@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { getConnInfo } from '@hono/node-server/conninfo';
+import { getHttpClientIp } from '../http-client-ip.js';
 import path from 'node:path';
 import { z } from 'zod';
 import {
@@ -60,16 +61,7 @@ function isSecureRequest(c: { req: { url: string; header(name: string): string |
 }
 
 function getLoginIp(c: Parameters<typeof getConnInfo>[0]): string {
-  const forwarded = process.env.RELAY_TRUST_PROXY === '1'
-    ? c.req.header('x-forwarded-for')?.split(',')[0]?.trim()
-    : undefined;
-  let remoteAddress: string | undefined;
-  try {
-    remoteAddress = getConnInfo(c).remote.address;
-  } catch {
-    // Hono 的进程内 request() 测试没有 Node server 连接信息。
-  }
-  return (forwarded || remoteAddress || 'local').slice(0, 128);
+  return getHttpClientIp(c);
 }
 
 auth.post('/login', async (c) => {

@@ -141,3 +141,13 @@ test('状态输出列出精确HTTPS地址', () => {
     '  https://relay.example.test:41423',
   ]);
 });
+
+test('可信代理默认关闭，只接受精确IP且不能搭配公网通配模式', () => {
+  assert.deepEqual(parseRelayConfig(configText()).trustedProxyIps, []);
+  const config = parseRelayConfig(configText('relay.example:443') + '\nTRUSTED_PROXY_IPS=127.0.0.1,::ffff:127.0.0.1,0:0:0:0:0:0:0:1');
+  assert.deepEqual(config.trustedProxyIps, ['127.0.0.1', '::1']);
+  for (const value of ['localhost', '*', '0.0.0.0', '::', '127.0.0.1/8', '127.0.0.1:9081', 'bad']) {
+    assert.throws(() => parseRelayConfig(configText('relay.example:443') + '\nTRUSTED_PROXY_IPS=' + value), /TRUSTED_PROXY_IPS/);
+  }
+  assert.throws(() => parseRelayConfig(configText('0.0.0.0') + '\nTRUSTED_PROXY_IPS=127.0.0.1'), /精确地址/);
+});

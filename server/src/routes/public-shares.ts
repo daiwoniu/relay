@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import type { Context } from 'hono';
 import { getConnInfo } from '@hono/node-server/conninfo';
+import { getHttpClientIp } from '../http-client-ip.js';
 import { presentApiError } from '../contracts/index.js';
 import { shareService, type ShareService } from '../services/shares.js';
 import { PublicShareRateLimiter } from '../shares/public-rate-limit.js';
@@ -10,11 +11,7 @@ const PUBLIC_TOKEN_PATTERN = /^[0-9a-f]{64}$/i;
 const defaultLimiter = new PublicShareRateLimiter();
 
 function getPublicClientId(c: Parameters<typeof getConnInfo>[0]): string {
-  const trustedProxyAddress = c.req.header('x-relay-client-address')?.trim();
-  const forwarded = process.env.RELAY_TRUST_PROXY === '1'
-    ? c.req.header('x-forwarded-for')?.split(',')[0]?.trim()
-    : undefined;
-  return (trustedProxyAddress || forwarded || getConnInfo(c).remote.address || 'local').slice(0, 128);
+  return getHttpClientIp(c);
 }
 
 export function createPublicSharesRouter({

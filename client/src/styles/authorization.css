@@ -357,19 +357,21 @@
 .trash-dialog__tab { border-radius: .5rem; padding: .5rem .75rem; color: var(--color-text-secondary); font-size: .75rem; font-weight: 500; transition: color 150ms, background 150ms; }
 .trash-dialog__tab:hover { color: var(--color-text); }
 .trash-dialog__tab--active { background: var(--color-surface); color: var(--color-text); box-shadow: 0 1px 2px rgb(0 0 0 / .08); }
-.trash-dialog__filters { display: flex; gap: .5rem; margin: .75rem 1rem 0; }
+.trash-dialog__filters { display: flex; flex-wrap: wrap; gap: .5rem; margin: .75rem 1rem 0; }
+.trash-dialog__creator-filter { min-width: 0; flex: 1 1 9rem; }
+.trash-dialog__creator-filter select { width: 100%; height: 2.25rem; border: 1px solid var(--color-border); border-radius: .625rem; background: var(--color-surface); color: var(--color-text); padding: 0 .625rem; font-size: .75rem; }
 .trash-dialog__project-filter { min-width: 0; flex: 0 1 35%; }
 .trash-dialog__project-filter select, .trash-dialog__search-field { width: 100%; height: 2.25rem; border: 1px solid var(--color-border); border-radius: .625rem; background: var(--color-surface); color: var(--color-text); font-size: .75rem; }
 .trash-dialog__project-filter select { padding: 0 .625rem; }
-.trash-dialog__search-field { display: flex; min-width: 0; flex: 1; align-items: center; }
-.trash-dialog__search-field:focus-within, .trash-dialog__project-filter select:focus-visible { border-color: var(--color-focus-ring); outline: none; }
+.trash-dialog__search-field { display: flex; min-width: 0; flex: 1 1 12rem; align-items: center; }
+.trash-dialog__search-field:focus-within, .trash-dialog__project-filter select:focus-visible, .trash-dialog__creator-filter select:focus-visible { border-color: var(--color-focus-ring); outline: none; }
 .trash-dialog__search-field input { min-width: 0; flex: 1; border: 0; background: transparent; padding: 0 .625rem; color: inherit; outline: none; }
 .trash-dialog__search-field input::-webkit-search-cancel-button { display: none; }
 .trash-dialog__search-clear { padding: .25rem; color: var(--color-text-tertiary); font-size: 1rem; }
 .trash-dialog__search-submit { display: grid; width: 2.25rem; height: 2.25rem; flex: 0 0 auto; place-items: center; border-left: 1px solid var(--color-border); border-radius: 0 .625rem .625rem 0; color: var(--color-text-secondary); }
 .trash-dialog__search-submit:hover { background: var(--color-surface-hover); color: var(--color-text); }
 .trash-dialog__search-submit svg { width: 1rem; height: 1rem; }
-.trash-dialog__result-summary { margin: .5rem 1rem 0; color: var(--color-text-secondary); font-size: .6875rem; }
+.trash-dialog__result-summary { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .5rem; margin: .5rem 1rem 0; color: var(--color-text-secondary); font-size: .6875rem; }
 .trash-dialog__batch-bar { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem .75rem; margin: .75rem 1rem 0; font-size: .75rem; }
 .trash-dialog__select-all { display: inline-flex; align-items: center; gap: .375rem; min-height: 2rem; color: var(--color-text); }
 .trash-dialog__checkbox, .trash-dialog__select-all input { width: 1rem; height: 1rem; flex: 0 0 auto; accent-color: var(--color-accent); cursor: pointer; }
@@ -396,6 +398,21 @@
 .trash-dialog__item { min-width: 0; flex: 1; }
 .trash-dialog__item-path, .trash-dialog__item-meta { margin-top: .25rem; overflow: hidden; color: var(--color-text-tertiary); font-size: .6875rem; text-overflow: ellipsis; white-space: nowrap; }
 .trash-dialog__item-meta { color: var(--color-text-secondary); }
+.trash-dialog__message-counts { margin-top: .25rem; color: var(--color-text-secondary); font-size: .6875rem; line-height: 1.5; white-space: nowrap; overflow-x: auto; }
+.trash-dialog__people { display: flex; flex-wrap: wrap; gap: .25rem .75rem; margin-top: .25rem; color: var(--color-text-secondary); font-size: .6875rem; line-height: 1.5; }
+.trash-dialog__people > span { min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
+.trash-dialog__ids { display: grid; gap: .25rem; margin-top: .5rem; color: var(--color-text-secondary); font-size: .6875rem; }
+.trash-dialog__ids > div { display: grid; grid-template-columns: 5rem minmax(0,1fr); gap: .375rem; align-items: baseline; }
+.trash-dialog__ids dt { color: var(--color-text-tertiary); }
+.trash-dialog__ids dd { min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; user-select: text; }
+.trash-dialog__ids code { font-family: var(--font-mono, monospace); }
+.trash-dialog__identifiers { margin-top: .375rem; color: var(--color-text-tertiary); font-size: .6875rem; }
+.trash-dialog__identifiers summary { width: fit-content; cursor: pointer; }
+.trash-dialog__identifiers summary:hover { color: var(--color-text); }
+.trash-dialog__identifiers summary:focus-visible { outline: 2px solid var(--color-focus-ring); outline-offset: 2px; }
+.trash-dialog__aside { display: flex; flex: 0 0 auto; flex-direction: column; align-items: flex-end; gap: .625rem; }
+.trash-dialog__deleted-at { flex: 0 0 auto; color: var(--color-text-tertiary); font-size: .6875rem; white-space: nowrap; }
+.trash-dialog__session-info { min-width: 0; flex: 1; }
 .trash-dialog__highlight { border-radius: .2rem; background: color-mix(in srgb, var(--color-accent) 20%, var(--color-surface)); color: inherit; }
 .trash-dialog__hit { display: flex; min-width: 0; flex-wrap: wrap; align-items: baseline; gap: .25rem .5rem; margin: 0 .75rem .5rem; border-radius: .5rem; background: var(--color-bg-secondary); padding: .4rem .6rem; color: var(--color-text-secondary); font-size: .6875rem; }
 .trash-dialog__hit-snippet { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -423,26 +440,45 @@
 .trash-dialog__match-pagination { display: flex; justify-content: flex-end; gap: .5rem; margin-top: .625rem; }
 .trash-dialog__match-pagination button { border: 1px solid var(--color-border); border-radius: .5rem; padding: .25rem .5rem; color: var(--color-text-secondary); font-size: .6875rem; }
 .trash-dialog__match-pagination button:disabled { opacity: .4; }
-.trash-dialog__sessions { border-top: 1px solid var(--color-border-light); padding: .5rem .75rem .5rem 3rem; }
-.trash-dialog__session { display: flex; align-items: center; justify-content: space-between; gap: .75rem; padding: .375rem 0; color: var(--color-text-secondary); font-size: .75rem; }
-.trash-dialog__session span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.trash-dialog__sessions { border-top: 1px solid var(--color-border-light); border-radius: 0 0 .75rem .75rem; background: var(--color-bg-secondary); padding: 0 .75rem 0 2.5rem; }
+.trash-dialog__session { display: flex; min-width: 0; align-items: flex-start; justify-content: space-between; gap: .75rem; padding: .75rem 0; color: var(--color-text-secondary); font-size: .75rem; }
+.trash-dialog__session + .trash-dialog__session { border-top: 1px solid var(--color-border-light); }
+.trash-dialog__project-page { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .5rem; padding: .5rem 0; color: var(--color-text-tertiary); font-size: .6875rem; }
+.trash-dialog__project-page button { border: 1px solid var(--color-border); border-radius: .5rem; padding: .3rem .5rem; color: var(--color-text-secondary); }
+.trash-dialog__project-page button:hover { background: var(--color-surface-hover); }
+.trash-dialog__project-page button:disabled { opacity: .5; cursor: default; }
+.trash-dialog__card { transition: border-color 150ms; }
+.trash-dialog__row, .trash-dialog__session { transition: background-color 150ms; }
+.trash-dialog__card:focus-within { border-color: var(--color-focus-ring); }
+.trash-dialog__row { border-radius: .75rem; }
+@media (hover: hover) {
+  .trash-dialog__card:hover { border-color: color-mix(in srgb, var(--color-accent) 35%, var(--color-border)); }
+  .trash-dialog__row:hover, .trash-dialog__session:hover { background: var(--color-surface-hover); }
+}
 .trash-dialog__session small { flex: 0 0 auto; color: var(--color-text-tertiary); font-size: .625rem; }
-.trash-dialog__session--match { border-radius: .35rem; background: color-mix(in srgb, var(--color-accent) 10%, transparent); }
+.trash-dialog__session-hit { margin-top: .25rem; font-size: .6875rem; overflow-wrap: anywhere; }
+.trash-dialog__session-hit p { margin: 0; }
+.trash-dialog__session--match { border-radius: .35rem; background: color-mix(in srgb, var(--color-accent) 10%, transparent); box-shadow: -.375rem 0 color-mix(in srgb, var(--color-accent) 10%, transparent), .375rem 0 color-mix(in srgb, var(--color-accent) 10%, transparent); }
 .trash-dialog__confirm-input { width: 100%; margin-top: .75rem; border: 1px solid var(--color-border); border-radius: .5rem; background: var(--color-bg); padding: .5rem .75rem; color: var(--color-text); font-size: .875rem; outline: none; }
 .trash-dialog__confirm-input:focus { border-color: var(--color-focus-ring); }
 .trash-dialog__confirm-error { margin-top: .75rem; border-radius: .5rem; background: color-mix(in srgb,var(--color-status-danger) 10%,transparent); padding: .5rem .75rem; color: var(--color-status-danger); font-size: .75rem; }
 @media (max-width: 399px) {
   .trash-dialog__filters { flex-direction: column; }
   .trash-dialog__project-filter { flex: auto; }
+  .trash-dialog__creator-filter, .trash-dialog__search-field { flex: auto; }
   .trash-dialog__row { gap: .5rem; padding: .625rem; }
   .trash-dialog__expand { width: 1.5rem; height: 1.5rem; }
   .trash-dialog__actions { gap: .125rem; }
   .trash-dialog__restore, .trash-dialog__delete { padding-right: .375rem; padding-left: .375rem; white-space: nowrap; }
-  .trash-dialog__sessions { padding-left: 2.625rem; }
+  .trash-dialog__sessions { padding-right: .625rem; padding-left: 1rem; }
 }
 @media (max-width: 520px) {
   .trash-dialog__row { flex-wrap: wrap; }
   .trash-dialog__actions { margin-left: auto; }
+  .trash-dialog__aside { width: 100%; gap: .5rem; }
+  .trash-dialog__session { flex-wrap: wrap; gap: .375rem; }
+  .trash-dialog__session-info { flex-basis: 100%; }
+  .trash-dialog__session > .trash-dialog__deleted-at { margin-left: auto; }
 }
 @media (min-width: 640px) {
   .trash-dialog__body { padding-right: 1.25rem; padding-left: 1.25rem; }

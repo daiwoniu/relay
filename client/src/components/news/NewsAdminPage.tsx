@@ -1,3 +1,4 @@
+import { formatDateTime } from '../../utils/date-display.ts';
 import Tooltip from '../ui/Tooltip';
 import { useEffect, useState, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
@@ -131,7 +132,7 @@ export default function NewsAdminPage() {
               <strong>{entry.name}</strong>
               <span>{entry.enabled ? '启用' : '停用'} · {entry.region === 'cn' ? '国内' : '海外'} · {sourceKindLabels[entry.kind]} · 每 {entry.intervalMinutes} 分钟</span>
               <Tooltip content="上次采集是最近一次采集尝试处理的条目数，失败或内容未变化时为 0；不是一段时间内的新增数" asChild><small>
-                {entry.state?.lastCheckedAt == null ? '尚未采集' : `上次采集 ${entry.state.lastFetchedCount ?? 0} 条（单次 · ${new Date(entry.state.lastCheckedAt).toLocaleString('zh-CN')}）`}
+                {entry.state?.lastCheckedAt == null ? '尚未采集' : `上次采集 ${entry.state.lastFetchedCount ?? 0} 条（单次 · ${formatDateTime(entry.state.lastCheckedAt, { seconds: true })}）`}
                 {' · '}总采集 {entry.totalItemCount} 条（累计入库）
               </small></Tooltip>
               {entry.state?.lastError && <small>最近错误：{entry.state.lastError}</small>}
@@ -188,7 +189,7 @@ export default function NewsAdminPage() {
           {corrections.filter((entry) => entry.correction.hidden && !recent.some((item) => item.id === entry.itemId)).map((entry) => <div className="news-admin-source" key={entry.itemId}><small>已隐藏 · {entry.itemId}</small><button type="button" disabled={busy} onClick={() => void run(() => saveAdminNewsCorrection(entry.itemId, { ...entry.correction, hidden: false }), '已恢复资讯')}>恢复</button></div>)}
         </div>
       </div></details>
-      <details className="news-admin-section news-admin-disclosure"><summary><span className="news-admin-disclosure-title">最近操作</span><span>{stats?.audit.length ?? 0} 条记录</span></summary><div className="news-admin-disclosure-body news-admin-preview">{stats?.audit.map((entry, index) => <div key={`${entry.at}-${index}`}>{new Date(entry.at).toLocaleString('zh-CN')} · {entry.actorId} · {entry.action}</div>)}</div></details>
+      <details className="news-admin-section news-admin-disclosure"><summary><span className="news-admin-disclosure-title">最近操作</span><span>{stats?.audit.length ?? 0} 条记录</span></summary><div className="news-admin-disclosure-body news-admin-preview">{stats?.audit.map((entry, index) => <div key={`${entry.at}-${index}`}>{formatDateTime(entry.at, { seconds: true })} · {entry.actorId} · {entry.action}</div>)}</div></details>
     </main>
   </div>;
 }

@@ -22,6 +22,12 @@ test('已结束消息保留完成时间并拆分状态和耗时', () => {
   const now = new Date(2026, 7, 9, 15, 0).getTime();
   const today = new Date(2026, 7, 9, 14, 26).getTime();
   const previousDay = new Date(2026, 7, 8, 23, 15).getTime();
+  const previousYear = new Date(2025, 11, 31, 23, 15).getTime();
+
+  assert.equal(
+    getSettledDurationPresentation(previousYear, '已完成', 12_000, now),
+    '2025-12-31 23:15 · 已完成 · 耗时 12秒',
+  );
 
   assert.equal(
     getSettledDurationPresentation(today, '已完成', 12_000, now),

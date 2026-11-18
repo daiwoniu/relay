@@ -67,3 +67,16 @@ export function getChinaWeatherRange(city?: string, signal?: AbortSignal, refres
   if (refresh) query.set('refresh', '1');
   return requestJson<ChinaWeatherRangeData>(`/api/public/tools/china-day/weather${query.size ? `?${query}` : ''}`, { signal, timeoutMs: 30_000, cache: 'no-store', notifyUnauthorized: false });
 }
+
+export interface ChinaWeatherHourlyData {
+  location: { city: string; latitude: number; longitude: number };
+  fetchedAt: number;
+  source: 'open-meteo';
+  hours: Array<{ time: string; temperatureC: number | null; precipitationProbabilityPercent: number | null; weatherCode: number | null }>;
+}
+
+export function getChinaWeatherHourly(city: string, signal?: AbortSignal, refresh = false): Promise<ChinaWeatherHourlyData> {
+  const query = new URLSearchParams({ city });
+  if (refresh) query.set('refresh', '1');
+  return requestJson<ChinaWeatherHourlyData>(`/api/public/tools/china-day/hourly?${query}`, { signal, timeoutMs: 30_000, cache: 'no-store', notifyUnauthorized: false });
+}

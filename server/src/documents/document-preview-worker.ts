@@ -7,6 +7,7 @@ import type { DocumentPreviewTask, DocumentPreviewTaskResult, DocumentPreviewWor
 import { createPdfPreview, inspectPdf } from './pdf-preview.js';
 import { parseSpreadsheetPreview } from './spreadsheet-preview.js';
 import { parseWordPreview } from './word-preview.js';
+import { parseArchivePreview } from './archive-preview.js';
 
 function comparablePath(value: string): string {
   const normalized = path.normalize(value);
@@ -23,8 +24,8 @@ function readStableFile(task: DocumentPreviewTask): Buffer {
   if (beforeStat.size !== task.expectedSize || beforeStat.mtimeMs !== task.expectedMtimeMs) {
     throw new DocumentPreviewError('DOCUMENT_CHANGED', '文件在预览期间发生变化，请重新打开');
   }
-  if (beforeStat.size > MAX_DOCUMENT_PREVIEW_SIZE) {
-    throw new DocumentPreviewError('DOCUMENT_LIMIT_EXCEEDED', '文档超过 3 MB 预览上限，请下载后查看');
+  if (beforeStat.size > (task.options?.maxFileSize ?? MAX_DOCUMENT_PREVIEW_SIZE)) {
+    throw new DocumentPreviewError('DOCUMENT_LIMIT_EXCEEDED', '文档超过当前预览大小上限，请调整预览容量或下载后查看');
   }
   const buffer = fs.readFileSync(beforeRealPath);
   const afterRealPath = fs.realpathSync(task.filePath);
@@ -41,10 +42,11 @@ function readStableFile(task: DocumentPreviewTask): Buffer {
 
 async function execute(task: DocumentPreviewTask): Promise<DocumentPreviewTaskResult> {
   const buffer = readStableFile(task);
-  if (task.kind === 'pdf-metadata') return { ...(await inspectPdf(buffer)), size: buffer.length };
-  if (task.kind === 'pdf-source') return { type: 'pdf-source', ...(await createPdfPreview(buffer)) };
-  if (task.kind === 'word') return { ...(await parseWordPreview(buffer)), size: buffer.length };
-  const preview = await parseSpreadsheetPreview(buffer, task.sheetName);
+  if (task.kind === 'archive') return parseArchivePreview(buffer);
+  if (task.kind === 'pdf-metadata') return { ...(await inspectPdf(buffer, task.options?.maxItems)), size: buffer.length };
+  if (task.kind === 'pdf-source') return { type: 'pdf-source', ...(await createPdfPreview(buffer, Math.min(30 * 1024 * 1024, Math.max(10 * 1024 * 1024, (task.options?.maxFileSize ?? MAX_DOCUMENT_PREVIEW_SIZE) * 1.5)), task.options?.maxItems)) };
+  if (task.kind === 'word') return { ...(await parseWordPreview(buffer, task.options?.maxItems)), size: buffer.length };
+  const preview = await parseSpreadsheetPreview(buffer, task.sheetName, task.options?.maxRows, task.options?.maxColumns);
   return 'type' in preview ? { ...preview, size: buffer.length } : preview;
 }
 

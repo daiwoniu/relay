@@ -2,6 +2,17 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { FilePreviewRequestManager } from './file-preview-request-manager.ts';
 
+test('configuration refresh retains the visible PDF until replacement and releases URLs exactly once', () => {
+  const released = [];
+  const manager = new FilePreviewRequestManager(() => {}, url => released.push(url));
+  const old = manager.begin('file'); manager.trackObjectUrl('file', old.generation, 'blob:old');
+  const next = manager.begin('file', { retainObjectUrls: true });
+  assert.equal(old.signal.aborted, true); assert.deepEqual(released, []);
+  manager.replaceObjectUrls('file', old.generation, 'blob:stale'); assert.deepEqual(released, []);
+  manager.replaceObjectUrls('file', next.generation, 'blob:new'); assert.deepEqual(released, ['blob:old']);
+  manager.dispose('file'); assert.deepEqual(released, ['blob:old', 'blob:new']);
+});
+
 test('同一标签重新加载会取消旧 generation', () => {
   const manager = new FilePreviewRequestManager();
   const first = manager.begin('tab-1');

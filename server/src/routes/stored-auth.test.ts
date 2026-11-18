@@ -19,7 +19,7 @@ const operation = '22222222-2222-4222-8222-222222222222';
 const raw = (id: string) => `synthetic-${id}-http`;
 const cookie = (id = 'admin') => `relay_session=${raw(id)}; relay_client_id=${clientId}`;
 const issuedCookie = (response: Response) => response.headers.get('set-cookie')?.match(/(?:^|[,\s])relay_session=([^;,\s]+)/)?.[1];
-type Overrides = Partial<Pick<Parameters<typeof createStoredAuthModule>[0], 'remoteAddress' | 'limiters' | 'loginTokens' | 'recheckUserAccess' | 'getCatalog'>>;
+type Overrides = Partial<Pick<Parameters<typeof createStoredAuthModule>[0], 'remoteAddress' | 'limiters' | 'loginTokens' | 'recheckUserAccess' | 'getCatalog' | 'observeLogin'>>;
 
 async function prepared(overrides: Overrides = {}) {
   const f = fixture();
@@ -62,7 +62,8 @@ async function prepared(overrides: Overrides = {}) {
 }
 
 test('HTTP login replay issues the same bounded-held token, exports public user only, and logout cannot resurrect it', async () => {
-  const p = await prepared();
+  const observed:Array<{id:string;result:string}>=[];
+  const p = await prepared({observeLogin:(_c,event)=>observed.push(event)});
   try {
     const first = await p.login(); assert.equal(first.status, 200);
     const token = issuedCookie(first); assert.ok(token);
@@ -70,6 +71,7 @@ test('HTTP login replay issues the same bounded-held token, exports public user 
     assert.equal(body.user.id, 'admin'); assert.equal('password_hash' in body.user, false); assert.equal('token' in body, false);
     assert.match(first.headers.get('set-cookie')!, /HttpOnly/); assert.match(first.headers.get('set-cookie')!, /SameSite=Lax/);
     const replay = await p.login(); assert.equal(replay.status, 200); assert.equal(issuedCookie(replay), token);
+    assert.equal(observed.length,2);assert.equal(observed[0].id,observed[1].id);assert.equal(observed[0].result,'success');
     assert.equal(p.f.scalar('SELECT count(*) FROM auth_sessions'), 4);
     const conflict = await p.login('admin', 'different-input-password'); assert.equal(conflict.status, 409);
     const me = await p.request('/me', 'GET', undefined, 'admin', { cookie: `relay_session=${token}; relay_client_id=${clientId}` });
@@ -80,6 +82,11 @@ test('HTTP login replay issues the same bounded-held token, exports public user 
     assert.equal((await p.app.request('/api/public-probe')).status, 200);
     const invalid = await p.request('/logout', 'POST', undefined, 'invalid'); assert.equal(invalid.status, 200);
   } finally { await p.cleanup(); }
+});
+
+test('登录统计观察失败不会改变真实登录结果',async()=>{
+  const p=await prepared({observeLogin:()=>{throw Error('statistics-down');}});
+  try{assert.equal((await p.login()).status,200);}finally{await p.cleanup();}
 });
 
 test('Native avatar upload/read/delete preserves binary content, access rules and bounded validation',async()=>{
@@ -164,6 +171,23 @@ test('login and current-password limits throttle only definite failures, with Re
     assert.equal((await p.request('/change-password', 'POST', wrong, 'owner')).status, 429);
     assert.equal((await p.request('/change-password', 'POST', { currentPassword: ownerPassword, newPassword: nextPassword }, 'owner')).status, 429);
     assert.equal(verifyPassword(ownerPassword, String(p.f.scalar("SELECT password_hash FROM users WHERE id='owner'"))), true);
+  } finally { await p.cleanup(); }
+});
+
+test('登录IP限流采用网关规范来源，不将不同公网访客合并且不接受原始XFF改号', async () => {
+  const loginIp = new LoginAttemptLimiter({ maxFailures: 1 });
+  const p = await prepared({ limiters: { loginClient: new LoginAttemptLimiter({ maxFailures: 50 }), loginIp } });
+  try {
+    assert.equal((await p.login('admin', 'wrong-password', { 'x-relay-client-address': '203.0.113.9',
+      'x-forwarded-for': '198.51.100.1' })).status, 429);
+    assert.ok(loginIp.getRetryAfterSeconds('203.0.113.9') > 0);
+    assert.equal(loginIp.getRetryAfterSeconds('127.0.0.1'), 0);
+    assert.equal(loginIp.getRetryAfterSeconds('198.51.100.1'), 0);
+    assert.equal((await p.login('admin', adminPassword, { 'x-relay-client-address': '203.0.113.9',
+      'x-forwarded-for': '198.51.100.2' })).status, 429);
+    const other = await p.login('admin', adminPassword, { 'x-relay-client-address': '203.0.113.10',
+      'x-relay-operation-id': '33333333-3333-4333-8333-333333333333' });
+    assert.equal(other.status, 200);
   } finally { await p.cleanup(); }
 });
 

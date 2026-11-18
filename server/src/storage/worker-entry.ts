@@ -23,6 +23,8 @@ parentPort!.on('message', (request: { protocolVersion: number; requestId: string
       if (request.protocolVersion !== 1 || request.workerGeneration !== options.generation) throw new StorageContractError('CONFLICT');
       canonicalJson(request);
       switch (request.type) {
+        case 'appendAnalytics':value=store.appendAnalytics(request.input);break;
+        case 'readAnalytics':value=store.readAnalytics(request.input);break;
         case 'readCreditResetJob':value=store.readCreditResetJob(request.input);break;
         case 'readMaintenanceState':value=store.readMaintenanceState(request.input);break;
         case 'execute': value = await store.executeWithMaintenance(request.input); break;
@@ -44,6 +46,7 @@ parentPort!.on('message', (request: { protocolVersion: number; requestId: string
         case 'checkAsyncQuestionAnswer':value=store.checkAsyncQuestionAnswer(request.input);break;
         case 'readRuntimeAsyncQuestion':value=store.readRuntimeAsyncQuestion(request.input);break;
         case 'checkWorkspaceFirstSend':value=store.checkWorkspaceFirstSend(request.input);break;
+        case 'readHostedSites':value=store.readHostedSites(request.input);break;
         case 'readSidebar':value=store.readSidebar(request.input);break;
         case 'readConcurrency':value=store.readConcurrency(request.input);break;
         case 'readStartupWorkPage':value=store.readStartupWorkPage(request.input);break;
@@ -72,6 +75,7 @@ parentPort!.on('message', (request: { protocolVersion: number; requestId: string
         case 'readSessionDetails': value = store.readSessionDetails(request.input); break;
         case 'readSessionReadReceipt': value = store.readSessionReadReceipt(request.input); break;
         case 'readNotificationPreferences': value = store.readNotificationPreferences(request.input); break;
+        case 'readPreviewPreferences': value = store.readPreviewPreferences(request.input); break;
         case 'readThemeSettings': value = store.readThemeSettings(request.input); break;
         case 'readToolsSettings': value = store.readToolsSettings(request.input); break;
         case 'readThemeAssetJob': value = store.readThemeAssetJob(request.input); break;

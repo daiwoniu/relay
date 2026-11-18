@@ -2,6 +2,7 @@ import { useState } from 'react';
 import type { LifeToolId } from './tools-state';
 import { UNIT_GROUPS, ageAt, comparePrices, convertUnit, dateDifference, discountPrice, drawOptions, parseOptions, randomGroups, shiftDate, thresholdDeal, type UnitGroupId } from './life-tools-model';
 import { CopyButton, ToolError, toolButton, toolInput } from './tool-ui';
+import { trackToolAction } from '../../analytics/tracker';
 
 const numberText = (value: number) => new Intl.NumberFormat('zh-CN', { maximumSignificantDigits: 12 }).format(value);
 const yuan = (cents: number) => `${(cents / 100).toFixed(2)} 元`;
@@ -57,8 +58,8 @@ function DateTool() {
       else {
         const age = ageAt(start, end); setResult(`${age.years} 周岁，已度过 ${age.days.toLocaleString('zh-CN')} 天。`);
       }
-      setError('');
-    } catch (reason) { setResult(''); setError(errorText(reason)); }
+      setError('');trackToolAction('dates','calculate');
+    } catch (reason) { setResult(''); setError(errorText(reason));trackToolAction('dates','calculate','invalid_input'); }
   }
   return <div className="space-y-4">
     <div role="group" aria-label="日期计算方式" className="flex flex-wrap gap-2">{([['difference', '间隔 / 倒数日'], ['shift', '前后日期'], ['age', '周岁']] as const).map(([id, label]) => <button key={id} type="button" aria-pressed={mode === id} className={`${toolButton} ${mode === id ? 'bg-[var(--color-bg-tertiary)]' : ''}`} onClick={() => { setMode(id); clear(); }}>{label}</button>)}</div>
@@ -90,8 +91,8 @@ function ShoppingTool() {
         const value = thresholdDeal(values.current, values.threshold, values.reduction);
         setResult(`${value.gap === 0 ? '已达到满减门槛。' : `还需凑单：${yuan(value.gap)}`}\n优惠后实付：${yuan(value.payable)}${value.gap === 0 ? '' : `\n与当前未优惠金额相比${value.extraPay < 0 ? '少付' : '多付'}：${yuan(Math.abs(value.extraPay))}`}`);
       }
-      setError('');
-    } catch (reason) { setResult(''); setError(errorText(reason)); }
+      setError('');trackToolAction('shopping','calculate');
+    } catch (reason) { setResult(''); setError(errorText(reason));trackToolAction('shopping','calculate','invalid_input'); }
   }
   return <div className="space-y-4">
     <div role="group" aria-label="购物计算方式" className="flex flex-wrap gap-2">{([['compare', '比较单价'], ['discount', '折扣 / 减券'], ['threshold', '单次满减']] as const).map(([id, label]) => <button key={id} type="button" aria-pressed={mode === id} className={`${toolButton} ${mode === id ? 'bg-[var(--color-bg-tertiary)]' : ''}`} onClick={() => { setMode(id); setResult(''); setError(''); }}>{label}</button>)}</div>
@@ -112,8 +113,8 @@ function RandomTool() {
     try {
       if (!/^\d+$/.test(count)) throw new Error('请输入整数数量。');
       const options = parseOptions(input), amount = Number(count);
-      setResult(mode === 'draw' ? [drawOptions(options, amount)] : randomGroups(options, amount)); setError('');
-    } catch (reason) { setResult(null); setError(errorText(reason)); }
+      setResult(mode === 'draw' ? [drawOptions(options, amount)] : randomGroups(options, amount)); setError('');trackToolAction('random','randomize');
+    } catch (reason) { setResult(null); setError(errorText(reason));trackToolAction('random','randomize','invalid_input'); }
   }
   const text = result?.map((group, i) => `${mode === 'groups' ? `第 ${i + 1} 组：\n` : ''}${group.join('\n')}`).join('\n\n') ?? '';
   return <div className="space-y-4">

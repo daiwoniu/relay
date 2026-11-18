@@ -10,14 +10,25 @@ const bundle = buildSync({ entryPoints: [fileURLToPath(new URL('./Tooltip.tsx', 
 
 function harness(t, options = {}) {
   const { initialOverlay = null, ...tooltipOptions } = options;
-  const slots = [], effects = [], timers = new Map(), frames = new Map(), listeners = new Map();
+  const slots = [], effects = [], timers = new Map(), frames = new Map(), listeners = new Map(), subscriptions = new Map(), observers = new Set(), mutations = new Set();
   let cursor = 0, nextId = 1, active = initialOverlay;
-  const original = Object.fromEntries(['window', 'document', 'setTimeout', 'clearTimeout', 'requestAnimationFrame', 'cancelAnimationFrame'].map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
+  const original = Object.fromEntries(['window', 'document', 'setTimeout', 'clearTimeout', 'requestAnimationFrame', 'cancelAnimationFrame', 'ResizeObserver', 'MutationObserver'].map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
   const surface = name => ({
-    addEventListener(type, callback, capture = false) { listeners.set(`${name}:${type}:${capture === true}`, callback); },
-    removeEventListener(type, callback, capture = false) { if (listeners.get(`${name}:${type}:${capture === true}`) === callback) listeners.delete(`${name}:${type}:${capture === true}`); },
+    addEventListener(type, callback, capture = false) {
+      const key = `${name}:${type}:${capture === true}`;
+      listeners.set(key, callback);
+      if (!subscriptions.has(key)) subscriptions.set(key, new Set());
+      subscriptions.get(key).add(callback);
+    },
+    removeEventListener(type, callback, capture = false) {
+      const key = `${name}:${type}:${capture === true}`;
+      subscriptions.get(key)?.delete(callback);
+      if (listeners.get(key) === callback) listeners.delete(key);
+    },
   });
-  globalThis.window = { ...surface('window'), matchMedia: () => ({ matches: true }), innerWidth: 1000, innerHeight: 800 };
+  globalThis.window = { ...surface('window'), matchMedia: () => ({ matches: true }), innerWidth: 1000, innerHeight: 800, getComputedStyle: () => ({ overflowX: 'hidden', overflowY: 'hidden' }) };
+  globalThis.ResizeObserver = class { constructor(callback) { this.callback = callback; observers.add(this); } observe() {} disconnect() { observers.delete(this); } };
+  globalThis.MutationObserver = class { constructor(callback) { this.callback = callback; mutations.add(this); } observe() {} disconnect() { mutations.delete(this); } };
   globalThis.document = { ...surface('document'), body: { nodeType: 1 } };
   globalThis.setTimeout = callback => { const id = nextId++; timers.set(id, callback); return id; };
   globalThis.clearTimeout = id => timers.delete(id);
@@ -34,7 +45,8 @@ function harness(t, options = {}) {
   };
   const compiled = { exports: {} };
   new Function('require', 'module', 'exports', bundle)(name => name === 'react' ? hooks : require(name), compiled, compiled.exports);
-  const box = { getBoundingClientRect: () => ({ left: 100, top: 100, width: 80, height: 30, right: 180, bottom: 130 }), matches: () => true };
+  const box = { getBoundingClientRect: () => ({ left: 100, top: 100, width: 80, height: 30, right: 180, bottom: 130 }), matches: () => true,
+    clientWidth: 80, scrollWidth: 80, clientHeight: 30, scrollHeight: 30, tagName: 'BUTTON', textContent: '完整提示', dataset: {}, querySelectorAll: () => [] };
   let props = { content: '完整提示', children: React.createElement('button', null, '查看'), ...tooltipOptions };
   function render(next = {}) {
     props = { ...props, ...next }; cursor = 0;
@@ -48,8 +60,65 @@ function harness(t, options = {}) {
     for (const slot of slots) slot?.cleanup?.();
     for (const [key, descriptor] of Object.entries(original)) { if (descriptor) Object.defineProperty(globalThis, key, descriptor); else delete globalThis[key]; }
   });
-  return { render, box, timers, listeners, frames, active: () => active, flushTimers() { const pending = [...timers.values()]; timers.clear(); pending.forEach(callback => callback()); } };
+  return { render, box, timers, listeners, frames, observers, mutations, subscriptions, active: () => active, resize() { [...observers].forEach(observer => observer.callback()); }, mutate() { [...mutations].forEach(observer => observer.callback()); }, flushTimers() { const pending = [...timers.values()]; timers.clear(); pending.forEach(callback => callback()); } };
 }
+
+test('full-text hints stay closed for complete text on hover and keyboard focus', t => {
+  const h = harness(t, { asChild: true, overflowOnly: true });
+  const trigger = h.render();
+  trigger.props.onPointerEnter({ pointerType: 'mouse', currentTarget: h.box });
+  trigger.props.onFocus({ currentTarget: h.box, target: h.box });
+  h.flushTimers();
+  assert.equal(h.active(), null);
+  assert.equal(h.timers.size, 0);
+  assert.equal(h.observers.size, 0, 'complete text must not create standing observers');
+});
+
+test('delayed full-text hints recheck layout before opening', t => {
+  const h = harness(t, { asChild: true, overflowOnly: true });
+  h.box.scrollWidth = 180;
+  h.render().props.onPointerEnter({ pointerType: 'mouse', currentTarget: h.box });
+  assert.equal(h.timers.size, 1);
+  h.box.clientWidth = 200;
+  h.flushTimers();
+  assert.equal(h.active(), null);
+});
+
+test('switching a pending explanation to full-text mode cancels it when the label is complete', t => {
+  const h = harness(t, { asChild: true });
+  h.render().props.onPointerEnter({ pointerType: 'mouse', currentTarget: h.box });
+  assert.equal(h.timers.size, 1);
+  h.render({ overflowOnly: true });
+  h.flushTimers();
+  assert.equal(h.active(), null);
+});
+
+test('visible truncated hints close on resize or text updates and release their observers', t => {
+  const h = harness(t, { asChild: true, overflowOnly: true });
+  h.box.scrollWidth = 180;
+  h.render().props.onFocus({ currentTarget: h.box, target: h.box });
+  h.render();
+  assert.ok(h.active()); assert.equal(h.observers.size, 1);
+  h.box.clientWidth = 200; h.resize(); h.render();
+  assert.equal(h.active(), null); assert.equal(h.observers.size, 0); assert.equal(h.mutations.size, 0);
+  h.box.clientWidth = 80;
+  h.render().props.onFocus({ currentTarget: h.box, target: h.box }); h.render();
+  h.box.scrollWidth = 60; h.mutate(); h.render();
+  assert.equal(h.active(), null); assert.equal(h.observers.size, 0);
+});
+
+test('one viewport resize listener handles both truncation and positioning', t => {
+  const h = harness(t, { asChild: true, overflowOnly: true });
+  h.box.scrollWidth = 180;
+  h.render().props.onFocus({ currentTarget: h.box, target: h.box }); h.render();
+  const handlers = h.subscriptions.get('window:resize:false');
+  assert.equal(handlers.size, 1);
+  h.box.clientWidth = 200;
+  [...handlers].forEach(callback => callback()); h.render();
+  assert.equal(h.active(), null);
+  assert.equal(handlers.size, 0);
+  assert.equal(h.observers.size, 0); assert.equal(h.mutations.size, 0);
+});
 
 test('Escape dismisses only the visible hint before an underlying panel handles the key', t => {
   const h = harness(t);

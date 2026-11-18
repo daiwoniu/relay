@@ -82,7 +82,7 @@
 .flow-category-grid { margin: 0; }
 .flow-capability-sections h4 { margin: 0 0 .5rem; font-size: var(--theme-font-content-small); color: var(--color-text-secondary); overflow-wrap: anywhere; }
 .flow-capability { min-width: 0; border: 1px solid color-mix(in srgb, var(--flow-type) 35%, var(--color-border)); border-radius: .5rem; background: color-mix(in srgb, var(--flow-type) 4%, var(--color-surface)); }
-.flow-capability__heading { display: grid; grid-template-columns: 1.75rem minmax(0, 1fr) auto; align-items: start; gap: .25rem .5rem; width: 100%; padding: .625rem; text-align: left; border-radius: inherit; }
+.flow-capability__heading { display: grid; grid-template-columns: 1.75rem minmax(0, 1fr) auto; align-items: start; gap: .125rem .5rem; width: 100%; min-height: 2.75rem; padding: .375rem .5rem; line-height: 1.35; text-align: left; border-radius: inherit; }
 .flow-capability__heading:hover { background: color-mix(in srgb, var(--flow-type) 8%, var(--color-surface)); }
 .flow-capability__heading[aria-expanded="true"] { border-radius: .5rem .5rem 0 0; background: color-mix(in srgb, var(--flow-type) 12%, var(--color-surface)); }
 .flow-capability--group { border-radius: .625rem; }
@@ -91,9 +91,9 @@
 .flow-capability--group-body > .flow-capability__occurrences { display: grid; grid-template-columns: repeat(var(--flow-columns, 1), minmax(0, 1fr)); align-items: start; gap: .5rem .75rem; padding: 0; border: 0; background: transparent; border-radius: 0; }
 .flow-capability__heading:focus-visible, .process-flow--category .flow-node__summary:focus-visible { outline: 2px solid var(--color-focus-ring); outline-offset: 2px; }
 .flow-capability__toggle { grid-column: 1; grid-row: 1 / span 2; display: flex; align-items: center; gap: .125rem; color: var(--flow-type); }
-.flow-capability__identity { grid-column: 2; grid-row: 1 / span 2; min-width: 0; display: flex; flex-direction: column; gap: .125rem; }
+.flow-capability__identity { grid-column: 2; grid-row: 1 / span 2; min-width: 0; display: flex; flex-direction: column; gap: .0625rem; }
 .flow-capability__identity strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.flow-capability__identity small { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; line-height: 1.5; }
+.flow-capability__identity small { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; line-height: 1.35; }
 .flow-capability__identity strong { font-size: var(--theme-font-content-small); }
 .flow-capability__heading small { color: var(--color-text-secondary); }
 .flow-capability__count { font-size: var(--theme-font-content-small); color: var(--color-text-secondary); white-space: nowrap; }
@@ -101,7 +101,7 @@
 .flow-capability__state { max-width: 6rem; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .flow-capability__heading .flow-capability__state--failed { color: var(--color-status-danger); }
 .flow-capability__heading .flow-capability__state--active { color: var(--color-status-processing); }
-@media (max-width: 520px) { .flow-capability__state { grid-column: 2 / -1; grid-row: 3; max-width: none; text-align: left; } }
+@media (max-width: 520px) { .flow-capability__state { max-width: 5rem; } }
 .flow-capability__occurrences { display: flex; flex-direction: column; gap: .5rem; padding: .75rem; min-width: 0; border-top: 1px solid var(--color-border); background: var(--color-bg-tertiary); border-radius: 0 0 .5rem .5rem; }
 .flow-capability__occurrences > .flow-more { grid-column: 1 / -1; }
 .flow-capability__operations { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -115,6 +115,19 @@
 .process-flow--category .flow-node--body-only { border: 0; background: transparent; }
 .flow-node--body-only > .flow-node__detail { padding: 0; }
 .flow-file-list { display: grid; gap: .25rem; padding: .375rem .625rem; margin: 0; list-style: none; overflow-wrap: anywhere; font-family: var(--font-mono, monospace); font-size: var(--theme-font-content-small); }
+.process-file-list { display: flex; flex-direction: column; gap: .375rem; min-width: 0; margin-bottom: .375rem; }
+.process-file-list + .flow-raw { margin-top: .375rem; }
+.process-file-list__notice { margin: 0; color: var(--color-text-tertiary); font-size: var(--theme-font-content-small); }
+.process-file-list__row { display: flex; align-items: center; gap: .5rem; width: 100%; min-width: 0; min-height: 44px; padding: .375rem .5rem; border: 1px solid var(--color-border-light); border-radius: .375rem; background: var(--color-surface); text-align: left; color: var(--color-text); }
+.process-file-list__row:hover:not(:disabled) { background: var(--color-surface-hover); }
+.process-file-list__row:focus-visible { outline: 2px solid var(--color-focus-ring); outline-offset: 2px; }
+.process-file-list__row:disabled { opacity: .6; cursor: default; }
+.process-file-list__thumbnail { display: flex; align-items: center; justify-content: center; flex: 0 0 3rem; height: 3rem; overflow: hidden; border-radius: .25rem; color: var(--color-text-tertiary); background: var(--color-bg-tertiary); }
+.process-file-list__thumbnail img { width: 100%; height: 100%; object-fit: contain; }
+.process-file-list__identity { display: flex; flex: 1; flex-direction: column; gap: .125rem; min-width: 0; font-size: var(--theme-font-content-small); }
+.process-file-list__name, .process-file-list__directory { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.process-file-list__directory { color: var(--color-text-tertiary); }
+.process-file-list__action { flex-shrink: 0; color: var(--color-text-secondary); font-size: var(--theme-font-content-small); }
 .flow-node__children > .flow-branch__nodes { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr)); align-items: start; border-inline-start: 1px dashed var(--flow-rail); padding-inline-start: .75rem; }
 .flow-node__rail { --flow-link-tone: color-mix(in srgb, var(--flow-type) 55%, var(--color-border)); position: absolute; left: -.95rem; top: -.5rem; bottom: -.5rem; width: .5rem; pointer-events: none; }
 .flow-node__line { position: absolute; top: 0; bottom: 0; left: calc(50% - 1px); width: 2px; border-radius: 2px; overflow: hidden; background: linear-gradient(var(--flow-node-tone) 1.8rem, var(--flow-link-tone)); }

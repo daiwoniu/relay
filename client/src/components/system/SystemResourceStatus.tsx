@@ -1,3 +1,4 @@
+import { formatClockTime } from '../../utils/date-display.ts';
 import Tooltip from '../ui/Tooltip';
 import { useEffect, useState } from 'react';
 import { getSystemResourceStatus } from '../../api/system';
@@ -41,7 +42,7 @@ export default function SystemResourceStatus({ active }: { active: boolean }) {
     unknown: 'border-[var(--color-border)] bg-[var(--color-bg-secondary)]',
   }[presentation.tone];
   const observedAt = snapshot?.observedAt
-    ? new Date(snapshot.observedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+    ? formatClockTime(snapshot.observedAt, { seconds: true })
     : null;
 
   return <section data-system-resource-status={presentation.tone} className={`rounded-xl border px-3 py-2.5 ${toneClass}`}>
@@ -63,7 +64,7 @@ export default function SystemResourceStatus({ active }: { active: boolean }) {
       <div className="mt-2 font-medium text-[var(--color-text)]">占用前 5 名 · 同名进程合计</div>
       {processes.available && processes.rows.length > 0 ? <ol className="mt-1 space-y-1">
         {processes.rows.map((row, index) => <li key={row.name} className="flex items-baseline justify-between gap-3">
-          <Tooltip content={row.name} asChild><span className="min-w-0 truncate text-[var(--color-text-secondary)]">
+          <Tooltip overflowOnly content={row.name} asChild><span className="min-w-0 truncate text-[var(--color-text-secondary)]">
             <span className="mr-1.5 text-[var(--color-text-tertiary)]">{index + 1}.</span>{row.name}
             <span className="ml-1 text-[10px] text-[var(--color-text-tertiary)]">({row.processCount})</span>
           </span></Tooltip>

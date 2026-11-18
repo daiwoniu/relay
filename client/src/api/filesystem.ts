@@ -1,5 +1,8 @@
-import { jsonBody, requestBlob, requestJson } from './client';
+import { ApiError, jsonBody, requestBlob, requestJson } from './client';
+import { getMediaFileType, type MediaFileType } from '../utils/media-file';
+import { getEffectivePreviewPreferences } from '../stores/preview-preferences';
 import type {
+  ArchivePreviewDto,
   FileAccessResponseDto,
   HostFileAuthorizationResponseDto,
   OkDto,
@@ -40,10 +43,12 @@ export interface CreateDirectoryResult {
 }
 
 export type FileReadResult =
-  | { type: 'text'; content: string; language: string; size: number; truncated?: boolean }
+  | ({ type: 'media'; size: number } & MediaFileType)
+  | { type: 'text'; content: string; language: string; size: number; truncated?: boolean; truncationReason?: 'file-size' | 'output-size' }
   | { type: 'image'; dataUrl: string; size: number }
   | { type: 'image-preview-required'; size: number; message: string }
   | PdfDocumentPreviewDto
+  | ArchivePreviewDto
   | WordDocumentPreviewDto
   | SpreadsheetDocumentPreviewDto;
 
@@ -88,7 +93,22 @@ interface FileRequestOptions {
   timeoutMs?: number;
 }
 
-export function readFile(path: string, accessToken?: string, options: FileRequestOptions = {}): Promise<FileReadResult> {
+export function assertMediaPreviewCapacity(size: number): void {
+  const limitMb = getEffectivePreviewPreferences().capacity.fileSizeMb;
+  if (size > limitMb * 1024 * 1024) {
+    throw new ApiError(400, { error: `音视频文件超过当前预览容量（${limitMb} MB），请调整预览容量或下载后查看`, code: 'FILE_PREVIEW_TOO_LARGE' });
+  }
+}
+
+export async function readFile(path: string, accessToken?: string, options: FileRequestOptions = {}): Promise<FileReadResult> {
+  const mediaType = getMediaFileType(path);
+  if (mediaType) {
+    // Metadata uses the same authorization boundary, including temporary file grants.
+    const metadata = await readFileMetadata(path, accessToken, options);
+    options.signal?.throwIfAborted();
+    assertMediaPreviewCapacity(metadata.size);
+    return { type: 'media', ...mediaType, size: metadata.size };
+  }
   const query = new URLSearchParams({ path });
   if (accessToken) query.set('accessToken', accessToken);
   return requestJson(`/api/filesystem/read?${query.toString()}`, { signal: options.signal, timeoutMs: options.timeoutMs ?? 10_000 });

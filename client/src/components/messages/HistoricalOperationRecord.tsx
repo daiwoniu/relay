@@ -1,3 +1,4 @@
+import { formatDateTime } from '../../utils/date-display.ts';
 import { useState } from 'react';
 import type { Message } from '../../stores/chat';
 import ProcessSteps from './ProcessSteps';
@@ -20,7 +21,7 @@ export default function HistoricalOperationRecord({ message, onLoadDetails, sear
   };
   return <details data-message-id={message.id} open={searchTarget || undefined}
     className={`rounded-lg border border-[var(--color-border-light)] px-3 py-2 text-xs text-[var(--color-text-secondary)] ${searchTarget ? 'search-target-message' : ''}`}>
-    <summary className="cursor-pointer min-h-8 leading-8">历史操作记录 · {new Date(message.created_at).toLocaleString()}</summary>
+    <summary className="cursor-pointer min-h-8 leading-8">历史操作记录 · {formatDateTime(message.created_at, { seconds: true })}</summary>
     {message.items ? <ProcessSteps steps={message.items} sessionId={message.session_id}
       processTimeline={message.processTimeline} defaultCollapsed={false} settled
       searchTargetScope={searchTarget ? searchTargetScope : undefined}

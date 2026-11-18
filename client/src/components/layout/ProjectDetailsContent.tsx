@@ -3,10 +3,28 @@ import type { Project } from '../../stores/chat';
 import { copyToClipboard } from '../../utils/clipboard';
 import IconActionButton from '../ui/IconActionButton';
 import MiddleEllipsisPath from '../ui/MiddleEllipsisPath';
+import { getProject } from '../../api/projects';
+import { formatResourcePerson } from '../../utils/resource-person';
 
-export default function ProjectDetailsContent({ project, sessionCount }: { project: Project; sessionCount: number }) {
+export default function ProjectDetailsContent({ project }: { project: Project }) {
+  const [summary, setSummary] = useState<{ id: string; count?: number; shared?: boolean; failed?: boolean } | null>(null);
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle');
   const feedbackTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    setSummary(null);
+    void getProject(project.id, controller.signal).then((details) => {
+      if (!controller.signal.aborted) setSummary({ id: project.id, count: details.session_count,
+        shared: !!details.access_role && details.access_role !== 'owner' });
+    }).catch(() => {
+      if (!controller.signal.aborted) setSummary({ id: project.id, failed: true });
+    });
+    return () => controller.abort();
+  }, [project.id]);
+
+  const currentSummary = summary?.id === project.id ? summary : null;
+  const sessionCount = !currentSummary ? '正在读取…' : currentSummary.failed ? '读取失败' : currentSummary.count ?? '—';
 
   useEffect(() => () => {
     if (feedbackTimer.current) clearTimeout(feedbackTimer.current);
@@ -27,12 +45,13 @@ export default function ProjectDetailsContent({ project, sessionCount }: { proje
   };
 
   return (
-    <div className="space-y-1.5">
-      <div className="truncate font-medium text-[var(--color-text)]">{project.name}</div>
+    <div className="space-y-1.5 text-xs">
+      <div className="break-words font-medium text-[var(--color-text)]">{project.name}</div>
       <div className="text-[var(--color-text-secondary)]">会话数：{sessionCount}</div>
-      <div className="text-[var(--color-text-secondary)]">创建人：{project.owner ? `${project.owner.displayName} (@${project.owner.username})` : '未知'}</div>
+      {currentSummary?.shared && <div className="text-[11px] text-[var(--color-text-tertiary)]">仅统计你有权限查看的会话</div>}
+      <div className="break-words text-[var(--color-text-secondary)]">创建人：{formatResourcePerson(project.owner)}</div>
       {project.deletion_protected ? <div className="text-[var(--color-danger-text)]">删除保护：已开启</div> : null}
-      <div className="text-[11px] text-[var(--color-text-tertiary)]">相同目录可被多个账号登记；目录文件共享，Relay 项目与会话仍各自独立。</div>
+      <div className="select-all break-all border-t border-[var(--color-border-light)] pt-1.5 text-[11px] text-[var(--color-text-tertiary)]">项目 ID：{project.id}</div>
       <div className="flex min-w-0 items-center gap-1">
         {copyState === 'failed' ? (
           <div className="min-w-0 flex-1 truncate text-[11px] text-[var(--color-danger-text)]">复制失败，请重试</div>
@@ -61,6 +80,7 @@ export default function ProjectDetailsContent({ project, sessionCount }: { proje
           )}
         </IconActionButton>
       </div>
+      <div className="text-[11px] text-[var(--color-text-tertiary)]">相同目录可被多个账号登记；目录文件共享，Relay 项目与会话仍各自独立。</div>
     </div>
   );
 }

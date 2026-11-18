@@ -30,7 +30,7 @@ export default function ProcessPlan({ plan, running, searchTarget = false }: {
       data-search-target={searchTarget ? `operation:${plan.id}` : undefined}
       data-search-content={searchTarget ? true : undefined}>
       <div className="process-plan__header">
-        <Tooltip content={title} asChild><div className="process-plan__title">{title}</div></Tooltip>
+        <Tooltip overflowOnly content={title} asChild><div className="process-plan__title">{title}</div></Tooltip>
         <div className="process-plan__count">{plan.completed}/{plan.entries.length}</div>
       </div>
       <div

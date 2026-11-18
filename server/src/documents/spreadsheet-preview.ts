@@ -35,7 +35,7 @@ function summarizeSheet(worksheet: ExcelJS.Worksheet): SpreadsheetSheetSummaryDt
     name: worksheet.name,
     state: sheetState(worksheet.state),
     totalRows: worksheet.actualRowCount,
-    totalColumns: worksheet.actualColumnCount,
+    totalColumns: worksheet.columnCount,
   };
 }
 
@@ -44,13 +44,13 @@ function formulaOf(value: ExcelJS.CellValue): string | undefined {
   return String(value.formula).slice(0, MAX_SPREADSHEET_CELL_TEXT_SIZE);
 }
 
-function previewSheet(worksheet: ExcelJS.Worksheet): SpreadsheetSheetPreviewDto {
+function previewSheet(worksheet: ExcelJS.Worksheet, maxRows: number, maxColumns: number): SpreadsheetSheetPreviewDto {
   const totalRows = worksheet.actualRowCount;
-  const totalColumns = worksheet.actualColumnCount;
-  const displayedColumns = Math.min(totalColumns, MAX_SPREADSHEET_PREVIEW_COLUMNS);
+  const totalColumns = worksheet.columnCount;
+  const displayedColumns = Math.min(totalColumns, maxColumns);
   const rows: SpreadsheetSheetPreviewDto['rows'] = [];
   worksheet.eachRow({ includeEmpty: false }, (row, rowNumber) => {
-    if (rows.length >= MAX_SPREADSHEET_PREVIEW_ROWS) return;
+    if (rows.length >= maxRows) return;
     const cells = Array.from({ length: displayedColumns }, (_, index) => {
       const column = index + 1;
       const cell = row.getCell(column);
@@ -81,6 +81,8 @@ function previewSheet(worksheet: ExcelJS.Worksheet): SpreadsheetSheetPreviewDto 
 export async function parseSpreadsheetPreview(
   buffer: Buffer,
   requestedSheet?: string,
+  maxRows = MAX_SPREADSHEET_PREVIEW_ROWS,
+  maxColumns = MAX_SPREADSHEET_PREVIEW_COLUMNS,
 ): Promise<Omit<SpreadsheetDocumentPreviewDto, 'size'> | { sheet: SpreadsheetSheetPreviewDto }> {
   const workbook = await loadWorkbook(buffer);
   if (workbook.worksheets.length > MAX_SPREADSHEET_SHEETS) {
@@ -94,9 +96,10 @@ export async function parseSpreadsheetPreview(
     if (requestedSheet) throw new DocumentPreviewError('SHEET_NOT_FOUND', '未找到指定工作表');
     throw new DocumentPreviewError('DOCUMENT_INVALID', 'Excel 文件不包含可预览的工作表');
   }
-  const activeSheet = previewSheet(worksheet);
+  const activeSheet = previewSheet(worksheet, maxRows, maxColumns);
   const result = requestedSheet ? { sheet: activeSheet } : { type: 'spreadsheet' as const, sheets, activeSheet };
-  if (Buffer.byteLength(JSON.stringify(result), 'utf8') > MAX_SPREADSHEET_JSON_SIZE) {
+  const maxJsonSize = Math.min(24 * 1024 * 1024, Math.max(MAX_SPREADSHEET_JSON_SIZE, maxRows * maxColumns * 128));
+  if (Buffer.byteLength(JSON.stringify(result), 'utf8') > maxJsonSize) {
     throw new DocumentPreviewError('DOCUMENT_LIMIT_EXCEEDED', 'Excel 预览内容过大，请下载后查看');
   }
   return result;

@@ -21,7 +21,7 @@ export default function MaintenanceOutput({ snapshot, disconnected = false, clas
       </span>
     </div>
     <div className="maintenance-output__screen">
-      {rows.map((line, index) => <Tooltip key={`${snapshot?.operationId ?? 'waiting'}-${snapshot?.sequence ?? 0}-${index}`} content={line ?? undefined} asChild><div
+      {rows.map((line, index) => <Tooltip overflowOnly key={`${snapshot?.operationId ?? 'waiting'}-${snapshot?.sequence ?? 0}-${index}`} content={line ?? undefined} asChild><div
         className={`maintenance-output__line ${index === 1 ? 'maintenance-output__line--current' : 'maintenance-output__line--previous'} ${line ? '' : 'is-empty'}`}
       >{line ?? '\u00a0'}</div></Tooltip>)}
     </div>

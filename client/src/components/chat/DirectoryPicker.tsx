@@ -149,7 +149,7 @@ export default function DirectoryPicker({ initialPath, onSelect, onCancel }: Pro
           <FileBrowserSearchButton open={searchOpen} onToggle={toggleSearch} disabled={loading} />
         </>
       }
-      footer={<><Tooltip content={currentPath || undefined} asChild><span className="min-w-0 truncate text-xs text-[var(--color-text-tertiary)]">{currentPath ? `将选择：${currentPath}` : '单击进入目录'}</span></Tooltip><div className="flex shrink-0 items-center gap-2"><button onClick={onCancel} className="rounded-lg px-3 py-1.5 text-sm text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-hover)]">取消</button><button onClick={confirmSelection} disabled={!currentPath || Boolean(error) || loading || creating} className="rounded-lg bg-[var(--color-primary)] px-3 py-1.5 text-sm text-[var(--theme-on-primary)] disabled:cursor-not-allowed disabled:opacity-40">选择当前目录</button></div></>}
+      footer={<><Tooltip overflowOnly content={currentPath || undefined} asChild><span className="min-w-0 truncate text-xs text-[var(--color-text-tertiary)]">{currentPath ? `将选择：${currentPath}` : '单击进入目录'}</span></Tooltip><div className="flex shrink-0 items-center gap-2"><button onClick={onCancel} className="rounded-lg px-3 py-1.5 text-sm text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-hover)]">取消</button><button onClick={confirmSelection} disabled={!currentPath || Boolean(error) || loading || creating} className="rounded-lg bg-[var(--color-primary)] px-3 py-1.5 text-sm text-[var(--theme-on-primary)] disabled:cursor-not-allowed disabled:opacity-40">选择当前目录</button></div></>}
     >
         {isCreatingDirectory && (
           <form onSubmit={handleCreateDirectory} className="border-b border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3">

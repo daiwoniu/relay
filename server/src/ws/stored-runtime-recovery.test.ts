@@ -9,12 +9,13 @@ import type { EngineAdapter,EngineConnectionOptions,EngineEvent } from '../engin
 import { buildEngineTurnFact } from '../engine/turn-fact-builder.js';
 const until=async(check:()=>boolean)=>{for(let n=0;n<400&&!check();n++)await new Promise(r=>setTimeout(r,5));assert.ok(check(),'recovery stage timed out');};
 
-for(const mode of ['running','suspended','completed','lost-terminal-projection','interrupt','stopping','stopping-completed'] as const)test(`Native cold recovery ${mode} never resends the original input`,async()=>{
+for(const mode of ['running','suspended','completed','lost-terminal-projection','interrupt','stopping','stopping-completed','image-realtime','image-recovery'] as const)test(`Native cold recovery ${mode} never resends the original input`,async()=>{
   const f=fixture(),sessionId=randomUUID(),attemptId=randomUUID();
   f.mutate('DELETE FROM engine_resource_leases;DELETE FROM messages;DELETE FROM sessions');
   let port=await StorageWorkerClient.open({filename:f.filename,storeId:'store',generation:1,initialize:true,defaultConcurrency:{'codex:default':1}});
   let graph:StoredRuntimeGraph|undefined,connections=0,sends=0,cancels=0,options:EngineConnectionOptions|undefined,sequence=0;
   const diagnostics:string[]=[];
+  const images=()=>Array.from({length:3},(_,n)=>({id:`image-${n}`,type:'imageGeneration',status:'completed',result:'A'.repeat(4*1024*1024),savedPath:`image-${n}.png`}));
   const emit=(payload:EngineEvent,source:'recovery'|'realtime')=>options!.onEvent({engineId:'codex',payload,meta:{source,sequence:++sequence,observedAt:Date.now(),externalSessionId:'external',externalTurnId:'turn'}});
   try{
     const enqueued=await port.execute({...markRead(),operationId:'enqueue',command:{name:'turn.enqueue',input:{sessionId,attemptId,messageId:randomUUID(),engineId:'codex',resourceKey:'codex:default',content:'original input must not resend',metadata:null,expectedPreferencesRevision:0,origin:{kind:'direct'},draft:{projectId:'project',title:'Recovery',titleManuallySet:false}}}});assert.equal(enqueued.state,'committed');
@@ -39,12 +40,12 @@ for(const mode of ['running','suspended','completed','lost-terminal-projection',
     const registry=new EngineRegistry([{id:'codex',availability:{getCurrent:()=>({available:true})},recovery:{restartMode:mode==='interrupt'?'interrupt':'resume'},runtime:{connect:(input:EngineConnectionOptions)=>{
       connections++;options=input;
       assert.equal(input.recoverTurnId,'turn');assert.equal(input.externalSessionId,'external');
-      void Promise.resolve().then(async()=>{await input.onSessionReady('external');emit({type:'recovery_snapshot',turnId:'turn',status:mode==='running'||mode==='suspended'||mode==='stopping'?'inProgress':'completed',content:mode==='running'||mode==='suspended'||mode==='stopping'?'':'recovered answer',items:[],waitingOnInteraction:false},'recovery');});
+      void Promise.resolve().then(async()=>{await input.onSessionReady('external');emit({type:'recovery_snapshot',turnId:'turn',status:mode==='running'||mode==='suspended'||mode==='stopping'||mode==='image-realtime'?'inProgress':'completed',content:mode==='running'||mode==='suspended'||mode==='stopping'||mode==='image-realtime'?'':'recovered answer',items:mode==='image-recovery'?images():[],waitingOnInteraction:false},'recovery');});
       return{send:()=>{sends++;throw Error('recovery sent input');},cancel:async()=>{cancels++;emit({type:'error',diagnostic:{code:'CODEX_TURN_INTERRUPTED',phase:'send',retryable:false,userMessage:'synthetic interruption'}},'realtime');},respondToInteraction:()=>{},close:()=>input.onClosed()};
     }}} as unknown as EngineAdapter]);
-    graph=new StoredRuntimeGraph({port,storeId:'store',generation:2,registry,assertExclusiveWriter:async()=>{},collectFileChanges:async()=>({}),attachmentAvailability:()=>false,resolveResource:()=>({label:'Synthetic',defaultMaxActiveTurns:1}),diagnostic:code=>diagnostics.push(code)});
+    graph=new StoredRuntimeGraph({port,storeId:'store',generation:2,registry,assertExclusiveWriter:async()=>{},collectFileChanges:async()=>mode.startsWith('image-')?{changedFiles:[{path:'image-0.png',changeType:'added'}]}:{},attachmentAvailability:()=>false,resolveResource:()=>({label:'Synthetic',defaultMaxActiveTurns:1}),diagnostic:code=>diagnostics.push(code)});
     const result=await graph.restoreStartup();assert.equal(result.restored,1);assert.equal(sends,0);
-    if(mode==='running'||mode==='suspended'){
+    if(mode==='running'||mode==='suspended'||mode==='image-realtime'){
       assert.equal(f.scalar(`SELECT status FROM sessions WHERE id='${sessionId}'`),'processing');
       assert.equal(graph.runtimes.get(sessionId)!.isRecovering,false);assert.equal(f.scalar(`SELECT count(*) FROM engine_resource_leases WHERE session_id='${sessionId}'`),1);
       if(mode==='suspended'){
@@ -57,6 +58,7 @@ for(const mode of ['running','suspended','completed','lost-terminal-projection',
         graph=new StoredRuntimeGraph({port,storeId:'store',generation:3,registry,assertExclusiveWriter:async()=>{},collectFileChanges:async()=>({}),attachmentAvailability:()=>false,resolveResource:()=>({label:'Synthetic',defaultMaxActiveTurns:1}),diagnostic:code=>diagnostics.push(code)});
         assert.equal((await graph.restoreStartup()).restored,1);
       }
+      if(mode==='image-realtime')for(const item of images())emit({type:'item_complete',item},'realtime');
       emit({type:'message_complete',turnId:'turn',content:'recovered answer'},'realtime');await until(()=>!graph!.runtimes.get(sessionId)!.isRunning);
     }
     assert.equal(connections,mode==='interrupt'?0:mode==='suspended'?2:1);
@@ -66,6 +68,14 @@ for(const mode of ['running','suspended','completed','lost-terminal-projection',
     if(mode==='stopping-completed')assert.equal(f.scalar(`SELECT content FROM messages WHERE session_id='${sessionId}' AND role='assistant'`),'recovered answer');
     if(mode==='lost-terminal-projection')assert.equal(f.scalar(`SELECT json_extract(items,'$[0].id') FROM messages WHERE session_id='${sessionId}' AND role='assistant'`),'async-question:recover-question');
     assert.equal(f.scalar(`SELECT count(*) FROM engine_resource_leases WHERE session_id='${sessionId}'`),0);
+    if(mode.startsWith('image-')){
+      const saved=String(f.scalar(`SELECT items FROM messages WHERE session_id='${sessionId}' AND role='assistant'`));
+      assert.equal(JSON.parse(saved).length,3);assert.ok(saved.length<4096);
+      assert.equal(JSON.parse(saved)[0].details.result,undefined);
+      assert.equal(f.scalar(`SELECT content FROM messages WHERE session_id='${sessionId}' AND role='assistant'`),'recovered answer');
+      assert.equal(f.scalar(`SELECT json_extract(metadata,'$.changedFiles[0].path') FROM messages WHERE session_id='${sessionId}' AND role='assistant'`),'image-0.png');
+      assert.equal(f.scalar(`SELECT count(*) FROM engine_terminal_decisions WHERE session_id='${sessionId}'`),1);
+    }
     assert.deepEqual(diagnostics,[]);
   }finally{try{await graph?.close();}catch{/* Preserve assertions while always closing the worker. */}await port.close();f.cleanup();}
 });

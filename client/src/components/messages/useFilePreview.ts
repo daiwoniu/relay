@@ -2,7 +2,7 @@ import { useCallback } from 'react';
 import { ApiError } from '../../api/client';
 import { readFile } from '../../api/filesystem';
 import { useChatStore } from '../../stores/chat';
-import { buildFileMetadataUpdate, buildFilePreviewUpdate, disposeFilePreviewUpdate, EMPTY_FILE_PREVIEW_MODES } from '../layout/file-preview-state';
+import { buildFileMetadataUpdate, buildFilePreviewUpdate, disposeFilePreviewUpdate, getFilePreviewObjectUrl, EMPTY_FILE_PREVIEW_MODES } from '../layout/file-preview-state';
 import { filePreviewRequestManager } from '../layout/file-preview-request-manager';
 import type { HtmlPreviewMode } from '../../stores/chat';
 
@@ -54,8 +54,9 @@ export function useFilePreview() {
         disposeFilePreviewUpdate(update);
         return;
       }
-      if (update.documentPreview?.type === 'pdf-document') {
-        filePreviewRequestManager.trackObjectUrl(tabId, request.generation, update.documentPreview.previewUrl);
+      const objectUrl = getFilePreviewObjectUrl(update);
+      if (objectUrl) {
+        filePreviewRequestManager.trackObjectUrl(tabId, request.generation, objectUrl);
       }
     } catch (error) {
       if (request.signal.aborted || !filePreviewRequestManager.isCurrent(tabId, request.generation)) return;

@@ -12,6 +12,81 @@ const project = { projectPath: 'D:/work/relay', projectName: 'Relay' };
 const input = (extra = {}) => ({ sessionId: 's1', messages: [message('root')], followups: [], steps: [], timeline: [], ...project, ...extra });
 const followup = (id, state = 'steered', extra = {}) => ({ id, sessionId: 's1', state, content: id, createdAt: 150, replyToAsyncQuestionId: null, errorCode: null, ...extra });
 
+test('运行过程先于原始用户输入加载时仍生成可展示上下文，不伪造输入关联', () => {
+  const activity = step('activity', 'subAgentActivity', { kind: 'interacted', agentPath: '/root/food_sample' });
+  assert.equal(captureProcessFlow(null, input({ messages: [], steps: [activity] })), null);
+  const pending = captureProcessFlow(null, input({ messages: [], steps: [activity], allowMissingRoot: true }));
+  assert.equal(pending.root.state, 'unknown');
+  assert.equal(pending.root.positionKnown, false);
+  assert.deepEqual(pending.inputs, []);
+  assert.equal(pending.steps[0], activity);
+  assert.equal(getFlowCompletionMessage(pending, [message('legacy', 'assistant', '')]), undefined);
+  pending.ui.view = 'category';
+  const refreshed = captureProcessFlow(pending, input({ messages: [], steps: [activity], allowMissingRoot: true }));
+  assert.strictEqual(refreshed.ui, pending.ui);
+  const loaded = captureProcessFlow(refreshed, input({ allowMissingRoot: true }));
+  assert.equal(loaded.root.id, 'input:root');
+  assert.equal(loaded.ui.view, 'category');
+  assert.equal(captureProcessFlow(loaded, input({ messages: [message('done', 'assistant')], allowMissingRoot: true })), null);
+  const switched = captureProcessFlow(pending, input({ sessionId: 's2', messages: [], allowMissingRoot: true }));
+  assert.notStrictEqual(switched.ui, pending.ui);
+});
+
+test('时间流和分类流保留子代理路径中的任务名与活动类型', () => {
+  const activity = step('activity', 'subAgentActivity', { kind: 'completed', agentPath: '/root/food_sample' });
+  const node = presentFlowStep(activity, project);
+  assert.equal(node.subtitle, 'food_sample');
+  assert.equal(getFlowStatusLabel(node), '执行结束');
+  for (const mode of ['time', 'category']) {
+    const groups = groupFlowNodes([node], mode);
+    assert.equal(groups.flatMap(group => group.nodes)[0].subtitle, 'food_sample');
+  }
+});
+
+test('隐藏交互通知不丢失锚定其后的真实补充输入，冷恢复同样过滤', () => {
+  const hidden = step('hidden', 'subAgentActivity', { kind: 'interacted', agentPath: '/root/food_sample' });
+  const actual = step('visible', 'subAgentActivity', { kind: 'completed', agentThreadId: 'child' });
+  const context = captureProcessFlow(null, input({ steps: [hidden, actual] }));
+  context.inputs.push({ id: 'supplement', content: '补充要求', state: 'completed', positionKnown: true, afterItemId: 'hidden' });
+  for (const streaming of [true, false]) {
+    const nodes = buildFlowNodes(context, streaming ? [hidden, actual] : [], timeline('hidden', 'visible'), { streaming });
+    assert(!nodes.some(node => node.id === 'hidden'));
+    assert(nodes.some(node => node.id === 'visible'));
+    const supplement = nodes.find(node => node.id === 'supplement');
+    assert.equal(supplement.positionKnown, true);
+    assert(nodes.indexOf(supplement) < nodes.findIndex(node => node.id === 'visible'));
+  }
+  assert.deepEqual(context.steps.map(step => step.id), ['hidden', 'visible']);
+});
+
+test('输入暂时缺失和恢复保留展示选择，不把旧输入及节点展开状态移给未知回合', () => {
+  const first = captureProcessFlow(null, input());
+  first.ui.view = 'category'; first.ui.details['old-node'] = true;
+  const missing = captureProcessFlow(first, input({ messages: [], allowMissingRoot: true }));
+  assert.equal(missing.ui.view, 'category');
+  assert.deepEqual(missing.ui.details, {});
+  assert.equal(missing.root.state, 'unknown');
+  assert.equal(missing.turnId, '');
+  const restored = captureProcessFlow(missing, input({ allowMissingRoot: true }));
+  assert.equal(restored.ui.view, 'category');
+  assert.equal(restored.root.id, 'input:root');
+});
+
+test('分类流按明确子线程归并活动，保留两轮结束记录且不合并同名不同线程', () => {
+  const events = [
+    ['a', 'child-a', 'completed'], ['b', 'child-a', 'interacted'], ['c', 'child-a', 'completed'],
+    ['d', 'child-b', 'started'], ['e', undefined, 'started'], ['f', undefined, 'started'],
+  ].map(([id, agentThreadId, kind]) => presentFlowStep(step(id, 'subAgentActivity', { agentPath: '/root/food_sample', agentThreadId, kind }), project));
+  const buckets = groupFlowCapabilities(events, 'action');
+  assert.equal(buckets.length, 4);
+  assert.deepEqual(buckets[0].nodes.map(node => node.id), ['a', 'b', 'c']);
+  assert.equal(buckets[0].label, 'food_sample');
+  assert.equal(buckets[0].detail, '执行结束');
+  assert.equal(buckets[1].detail, '已启动');
+  assert.equal(groupFlowCapabilities(events.slice(0, 2), 'action')[0].detail, '发生交互');
+  assert.deepEqual(groupFlowNodes(events, 'time').flatMap(group => group.nodes).map(node => node.id), ['a', 'b', 'c', 'd', 'e', 'f']);
+});
+
 test('技能目录脚本按所属技能和明确子命令汇总，不按脚本文件误归独立代码类', () => {
   const commands=['python ai/skills/Db/scripts/db.py --profile local query --sql "select 1"','python D:/work/relay/ai/skills/Db/scripts/db.py --profile=other query --sql "select 2"','python ai/skills/Db/scripts/db.py write --input private.json','cat ai/skills/Db/SKILL.md'];
   const nodes=commands.map((command,index)=>presentFlowStep(step(`skill-operation-${index}`,'commandExecution',{command}),project));

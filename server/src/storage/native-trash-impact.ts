@@ -58,8 +58,9 @@ export function readTrashImpact(db: DB, actor: Actor, kind: 'project' | 'session
   };
   scan('projects', 'id=?', [String(project.id)]);
   const sessionCount = scan('sessions', `id IN (${sessionSelect})`, [target]);
-  let attachmentCount = 0, releasableBytes = 0;
+  let attachmentCount = 0, releasableBytes = 0, assistantMessageCount = 0;
   const messageCount = scan('messages', sessionWhere, [target], row => {
+    if (row.role === 'assistant') assistantMessageCount++;
     if (row.metadata == null || row.metadata === '') return;
     let metadata: any;
     try { metadata = JSON.parse(row.metadata); } catch { deny('CONFLICT'); }
@@ -98,5 +99,5 @@ export function readTrashImpact(db: DB, actor: Actor, kind: 'project' | 'session
   }
   const impactRevision = hash.digest('hex');
   if (expectedRevision !== undefined && expectedRevision !== impactRevision) deny('CONFLICT');
-  return TrashImpactDtoSchema.parse({ sessionCount,messageCount,shareCount,attachmentCount,releasableBytes,impactRevision });
+  return TrashImpactDtoSchema.parse({ sessionCount,messageCount,assistantMessageCount,shareCount,attachmentCount,releasableBytes,impactRevision });
 }

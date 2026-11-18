@@ -2,6 +2,29 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { getReasoningDisplayText, hasVisibleProcessPresentation, hasVisibleProcessStep, getProcessCommand, getProcessText } from './process-step-visibility.ts';
 
+test('仅有保存路径的图片生成步骤也可见，不因缺少提示词丢失预览入口', () => {
+  const image = { id: 'saved-image', type: 'imageGeneration', status: 'completed', details: { savedPath: 'images/result.png' } };
+  assert.equal(hasVisibleProcessStep(image), true);
+  assert.equal(hasVisibleProcessPresentation('', [image]), true);
+  assert.equal(hasVisibleProcessStep({ ...image, details: {} }), false);
+});
+
+test('无正文子任务启动与交互不展示，保留真实进度、完成回报入口和异常', () => {
+  const item = details => ({ id: 'activity', type: 'subAgentActivity', status: 'completed', details });
+  for (const kind of ['started', 'interacted']) {
+    const notice = item({ kind, agentPath: '/root/food_sample', agentThreadId: 'child', model: 'model', content: '  ' });
+    assert.equal(hasVisibleProcessStep(notice), false);
+    assert.equal(hasVisibleProcessPresentation('', [notice]), false);
+    assert.equal(hasVisibleProcessStep(item({ ...notice.details, message: '两张图片正在处理' })), true);
+  }
+  assert.equal(hasVisibleProcessStep(item({ kind: 'completed', agentThreadId: 'child' })), true);
+  assert.equal(hasVisibleProcessStep({ ...item({ kind: 'interacted' }), status: 'incomplete' }), true);
+  assert.equal(hasVisibleProcessStep(item({ kind: 'interacted', failureCode: 'CHILD_FAILED' })), true);
+  for (const exitCode of [1, -1, '2']) assert.equal(hasVisibleProcessStep(item({ kind: 'interacted', exitCode })), true);
+  for (const exitCode of [0, '0', null, undefined, 'invalid']) assert.equal(hasVisibleProcessStep(item({ kind: 'interacted', exitCode })), false);
+  assert.equal(hasVisibleProcessStep(item({ agentResults: [{ threadId: 'child', status: 'errored' }] })), true);
+});
+
 test('列表可见性与流程共用命令提取，优先实际commandAction且安全处理空项', () => {
   assert.equal(getProcessCommand({commandActions:[null,{command:'  cat a.ts  '}],command:'fallback'}),'cat a.ts');
   assert.equal(getProcessCommand({command:'echo ok',content:'ignored'}),'echo ok');

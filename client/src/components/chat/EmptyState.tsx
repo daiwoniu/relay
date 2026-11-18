@@ -56,7 +56,7 @@ export default function EmptyState({ isAdmin, recentSession, onOpenRecentSession
             </Link>
           </div>
           {recentSession && (
-            <Tooltip content={recentSession.title} asChild><button type="button" onClick={() => onOpenRecentSession(recentSession.id)} className="mx-auto mt-4 flex max-w-full items-center gap-1.5 rounded-lg px-2 py-1 text-sm text-[var(--color-text-secondary)] hover:text-[var(--color-text)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-primary)]">
+            <Tooltip overflowOnly content={recentSession.title} asChild><button type="button" onClick={() => onOpenRecentSession(recentSession.id)} className="mx-auto mt-4 flex max-w-full items-center gap-1.5 rounded-lg px-2 py-1 text-sm text-[var(--color-text-secondary)] hover:text-[var(--color-text)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-primary)]">
               <svg width="15" height="15" viewBox="0 0 16 16" fill="none" className="shrink-0" aria-hidden="true"><circle cx="8" cy="8" r="5.5" stroke="currentColor" strokeWidth="1.4" /><path d="M8 4.5V8l2.5 1.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" /></svg>
               <span className="shrink-0">继续最近会话 ·</span><span className="truncate">{recentSession.title || '新对话'}</span>
             </button></Tooltip>

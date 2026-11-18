@@ -1,4 +1,5 @@
 import { ApiError } from '../api/client.ts';
+import { formatDateTime } from '../utils/date-display.ts';
 
 export interface ServiceRestartErrorPresentation {
   title: string;
@@ -47,10 +48,7 @@ export function presentServiceRestartError(
 
 export function formatServiceStartedAt(value: number | null | undefined): string {
   if (!Number.isFinite(value) || value === null || value === undefined) return '未知';
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return '未知';
-  const pad = (part: number) => String(part).padStart(2, '0');
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+  return formatDateTime(value, { seconds: true, fallback: '未知' });
 }
 
 export function isManualRestartVisible(role: 'admin' | 'member' | undefined): boolean {

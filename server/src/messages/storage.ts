@@ -136,6 +136,10 @@ function compactFileChanges(value: unknown): unknown {
 
 function compactDetails(item: ProcessItemDto): Record<string, unknown> {
   const details = { ...item.details };
+  // Image bytes already live in saved files. Never duplicate base64 in message history.
+  if (item.type === 'imageGeneration') {
+    for (const key of OUTPUT_FIELDS) delete details[key];
+  }
   for (const key of FILE_CHANGE_FIELDS) {
     if (details[key] !== undefined) details[key] = compactFileChanges(details[key]);
   }

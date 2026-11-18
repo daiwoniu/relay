@@ -13,6 +13,7 @@ const boundaries = {
   '../ui/OverlayProvider': 'overlay', '../../hooks/useTheme': 'theme',
   './RightPanelContent': 'content', './html-preview-document': 'html',
   './file-preview-request-manager': 'requests',
+  '../settings/PreviewSettings': 'ui', '../../stores/preview-preferences': 'preferences',
 };
 const bundle = (await build({ entryPoints: [entry], bundle: true, platform: 'node', format: 'cjs',
   jsx: 'automatic', write: false, external: ['react', 'react/jsx-runtime', 'react-dom'],
@@ -25,6 +26,7 @@ const bundle = (await build({ entryPoints: [entry], bundle: true, platform: 'nod
 function harness(t) {
   const tab = { id: 'file', title: 'D:/fixture/file.txt', content: 'original preview', loading: false };
   const requests = new FilePreviewRequestManager();
+  const preferences = { revision: 0, loaded: true, userId: 'owner' };
   requests.begin(tab.id);
   const slots = [], effects = [], pending = [], saved = [], windowListeners = new Map();
   let cursor = 0;
@@ -40,7 +42,7 @@ function harness(t) {
   t.mock.method(globalThis, 'fetch', (url, options) => new Promise(resolve => pending.push({ url, signal: options.signal, resolve })));
   const store = { rightPanelTabs: [tab], rightPanelPinned: false, hideCount: 0,
     setRightPanelWidth() {}, hideRightPanel() { store.hideCount++; }, toggleRightPanelPinned() {},
-    closeAllRightPanelTabs() { store.rightPanelTabs = []; }, updateRightPanelTab() {},
+    closeAllRightPanelTabs() { store.rightPanelTabs = []; }, updateRightPanelTab(id, update) { const item = store.rightPanelTabs.find(tab => tab.id === id); if (!item) return false; Object.assign(item, update); return true; },
   };
   const useChatStore = selector => selector(store);
   useChatStore.getState = () => store;
@@ -57,6 +59,7 @@ function harness(t) {
     'fixture:overlay': { useOverlay: () => ({ closeAllOverlays() {}, closeOverlay() {}, openOverlay() {} }) },
     'fixture:theme': { useTheme: () => ({ effectiveTheme: 'light', appliedSettings: {}, device: 'desktop' }) },
     'fixture:requests': { filePreviewRequestManager: requests },
+    'fixture:preferences': { usePreviewPreferences: selector => selector(preferences), getEffectivePreviewPreferences: () => ({ image: { maxDimension: 2048, qualityPercent: 82 } }) },
     'fixture:html': { buildSandboxedHtmlDocument: () => '', buildVisualizationThemeVariables: () => ({}), createHtmlPreviewNonce: () => 'nonce' },
   };
   const compiled = { exports: {} };
@@ -86,8 +89,39 @@ function harness(t) {
     for (const [key, descriptor] of Object.entries(originals)) { if (descriptor) Object.defineProperty(globalThis, key, descriptor); else delete globalThis[key]; }
   });
   const dialog = () => find(latestTree, node => node.props?.title === '文件下载失败' && node.props?.confirmLabel === '知道了');
-  return { tab, requests, pending, saved, render, settle, dialog, store, escape: () => windowListeners.get('keydown')?.({ key: 'Escape' }) };
+  return { tab, requests, pending, saved, render, settle, dialog, store, preferences, escape: () => windowListeners.get('keydown')?.({ key: 'Escape' }) };
 }
+
+test('settings apply to the active file without blanking it and stale refresh cannot overwrite a newer result', async t => {
+  const h = harness(t);
+  h.render().onOpenSettings(); assert.equal(h.render().settingsOpen, true);
+  h.preferences.revision = 1; h.render();
+  assert.equal(h.tab.content, 'original preview'); assert.equal(h.tab.loading, false);
+  assert.equal(h.render().updating, true);
+  const old = h.pending.find(item => item.url.includes('/read?'));
+  h.preferences.revision = 2; h.render();
+  const latest = h.pending.filter(item => item.url.includes('/read?')).at(-1);
+  assert.notEqual(old, latest); assert.equal(old.signal.aborted, true);
+  latest.resolve(Response.json({ type: 'text', content: 'new range', language: 'txt', size: 9 }));
+  await h.settle(); await h.settle();
+  assert.equal(h.tab.content, 'new range'); assert.equal(h.render().updating, false);
+  old.resolve(Response.json({ type: 'text', content: 'stale range', language: 'txt', size: 11 }));
+  await h.settle(); assert.equal(h.tab.content, 'new range');
+  h.escape(); assert.equal(h.render().settingsOpen, false); assert.equal(h.store.hideCount, 0);
+});
+
+test('a preview opened before preference bootstrap is refreshed when saved non-default settings arrive', async t => {
+  const h = harness(t);
+  h.preferences.loaded = false;
+  h.render(); assert.equal(h.pending.length, 0);
+  h.preferences.loaded = true; h.preferences.revision = 1;
+  h.render();
+  const refresh = h.pending.find(item => item.url.includes('/read?'));
+  assert.ok(refresh); assert.equal(h.tab.content, 'original preview');
+  refresh.resolve(Response.json({ type: 'text', content: 'saved preference preview', language: 'txt', size: 24 }));
+  await h.settle(); await h.settle();
+  assert.equal(h.tab.content, 'saved preference preview');
+});
 
 test('the actual panel prevents duplicate in-flight downloads and exposes failure without changing content', async t => {
   const h = harness(t);

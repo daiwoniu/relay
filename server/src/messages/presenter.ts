@@ -15,6 +15,7 @@ import {
 import { parseMessageMetadata } from '../message-metadata.js';
 import { hasIncompleteChangedFilesReport } from './changed-files.js';
 import { presentPlan } from './plan.js';
+import { parseRelayFileChangeReport } from './file-change-report.js';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -141,11 +142,31 @@ export function presentProcessItem(
       : PROCESS_ITEM_STATUSES.has(source.status as ProcessItemStatus)
         ? source.status
         : fallbackStatus;
+  const details = presentProcessItemDetails(source);
+  if (type === 'dynamicToolCall' && source.tool === 'relay_report_file_changes' && source.success === true
+    && statusCandidate === 'completed' && !source.server && !source.serverName) {
+    // Keep the bounded file metadata separately: long arguments are compacted for history.
+    let report = parseRelayFileChangeReport({ version: 1, reportedFileChanges: source.fileChanges });
+    if (!report) {
+      try {
+        const input = source.arguments ?? source.input ?? source.params;
+        report = parseRelayFileChangeReport(typeof input === 'string' ? JSON.parse(input) : input);
+      } catch { /* A truncated historical report cannot be reconstructed. */ }
+    }
+    if (report) details.fileChanges = report.reportedFileChanges;
+  }
+  if (type === 'imageGeneration' && typeof source.savedPath === 'string' && source.savedPath.trim()
+    && source.savedPath.length <= 4096 && !/[\u0000-\u001F\u007F]/.test(source.savedPath)) details.savedPath = source.savedPath;
+  // Generated images are delivered as files. Streaming and resync share this
+  // projection, so neither may duplicate their base64 in process events.
+  if (type === 'imageGeneration') {
+    for (const key of ['result', 'output', 'aggregatedOutput']) delete details[key];
+  }
   const parsed = ProcessItemDtoSchema.safeParse({
     id,
     type,
     status: statusCandidate,
-    details: presentProcessItemDetails(source),
+    details,
   });
   return parsed.success ? parsed.data : undefined;
 }

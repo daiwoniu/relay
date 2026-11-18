@@ -57,6 +57,7 @@ test('release 提升持续被占用时复制完整产物并移除 staging', () =
     fs.mkdirSync(path.dirname(releasePath), { recursive: true });
     fs.writeFileSync(path.join(distPath, 'assets', 'app.js'), 'ok');
     fs.writeFileSync(path.join(distPath, 'index.html'), '<script src="/assets/app.js"></script>');
+    fs.writeFileSync(path.join(distPath,'relay-version.json'),JSON.stringify({version:'0.1.0'}));
     let renameAttempts = 0;
     const result = promoteFrontendRelease({
       distPath,
@@ -129,7 +130,25 @@ function successfulRunner(command, args) {
   fs.mkdirSync(path.join(outDir, 'assets'), { recursive: true });
   fs.writeFileSync(path.join(outDir, 'assets', 'app-abcdef12.js'), 'ok');
   fs.writeFileSync(path.join(outDir, 'index.html'), '<script src="/assets/app-abcdef12.js"></script>');
+  fs.writeFileSync(path.join(outDir, 'relay-version.json'), JSON.stringify({version:'0.1.0'}));
 }
+
+test('版本文件缺失或损坏使release失效，精确激活在切换前拒绝且保留活动指针',()=>{
+  for(const damaged of [null,'{','null','{}',JSON.stringify({version:'bad version'})]){
+    const root=createRoot();
+    try{
+      const first=prepareFrontendBuild({root,run:successfulRunner});activatePreparedFrontendBuild(root);
+      fs.appendFileSync(path.join(root,'client','src','main.tsx'),'\nexport const next=true;');
+      const next=prepareFrontendBuild({root,run:successfulRunner});
+      const versionFile=path.join(next.releasePath,'relay-version.json');
+      if(damaged===null)fs.unlinkSync(versionFile);else fs.writeFileSync(versionFile,damaged);
+      assert.throws(()=>activatePreparedFrontendBuild(root));
+      assert.equal(readFrontendBuildState(getFrontendBuildPaths(root).state).activeBuildId,first.buildId);
+      fs.writeFileSync(versionFile,JSON.stringify({version:'0.1.0'}));
+      activatePreparedFrontendBuild(root);assert.equal(getFrontendBuildStatus(root).fresh,true);
+    }finally{fs.rmSync(root,{recursive:true,force:true});}
+  }
+});
 
 test('版本化前端构建准备、复用、激活并检测源码陈旧', () => {
   const root = createRoot();
@@ -180,6 +199,18 @@ test('仅修改测试不改变产物指纹，也不重复打包', () => {
     assert.equal(reused.buildId, first.buildId);
     assert.equal(reused.reused, true);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('共用环境解析及其类型变化使前端构建指纹失效',()=>{
+  const root=createRoot();
+  try{
+    for(const name of ['client-environment.mjs','client-environment.d.mts','analytics-source.mjs','analytics-source.d.mts']){
+      const before=computeFrontendFingerprint(root);
+      fs.writeFileSync(path.join(root,'scripts','lib',name),'export {};');
+      assert.notEqual(computeFrontendFingerprint(root),before,name);
+    }
+    const before=computeFrontendFingerprint(root);fs.mkdirSync(path.join(root,'config'),{recursive:true});fs.writeFileSync(path.join(root,'config','relay.conf'),'PUBLIC_ALLOWED_ADDRESSES=relay.example:443');assert.notEqual(computeFrontendFingerprint(root),before,'source alias configuration');
+  }finally{fs.rmSync(root,{recursive:true,force:true});}
 });
 
 test('预算脚本、策略与基线变更仅复核旧产物，不能跳过门禁或重新打包', () => {

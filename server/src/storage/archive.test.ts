@@ -99,5 +99,6 @@ test('explicit-database archive helper never falls through to the uninitialized 
   const p=await prepared(); const db=new DatabaseSync(p.f.filename);
   try { db.exec('BEGIN IMMEDIATE'); const result=syncCodexArchivedStatusesInDatabase(nativeQueries(db),['thread']); db.exec('COMMIT');
     assert.equal(result.length,1); assert.equal(result[0].codex_archived,1);
+    assert.equal(result[0].message_count,2); assert.equal(result[0].assistant_message_count,2);
   } finally { if (db.isTransaction) db.exec('ROLLBACK'); db.close(); await p.cleanup(); }
 });

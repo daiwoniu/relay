@@ -36,12 +36,14 @@ test('精确公网 Host 注入可信 HTTPS 头并覆盖外部伪造头', () => {
     'x-forwarded-host': 'evil.example',
     'x-forwarded-for': '203.0.113.9',
     'x-relay-client-address': 'spoofed',
+    'x-relay-frontend-version': 'forged',
   });
   assert.equal(applyTrustedForwardedHeaders(request, 'relay.example.test:41423', config, '192.0.2.10'), true);
   assert.equal(request.headers.get('x-forwarded-proto'), 'https');
   assert.equal(request.headers.get('x-forwarded-host'), 'relay.example.test:41423');
   assert.equal(request.headers.has('x-forwarded-for'), false);
   assert.equal(request.headers.get('x-relay-client-address'), '192.0.2.10');
+  assert.equal(request.headers.has('x-relay-frontend-version'),false);
 });
 
 test('本机请求不注入公网转发头，错误端口不匹配', () => {
@@ -102,4 +104,28 @@ test('公开分享文档响应禁止索引、缓存和 Referer', () => {
   headers.clear();
   assert.equal(applyShareDocumentHeaders({ url: '/api/public/shares/abc' }, response), false);
   assert.equal(headers.size, 0);
+});
+
+test('开发代理HTTP和WebSocket共同保留可信代理尾项，清洗外部内部头及其他来源头', () => {
+  const config = parseRelayConfig([
+    'CODEX_HOST=127.0.0.1', 'CODEX_PORT=9281', 'BACKEND_LISTEN_HOST=0.0.0.0', 'BACKEND_LISTEN_PORT=9181',
+    'FRONTEND_LISTEN_HOST=0.0.0.0', 'FRONTEND_LISTEN_PORT=9081',
+    'PUBLIC_ALLOWED_ADDRESSES=relay.example.test:41423', 'TRUSTED_PROXY_IPS=127.0.0.1',
+  ].join('\n'));
+  const proxy = new EventEmitter(); configurePublicProxy(proxy, config);
+  for (const event of ['proxyReq', 'proxyReqWs']) {
+    const outgoing = createProxyRequest({ 'x-relay-client-address': '198.51.100.1', 'x-real-ip': '198.51.100.1',
+      'cf-connecting-ip': '198.51.100.1', forwarded: 'for=198.51.100.1' });
+    proxy.emit(event, outgoing, { headers: { host: 'relay.example.test:41423', 'x-forwarded-for': '198.51.100.1, 203.0.113.9' },
+      socket: { remoteAddress: '::ffff:127.0.0.1' } }, { destroy() { assert.fail(); } });
+    assert.equal(outgoing.headers.get('x-relay-client-address'), '203.0.113.9');
+    assert.equal(outgoing.headers.get('x-forwarded-for'), '203.0.113.9');
+    for (const name of ['x-real-ip', 'cf-connecting-ip', 'forwarded']) assert.equal(outgoing.headers.has(name), false);
+  }
+  for (const [host, peer] of [['localhost:9081', '127.0.0.1'], ['relay.example.test:41423', '192.168.1.8']]) {
+    const outgoing = createProxyRequest();
+    proxy.emit('proxyReq', outgoing, { headers: { host, 'x-forwarded-for': '203.0.113.9' }, socket: { remoteAddress: peer } });
+    assert.equal(outgoing.headers.get('x-relay-client-address'), peer);
+    assert.equal(outgoing.headers.has('x-forwarded-for'), false);
+  }
 });

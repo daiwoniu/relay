@@ -10,7 +10,8 @@ import { getProcessStepDisclosureState } from './process-step-disclosure';
 import { buildProcessTimelineSections, getDefaultExpandedNarrativeItemId, getProcessNarrativeStatus, type ProcessExecutionSection } from './process-timeline';
 import { getProcessStepStatus, getProcessStepStatusCounts, isPendingProcessInteraction } from './process-step-status';
 import { getCollabAgentStepInfo } from './collab-agent-step';
-import { getSubAgentActivityStepInfo } from './sub-agent-activity';
+import { getSubAgentActivityLabel, getSubAgentActivityStepInfo, hasSubAgentReportReference } from './sub-agent-activity';
+import SubAgentReport, { type SubAgentReportControl } from './SubAgentReport';
 import { getInitialProcessPanelCollapsed, getSearchPreservedExpandedState, shouldAutoCollapseProcessPanel } from './process-panel-state';
 import { getToolCallTitle } from './tool-call-title';
 import Tooltip from '../ui/Tooltip';
@@ -36,6 +37,7 @@ interface StepInfo {
   command?: string;
   metadata?: string[];
   output?: string;
+  expandable?: boolean;
 }
 
 type StepDetails = Record<string, any>;
@@ -195,6 +197,7 @@ function getStepInfo(step: ProcessStep): StepInfo {
 function StepStatus({ step }: { step: ProcessStep }) {
   const details = step.details as StepDetails;
   const failed = getProcessStepStatusCounts([step]).failedCount > 0;
+  if (step.type === 'subAgentActivity' && !failed) return <span className="shrink-0 whitespace-nowrap text-[11px] text-[var(--color-text-tertiary)]">{getSubAgentActivityLabel(details)}</span>;
   if (getProcessStepStatus(step) === 'in_progress') {
     return (
       <span className="process-step-status process-step-status--running shrink-0 flex items-center gap-1 whitespace-nowrap text-[11px] text-[var(--color-text-tertiary)]">
@@ -235,6 +238,7 @@ interface Props {
   flowOutcome?: MessageOutcome;
   steps: ProcessStep[];
   sessionId?: string;
+  messageId?: string;
   processContent?: string;
   processContentDetail?: ReactNode;
   processTimeline?: ProcessTimelineEntry[];
@@ -364,7 +368,7 @@ function ProcessNarrativeRow({ content, detail, status, defaultExpanded, itemId,
               <StepTypeIcon action="过程回复" />
               过程回复
             </span>
-            <Tooltip content={summary} className="min-w-0 flex-1">
+            <Tooltip overflowOnly content={summary} className="min-w-0 flex-1">
               <span className="min-w-0 flex-1 truncate whitespace-nowrap font-semibold text-[var(--color-text)]">{summary}</span>
             </Tooltip>
           </div>
@@ -443,7 +447,8 @@ function ProcessOperationGroup({ steps, searchTargetItemId, full }: { steps: Pro
   );
 }
 
-function ProcessSubtaskBlock({ step, searchTarget = false, full }: { step: ProcessStep; searchTarget?: boolean; full?: boolean }) {
+function ProcessSubtaskBlock({ step, searchTarget = false, full, report }: { step: ProcessStep; searchTarget?: boolean; full?: boolean; report?: ReactNode }) {
+  if (step.type === 'subAgentActivity') return <div className="px-2">{report || <ProcessStepRow step={step} searchTarget={searchTarget} full={full} />}</div>;
   return (
     <section className={`process-group process-group--subtask process-group--${getProcessStepStatus(step) === 'in_progress' ? 'processing' : getProcessStepStatusCounts([step]).failedCount > 0 ? 'danger' : 'success'} overflow-hidden rounded-lg border border-[var(--color-border-light)] bg-transparent`}>
       <ProcessStepRow step={step} searchTarget={searchTarget} full={full} />
@@ -451,7 +456,8 @@ function ProcessSubtaskBlock({ step, searchTarget = false, full }: { step: Proce
   );
 }
 
-function ProcessExecutionGroup({ sections, sessionId, onInteractionRespond, onAsyncQuestionAnswer, answeredAsyncQuestionIds, asyncQuestionAnswers, canAnswerAsyncQuestion, searchTargetItemId, full, readOnly }: {
+function ProcessExecutionGroup({ sections, sessionId, onInteractionRespond, onAsyncQuestionAnswer, answeredAsyncQuestionIds, asyncQuestionAnswers, canAnswerAsyncQuestion, searchTargetItemId, full, readOnly, renderSubtaskReport }: {
+  renderSubtaskReport?: (step: ProcessStep) => ReactNode;
   readOnly?: boolean;
   sections: ProcessExecutionSection[];
   sessionId?: string;
@@ -473,7 +479,7 @@ function ProcessExecutionGroup({ sections, sessionId, onInteractionRespond, onAs
           return <div key={section.key} className="process-timeline__interaction" data-search-target={searchTarget ? `operation:${section.step.id}` : undefined} data-search-content={searchTarget ? true : undefined}><InteractionPanel step={section.step} onRespond={onInteractionRespond} full={full} /></div>;
         }
         if (section.type === 'subtask') {
-          return <ProcessSubtaskBlock key={section.key} step={section.step} searchTarget={section.step.id === searchTargetItemId} full={full} />;
+          return <ProcessSubtaskBlock key={section.key} step={section.step} searchTarget={section.step.id === searchTargetItemId} full={full} report={renderSubtaskReport?.(section.step)} />;
         }
         return <ProcessOperationGroup key={section.key} steps={section.steps} searchTargetItemId={searchTargetItemId} full={full} />;
       })}
@@ -481,22 +487,32 @@ function ProcessExecutionGroup({ sections, sessionId, onInteractionRespond, onAs
   );
 }
 
-function ProcessStepRow({ step, searchTarget = false, full, hideTiming = false, contentOnly = false }: { step: ProcessStep; searchTarget?: boolean; full?: boolean; hideTiming?: boolean; contentOnly?: boolean }) {
+function ProcessStepRow({ step, searchTarget = false, full, hideTiming = false, contentOnly = false, hideFileList = false, reportControl }: { step: ProcessStep; searchTarget?: boolean; full?: boolean; hideTiming?: boolean; contentOnly?: boolean; hideFileList?: boolean; reportControl?: SubAgentReportControl }) {
   const [detailsExpanded, setDetailsExpanded] = useState(false);
   const info = getStepInfo(step);
   const details = step.details as StepDetails;
   const duration = hideTiming ? null : formatDuration(details.durationMs ?? details.duration);
   const fileList = contentOnly && step.type === 'fileChange' ? describeFileChanges(details).paths : [];
+  const fileReport = step.type === 'dynamicToolCall' && details.tool === 'relay_report_file_changes';
   const disclosure = getProcessStepDisclosureState(info);
   const stepTone = getProcessStepStatus(step) === 'in_progress'
     ? 'running'
     : getProcessStepStatusCounts([step]).failedCount > 0
       ? 'failed'
-      : 'success';
-  const effectiveDetailsExpanded = full || (searchTarget && disclosure.canExpand) || detailsExpanded;
+      : step.type === 'subAgentActivity' ? 'notice' : 'success';
+  const canExpand = disclosure.canExpand || Boolean(reportControl);
+  const effectiveDetailsExpanded = reportControl?.expanded ?? (full || (searchTarget && disclosure.canExpand) || detailsExpanded);
   useEffect(() => {
     if (searchTarget && disclosure.canExpand) setDetailsExpanded(true);
   }, [disclosure.canExpand, searchTarget]);
+
+  const showFileList = !hideFileList && fileList.length > 0;
+  const showDescription = !(hideFileList && (['fileChange', 'imageView'].includes(step.type) || fileReport))
+    && step.type !== 'subAgentActivity' && (!contentOnly || !fileList.length && !info.command && !info.output && !info.metadata?.length);
+  const showCommand = Boolean(info.command) && !(hideFileList && fileReport);
+  const showMetadata = Boolean(info.metadata?.length);
+  if (contentOnly && (!disclosure.canExpand || !effectiveDetailsExpanded
+    || !(showFileList || showDescription || showCommand || showMetadata || info.output))) return null;
 
   return (
     <div
@@ -506,14 +522,14 @@ function ProcessStepRow({ step, searchTarget = false, full, hideTiming = false, 
     >
       {!contentOnly && <button
         type="button"
-        onClick={() => disclosure.canExpand && setDetailsExpanded((value) => !value)}
-        disabled={!disclosure.canExpand}
-        aria-expanded={disclosure.canExpand ? effectiveDetailsExpanded : undefined}
-        className={`process-step__main w-full min-w-0 flex items-center text-left ${disclosure.canExpand ? 'cursor-pointer' : 'cursor-default'}`}
+        onClick={() => reportControl ? reportControl.onToggle() : disclosure.canExpand && setDetailsExpanded((value) => !value)}
+        disabled={!canExpand}
+        aria-expanded={canExpand ? effectiveDetailsExpanded : undefined}
+        className={`process-step__main w-full min-w-0 flex items-center text-left ${canExpand ? 'cursor-pointer' : 'cursor-default'}`}
       >
         <div className="flex-1 min-w-0 flex items-center justify-between gap-3 overflow-hidden">
           <div className="flex flex-1 min-w-0 items-center gap-2 overflow-hidden">
-            {disclosure.canExpand && (
+            {canExpand && (
               <svg width="9" height="9" viewBox="0 0 12 12" fill="none" className={`shrink-0 transition-transform ${effectiveDetailsExpanded ? '' : '-rotate-90'}`}>
                 <path d="M3 4.5l3 3 3-3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
               </svg>
@@ -522,24 +538,24 @@ function ProcessStepRow({ step, searchTarget = false, full, hideTiming = false, 
               <StepTypeIcon action={info.action} />
               {info.action}
             </span>
-            <Tooltip content={info.title} className="min-w-0 flex-1">
+            <Tooltip overflowOnly content={info.title} className="min-w-0 flex-1">
               <span className="process-step__summary min-w-0 flex-1 truncate whitespace-nowrap font-medium text-[var(--color-text)]">{info.title}</span>
             </Tooltip>
           </div>
           <div className="shrink-0 flex items-center gap-2 whitespace-nowrap">
             {duration && <span className="whitespace-nowrap text-[11px] text-[var(--color-text-tertiary)]">{duration}</span>}
-            <StepStatus step={step} />
+            {reportControl?.loading ? <span className="text-[11px] text-[var(--color-text-tertiary)]">正在读取…</span> : <StepStatus step={step} />}
           </div>
         </div>
       </button>}
 
       {disclosure.canExpand && effectiveDetailsExpanded && (
         <div className="process-step__details space-y-0.5">
-          {fileList.length > 0 && <ul className="flow-file-list">{fileList.map(path => <li key={path}>{path}</li>)}</ul>}
-          {(!contentOnly || !fileList.length && !info.command && !info.output && !info.metadata?.length) && <div className="process-step__description rounded-md border border-[var(--color-border-light)] bg-[var(--color-surface)] text-[11px] leading-5 whitespace-pre-wrap break-words text-[var(--color-text)]">
+          {showFileList && <ul className="flow-file-list">{fileList.map(path => <li key={path}>{path}</li>)}</ul>}
+          {showDescription && <div className="process-step__description rounded-md border border-[var(--color-border-light)] bg-[var(--color-surface)] text-[11px] leading-5 whitespace-pre-wrap break-words text-[var(--color-text)]">
             {disclosure.fullTitle}
           </div>}
-          {info.command && (
+          {showCommand && (
             <div className="process-step__code rounded-md border border-[var(--color-border-light)] bg-[var(--color-surface)] font-mono text-[11px] leading-5 whitespace-pre-wrap break-all text-[var(--color-code-text)] max-h-40 overflow-y-auto">
               {info.command}
             </div>
@@ -563,7 +579,9 @@ function FlowRawRecord({ step }: { step: ProcessStep }) {
   return <details className="flow-raw" onToggle={event => setOpen(event.currentTarget.open)}><summary>原始记录</summary>{open && <pre>{JSON.stringify(step, null, 2)}</pre>}</details>;
 }
 
-function ProcessStepsComponent({ steps, sessionId, processContent, processContentDetail, processTimeline, renderNarrativeDetail, defaultCollapsed = true, preserveExpandedOnSettle = false, settled = true, narrativeStatus = 'completed', onInteractionRespond, onAsyncQuestionAnswer, answeredAsyncQuestionIds, asyncQuestionAnswers, canAnswerAsyncQuestion, searchTargetScope, searchTargetItemId, full, historicalRecords, historicalRecordCount = 0, flowContext, flowFinalContent, flowFinalRecordedAt, flowOutcome, flowRuntimeStatus, flowDetailsPending, onLoadFlowDetails, readOnly = false }: Props) {
+function ProcessStepsComponent({ steps, sessionId, messageId, processContent, processContentDetail, processTimeline, renderNarrativeDetail, defaultCollapsed = true, preserveExpandedOnSettle = false, settled = true, narrativeStatus = 'completed', onInteractionRespond, onAsyncQuestionAnswer, answeredAsyncQuestionIds, asyncQuestionAnswers, canAnswerAsyncQuestion, searchTargetScope, searchTargetItemId, full, historicalRecords, historicalRecordCount = 0, flowContext, flowFinalContent, flowFinalRecordedAt, flowOutcome, flowRuntimeStatus, flowDetailsPending, onLoadFlowDetails, readOnly = false }: Props) {
+  const reportAvailable = Boolean(sessionId && messageId && !readOnly);
+  const flowDisplayContext = useMemo(() => flowContext ? { ...flowContext, canReadSubAgentReports: reportAvailable } : undefined, [flowContext, reportAvailable]);
   const followups = useSessionFollowupStore(state => sessionId ? state.bySession[sessionId] : undefined);
   const [collapsed, setCollapsed] = useState(() => getInitialProcessPanelCollapsed(defaultCollapsed, settled, preserveExpandedOnSettle, flowContext?.ui));
   const [view, setView] = useState<ProcessView>(flowContext?.ui.view || 'list');
@@ -675,20 +693,23 @@ function ProcessStepsComponent({ steps, sessionId, processContent, processConten
     ? timelineSections.filter((section) => section.type === 'narrative').length
     : normalizedProcessContent ? 1 : 0;
 
+  const renderSubtaskReport = (step: ProcessStep, inline = false) => reportAvailable && hasSubAgentReportReference(step)
+    ? <SubAgentReport sessionId={sessionId!} messageId={messageId!} itemId={step.id} renderContent={renderNarrativeDetail} autoLoad={inline}
+      renderTrigger={inline ? undefined : control => <ProcessStepRow step={step} searchTarget={searchTargetScope === 'operation' && searchTargetItemId === step.id} full={full} reportControl={control} />} /> : null;
   const ordinaryContent = <>
             {timelineSections ? timelineSections.map((section) => {
               if (section.type === 'narrative') {
                 const status = getProcessNarrativeStatus(processTimeline || EMPTY_FLOW_TIMELINE, section.itemId, settled, narrativeStatus);
                 return <ProcessNarrativeRow key={section.key} content={section.content} detail={status === 'completed' ? renderNarrativeDetail?.(section.content) : undefined} status={status} defaultExpanded={section.itemId === defaultExpandedNarrativeItemId} itemId={section.itemId} searchTarget={searchTargetScope === 'process' && section.itemId === searchTargetItemId} full={full} />;
               }
-              return <ProcessExecutionGroup key={section.key} sections={section.sections} sessionId={sessionId} onInteractionRespond={onInteractionRespond} onAsyncQuestionAnswer={onAsyncQuestionAnswer} answeredAsyncQuestionIds={answeredAsyncQuestionIds} asyncQuestionAnswers={asyncQuestionAnswers} canAnswerAsyncQuestion={canAnswerAsyncQuestion} searchTargetItemId={searchTargetScope === 'operation' ? searchTargetItemId : undefined} full={full} readOnly={readOnly} />;
+              return <ProcessExecutionGroup key={section.key} sections={section.sections} sessionId={sessionId} onInteractionRespond={onInteractionRespond} onAsyncQuestionAnswer={onAsyncQuestionAnswer} answeredAsyncQuestionIds={answeredAsyncQuestionIds} asyncQuestionAnswers={asyncQuestionAnswers} canAnswerAsyncQuestion={canAnswerAsyncQuestion} searchTargetItemId={searchTargetScope === 'operation' ? searchTargetItemId : undefined} full={full} readOnly={readOnly} renderSubtaskReport={renderSubtaskReport} />;
             }) : <>
               {normalizedProcessContent && <ProcessNarrativeRow content={normalizedProcessContent} detail={processContentDetail} status={narrativeStatus} defaultExpanded={settled} searchTarget={searchTargetScope === 'process'} full={full} />}
-              {fallbackExecutionSection && <ProcessExecutionGroup sections={fallbackExecutionSection.sections} sessionId={sessionId} onInteractionRespond={onInteractionRespond} onAsyncQuestionAnswer={onAsyncQuestionAnswer} answeredAsyncQuestionIds={answeredAsyncQuestionIds} asyncQuestionAnswers={asyncQuestionAnswers} canAnswerAsyncQuestion={canAnswerAsyncQuestion} searchTargetItemId={searchTargetScope === 'operation' ? searchTargetItemId : undefined} full={full} readOnly={readOnly} />}
+              {fallbackExecutionSection && <ProcessExecutionGroup sections={fallbackExecutionSection.sections} sessionId={sessionId} onInteractionRespond={onInteractionRespond} onAsyncQuestionAnswer={onAsyncQuestionAnswer} answeredAsyncQuestionIds={answeredAsyncQuestionIds} asyncQuestionAnswers={asyncQuestionAnswers} canAnswerAsyncQuestion={canAnswerAsyncQuestion} searchTargetItemId={searchTargetScope === 'operation' ? searchTargetItemId : undefined} full={full} readOnly={readOnly} renderSubtaskReport={renderSubtaskReport} />}
             </>}
             {historicalRecords}
   </>;
-  const renderFlowDetail = (step: ProcessStep) => {
+  const renderFlowDetail = (step: ProcessStep, hasFilePreview = false) => {
     if (readOnly && step.type === 'interaction') return <ReadOnlyInteraction step={step} />;
     if (step.type === 'userMessage' || step.type === 'agentMessage') return <FlowRawRecord step={step} />;
     if (isPendingProcessInteraction(step, answeredAsyncQuestionIds?.has(step.id)) && step.details.interactionKind === 'async_question') return <p className="text-xs text-[var(--color-text-secondary)]">此问题尚未关联到回答，请使用流程上方的提问卡片查看或补充回答。</p>;
@@ -698,8 +719,8 @@ function ProcessStepsComponent({ steps, sessionId, processContent, processConten
       ? <AsyncQuestionPanel step={step} sessionId={sessionId || ''} answered={answeredAsyncQuestionIds?.has(step.id) || false} answerContent={asyncQuestionAnswers?.get(step.id)} canAnswer={Boolean(canAnswerAsyncQuestion)} onAnswer={onAsyncQuestionAnswer} onRespond={onInteractionRespond} full />
       : <InteractionPanel step={step} onRespond={onInteractionRespond} full />;
     const stepPlan = isStructuredPlan(step) ? getProcessPlan([step]) : null;
-    return <>{stepPlan ? <ProcessPlan plan={stepPlan} running={!settled} /> : <ProcessStepRow step={step} full hideTiming={view === 'category'} contentOnly={view === 'category'} />}
-      <FlowRawRecord step={step} />
+    return <>{stepPlan ? <ProcessPlan plan={stepPlan} running={!settled} /> : <ProcessStepRow step={step} full hideFileList={hasFilePreview} hideTiming={view === 'category'} contentOnly={hasFilePreview || view === 'category' || step.type === 'subAgentActivity'} />}
+      {renderSubtaskReport(step, true)}<FlowRawRecord step={step} />
     </>;
   };
 
@@ -743,7 +764,7 @@ function ProcessStepsComponent({ steps, sessionId, processContent, processConten
                 : <InteractionPanel step={step} onRespond={onInteractionRespond} full />}
             </div>)}
             {flowContext && view !== 'list' && !hasSearchTarget && !full ? <ErrorBoundary fallback={<><p className="text-xs text-[var(--color-text-secondary)]">流程图暂不可用，已回退普通记录。</p>{ordinaryContent}</>}>
-              {flowDetailsPending ? <p className="process-flow__settled-note" role="status">处理详情尚未加载，请使用下方“加载详情”查看完整流程。</p> : <Suspense fallback={ordinaryContent}><ProcessFlow toolbarTarget={flowToolbarTarget} context={flowContext} steps={flowSteps} timeline={processTimeline || EMPTY_FLOW_TIMELINE} mode={view} streaming={!settled} narrativeStatus={narrativeStatus} outcome={flowOutcome} finalContent={flowFinalContent} finalRecordedAt={flowFinalRecordedAt} answeredIds={answeredAsyncQuestionIds} renderDetail={renderFlowDetail} runtimeStatus={flowRuntimeStatus} /></Suspense>}
+              {flowDetailsPending ? <p className="process-flow__settled-note" role="status">处理详情尚未加载，请使用下方“加载详情”查看完整流程。</p> : <Suspense fallback={ordinaryContent}><ProcessFlow toolbarTarget={flowToolbarTarget} context={flowDisplayContext!} steps={flowSteps} timeline={processTimeline || EMPTY_FLOW_TIMELINE} mode={view} streaming={!settled} narrativeStatus={narrativeStatus} outcome={flowOutcome} finalContent={flowFinalContent} finalRecordedAt={flowFinalRecordedAt} answeredIds={answeredAsyncQuestionIds} renderDetail={renderFlowDetail} runtimeStatus={flowRuntimeStatus} /></Suspense>}
             </ErrorBoundary> : ordinaryContent}
             {flowContext && view !== 'list' && !hasSearchTarget && !full && historicalRecords}
           </div>

@@ -3,6 +3,19 @@ import { Worker } from 'node:worker_threads';
 import { canonicalJson, StorageContractError } from './command-boundary.js';
 import type { TerminalFileChanges } from '../ws/frontend-terminal-snapshot.js';
 
+function fileProjectionItem(item: unknown): unknown {
+  if (!item || typeof item !== 'object' || Array.isArray(item)
+    || (item as Record<string, unknown>).type !== 'imageGeneration') return item;
+  const omitBinary = (value: unknown): unknown => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
+    return Object.fromEntries(Object.entries(value).filter(([key]) => !['result', 'output', 'aggregatedOutput'].includes(key)));
+  };
+  const value = omitBinary(item) as Record<string, unknown>;
+  // Timing/presenter wrappers may also hold the original image fields.
+  for (const key of ['details', 'raw']) if (value[key] !== undefined) value[key] = omitBinary(value[key]);
+  return value;
+}
+
 /** Read-only filesystem projection; accepted engine facts never wait on synchronous main-thread stat calls. */
 export class RuntimeFileProjection {
   private readonly active = new Set<Worker>();
@@ -15,6 +28,8 @@ export class RuntimeFileProjection {
     try {
       if (!Array.isArray(items) || items.length > 10_000 || typeof projectRoot !== 'string' || !path.isAbsolute(projectRoot)
         || projectRoot.length > 32768 || projectRoot.includes('\0')) throw new Error();
+      // File discovery needs savedPath/status, never image bytes. Bound only the projected input.
+      items = items.map(fileProjectionItem);
       canonicalJson({ items, projectRoot }, 8 * 1024 * 1024);
     } catch { return Promise.reject(new StorageContractError('INVALID_ARGUMENT')); }
     if (this.active.size >= 2) return Promise.reject(new StorageContractError('OVERLOADED'));

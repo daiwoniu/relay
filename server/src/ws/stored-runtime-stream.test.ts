@@ -44,6 +44,20 @@ test('tool updates merge partial fields and publish the same completed snapshot 
   const sent=h.events[1] as any;assert.equal(sent.item.details.command,'echo test');assert.equal(sent.item.details.output,'test');
   assert.equal(sent.item.details.firstObservedAt,123);assert.equal(sent.item.details.startedObservedAt,123);assert.equal(sent.item.details.completedObservedAt,123);
 });
+test('image start and completion publish metadata while retaining original results for file projection',async()=>{
+  const h=harness(),bytes='A'.repeat(4*1024*1024);
+  await h.project({type:'item_start',item:{id:'image',type:'imageGeneration',status:'in_progress',prompt:'design'}});
+  await h.project({type:'item_complete',item:{id:'image',type:'imageGeneration',status:'completed',result:bytes,savedPath:'generated.png'}});
+  assert.equal(h.runtime.turnItems[0].result,bytes);
+  assert.equal(h.runtime.turnItems[0].savedPath,'generated.png');
+  assert.equal(h.runtime.processTimeline.length,1);
+  assert.equal(h.events.length,2);
+  assert.ok(Buffer.byteLength(JSON.stringify(h.events))<4096);
+  const sent=h.events[1] as any;
+  assert.equal(sent.item.status,'completed');assert.equal(sent.item.details.prompt,'design');
+  assert.equal(sent.item.details.completedObservedAt,123);
+});
+
 test('ordinary agent message items retain their snapshot without becoming tools or failing the turn',async()=>{
   const h=harness();
   assert.equal(await h.project({type:'item_start',item:{id:'text',type:'agentMessage',status:'in_progress',details:{text:'partial'}}}),true);

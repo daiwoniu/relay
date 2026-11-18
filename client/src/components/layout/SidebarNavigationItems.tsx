@@ -129,7 +129,7 @@ export function ProjectBlock({ scope, project, sessions, sessionCount, activeSes
       <HoverCard
         disabled={isMobile || isRenaming || dragging}
         title="项目详情"
-        content={<ProjectDetailsContent project={project} sessionCount={sessionCount} />}
+        content={<ProjectDetailsContent project={project} />}
       >
         <div
           ref={setNodeRef}
@@ -339,6 +339,7 @@ export function SessionRow({ scope, session, active, onSelect, onMenu, renamingT
     <HoverCard
       disabled={isMobile || isRenaming || dragging}
       title="会话详情"
+      maxWidth="min(26rem, calc(100vw - 1rem))"
       content={<SessionDetailsContent session={session} project={project} status={session.status} />}
     >
       <div

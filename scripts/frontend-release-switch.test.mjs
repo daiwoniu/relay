@@ -10,6 +10,7 @@ function createRelease(root, buildId) {
   const release = path.join(getFrontendBuildPaths(root).releases, buildId);
   fs.mkdirSync(path.join(release, 'assets'), { recursive: true });
   fs.writeFileSync(path.join(release, 'index.html'), buildId);
+  fs.writeFileSync(path.join(release, 'relay-version.json'), JSON.stringify({version:'0.1.0'}));
 }
 
 test('共享切换事务健康后保留 active/previous 并清理更旧 release', async () => {
@@ -52,13 +53,14 @@ test('共享切换事务拒绝与跨进程预约不一致的 prepared release', 
   }
 });
 
-test('新网关失败恢复原指针并重新启动 previous', async () => {
+test('新网关失败恢复原指针并兼容无版本文件的旧 previous', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'relay-release-rollback-'));
   try {
     createRelease(root, 'aaaaaaaaaaaa');
     createRelease(root, 'bbbbbbbbbbbb');
     const paths = getFrontendBuildPaths(root);
     const original = { schemaVersion: 1, activeBuildId: 'aaaaaaaaaaaa', previousBuildId: null, preparedBuildId: 'bbbbbbbbbbbb', builds: {} };
+    fs.unlinkSync(path.join(paths.releases,'aaaaaaaaaaaa','relay-version.json'));
     writeFrontendBuildState(paths.state, original);
     const starts = [];
     const result = await switchPreparedFrontendRelease({
@@ -73,6 +75,17 @@ test('新网关失败恢复原指针并重新启动 previous', async () => {
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
+});
+
+test('候选版本文件缺失时不切换活动指针也不启动网关',async()=>{
+  const root=fs.mkdtempSync(path.join(os.tmpdir(),'relay-version-switch-'));
+  try{
+    createRelease(root,'aaaaaaaaaaaa');createRelease(root,'bbbbbbbbbbbb');
+    const paths=getFrontendBuildPaths(root),original={schemaVersion:1,activeBuildId:'aaaaaaaaaaaa',previousBuildId:null,preparedBuildId:'bbbbbbbbbbbb',builds:{}};
+    writeFrontendBuildState(paths.state,original);fs.unlinkSync(path.join(paths.releases,'bbbbbbbbbbbb','relay-version.json'));
+    await assert.rejects(()=>switchPreparedFrontendRelease({root,startGateway:async()=>assert.fail('must reject before launch'),waitForHealthy:async()=>undefined,stopGateway:async()=>undefined}),/不完整/);
+    assert.deepEqual(readFrontendBuildState(paths.state),original);
+  }finally{fs.rmSync(root,{recursive:true,force:true});}
 });
 
 test('setup 已激活候选 release 时失败会恢复真正 previous', async () => {

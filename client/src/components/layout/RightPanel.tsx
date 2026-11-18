@@ -1,3 +1,5 @@
+import { usePreviewPreferences, getEffectivePreviewPreferences } from '../../stores/preview-preferences';
+import PreviewSettings from '../settings/PreviewSettings';
 import { useEffect, useRef, useMemo, useCallback, useState } from 'react';
 import type { RightPanelTab } from '../../stores/chat';
 import { useChatStore } from '../../stores/chat';
@@ -8,7 +10,7 @@ import Tooltip from '../ui/Tooltip';
 import { useOverlay } from '../ui/OverlayProvider';
 import { copyToClipboard } from '../../utils/clipboard';
 import { compressImageForPreview } from '../../utils/image-preview';
-import { buildFileMetadataUpdate, buildFilePreviewUpdate, disposeFilePreviewUpdate, EMPTY_FILE_PREVIEW_MODES } from './file-preview-state';
+import { buildFileMetadataUpdate, buildFilePreviewUpdate, disposeFilePreviewUpdate, getFilePreviewObjectUrl, EMPTY_FILE_PREVIEW_MODES } from './file-preview-state';
 import { ApiError } from '../../api/client';
 import { getFilePreviewView, type FilePreviewView } from './file-preview-view';
 import { filePreviewRequestManager } from './file-preview-request-manager';
@@ -67,6 +69,12 @@ interface Props {
 }
 
 export default function RightPanel({ tabs, activeTabId, panelVisible, width, onClose, onCloseTab, onSelectTab }: Props) {
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const preferencesRevision = usePreviewPreferences(s => s.revision);
+  const preferencesLoaded = usePreviewPreferences(s => s.loaded);
+  const preferencesUserId = usePreviewPreferences(s => s.userId);
+  const previewVersions = useRef(new Map<string, string>());
+  const [updatingTabs, setUpdatingTabs] = useState<Record<string, number>>({});
   const panelRef = useRef<HTMLDivElement>(null);
   const htmlIframeRef = useRef<HTMLIFrameElement>(null);
   const htmlPreviewScrollRef = useRef<HTMLDivElement>(null);
@@ -129,7 +137,7 @@ export default function RightPanel({ tabs, activeTabId, panelVisible, width, onC
   }, [panelVisible]);
 
   const isOpen = panelVisible;
-  const effectiveWidth = isOpen ? (isMobile || isMaximized ? '100%' : `${width}px`) : '0px';
+  const effectiveWidth = isOpen ? (isMobile || isMaximized ? '100%' : `${width + (settingsOpen ? 290 : 0)}px`) : '0px';
   const activeTab = tabs.find((t) => t.id === activeTabId);
   const downloadError = activeTab ? downloadStates[activeTab.id]?.error : undefined;
   const dismissDownloadFailure = useCallback(() => {
@@ -197,6 +205,10 @@ export default function RightPanel({ tabs, activeTabId, panelVisible, width, onC
   useEffect(() => {
     const handleEscape = (e: KeyboardEvent) => {
       if (e.key !== 'Escape' || !isOpen || downloadError) return;
+      if (settingsOpen) {
+        setSettingsOpen(false);
+        return;
+      }
       if (isMaximized) {
         setIsMaximized(false);
         return;
@@ -205,7 +217,7 @@ export default function RightPanel({ tabs, activeTabId, panelVisible, width, onC
     };
     window.addEventListener('keydown', handleEscape);
     return () => window.removeEventListener('keydown', handleEscape);
-  }, [hideRightPanel, isMaximized, isOpen, downloadError]);
+  }, [hideRightPanel, isMaximized, isOpen, downloadError, settingsOpen]);
 
   // 拖拽调整宽度
   const handleDragStart = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
@@ -272,13 +284,14 @@ export default function RightPanel({ tabs, activeTabId, panelVisible, width, onC
     });
   }, [activeTab, isHtmlPreview, updateRightPanelTab]);
 
-  const handleRefresh = useCallback(async (tab: RightPanelTab) => {
+  const handleRefresh = useCallback(async (tab: RightPanelTab, preserve = false) => {
     cancelDownload(tab.id);
     const sourcePath = tab.sourcePath || tab.title;
-    setHtmlPreviewSize({ tabId: tab.id, height: 320 });
-    const request = filePreviewRequestManager.begin(tab.id, { retainAccessToken: true });
+    if (!preserve) setHtmlPreviewSize({ tabId: tab.id, height: 320 });
+    const request = filePreviewRequestManager.begin(tab.id, { retainAccessToken: true, retainObjectUrls: preserve });
+    if (preserve) setUpdatingTabs(state => ({ ...state, [tab.id]: request.generation }));
     if (tab.fileAccessToken) filePreviewRequestManager.trackAccessToken(tab.id, request.generation, tab.fileAccessToken);
-    updateRightPanelTab(tab.id, { ...EMPTY_FILE_PREVIEW_MODES, loading: true, fileMetadataLoading: true });
+    if (!preserve) updateRightPanelTab(tab.id, { ...EMPTY_FILE_PREVIEW_MODES, loading: true, fileMetadataLoading: true });
     void buildFileMetadataUpdate(sourcePath, tab.fileAccessToken, request.signal).then((update) => {
       if (filePreviewRequestManager.isCurrent(tab.id, request.generation)) updateRightPanelTab(tab.id, update);
     }).catch(() => undefined);
@@ -289,17 +302,34 @@ export default function RightPanel({ tabs, activeTabId, panelVisible, width, onC
         disposeFilePreviewUpdate(update);
         return;
       }
-      if (update.documentPreview?.type === 'pdf-document') filePreviewRequestManager.trackObjectUrl(tab.id, request.generation, update.documentPreview.previewUrl);
+      filePreviewRequestManager.replaceObjectUrls(tab.id, request.generation, getFilePreviewObjectUrl(update));
     } catch (error) {
       if (!filePreviewRequestManager.isCurrent(tab.id, request.generation)) return;
       const message = error instanceof ApiError ? error.data?.error || '刷新文件失败' : '刷新文件失败，请重试';
+      filePreviewRequestManager.replaceObjectUrls(tab.id, request.generation);
       updateRightPanelTab(tab.id, {
         ...EMPTY_FILE_PREVIEW_MODES, loading: false, content: message, previewError: message,
         forceAccessAvailable: error instanceof ApiError && error.status === 403 && error.data?.code === 'PATH_NOT_ALLOWED' && error.data?.canForceAccess === true,
       });
     }
+    finally { if (preserve) setUpdatingTabs(state => completePreviewOperation(state, tab.id, request.generation)); }
   }, [updateRightPanelTab, cancelDownload]);
 
+  useEffect(() => {
+    if (!isOpen || !activeTab) return;
+    const version = preferencesUserId + ':' + preferencesRevision;
+    const previous = previewVersions.current.get(activeTab.id);
+    if (!preferencesLoaded) {
+      if (previous === undefined) previewVersions.current.set(activeTab.id, version);
+      return;
+    }
+    previewVersions.current.set(activeTab.id, version);
+    if (previous !== undefined && previous !== version) void handleRefresh(activeTab, true);
+  }, [isOpen, activeTabId, preferencesUserId, preferencesLoaded, preferencesRevision, handleRefresh]);
+  useEffect(() => {
+    const ids = new Set(tabs.map(tab => tab.id));
+    for (const id of previewVersions.current.keys()) if (!ids.has(id)) previewVersions.current.delete(id);
+  }, [tabs]);
 
   const enableHtmlScripts = useCallback(() => {
     if (!activeTab || !isHtmlPreview) return;
@@ -373,8 +403,9 @@ export default function RightPanel({ tabs, activeTabId, panelVisible, width, onC
         disposeFilePreviewUpdate(update);
         return;
       }
-      if (update.documentPreview?.type === 'pdf-document') {
-        filePreviewRequestManager.trackObjectUrl(tab.id, request.generation, update.documentPreview.previewUrl);
+      const objectUrl = getFilePreviewObjectUrl(update);
+      if (objectUrl) {
+        filePreviewRequestManager.trackObjectUrl(tab.id, request.generation, objectUrl);
       }
     } catch (err) {
       if (request.signal.aborted || !filePreviewRequestManager.isCurrent(tab.id, request.generation)) return;
@@ -390,7 +421,7 @@ export default function RightPanel({ tabs, activeTabId, panelVisible, width, onC
     setCompressOperations((state) => ({ ...state, [tab.id]: request.generation }));
     try {
       const source = await readImagePreviewSource(tab.sourcePath || tab.title, tab.fileAccessToken, { signal: request.signal });
-      const imageUrl = await compressImageForPreview(source, request.signal);
+      const imageUrl = await compressImageForPreview(source, request.signal, getEffectivePreviewPreferences().image);
       if (!filePreviewRequestManager.isCurrent(tab.id, request.generation)) return;
       updateRightPanelTab(tab.id, {
         content: '',
@@ -459,6 +490,11 @@ export default function RightPanel({ tabs, activeTabId, panelVisible, width, onC
         )}
 
         <RightPanelContent
+          settingsOpen={settingsOpen}
+          onOpenSettings={() => setSettingsOpen(true)}
+          onCloseSettings={() => setSettingsOpen(false)}
+          settingsPanel={settingsOpen ? <PreviewSettings onClose={() => setSettingsOpen(false)} /> : undefined}
+          updating={Boolean(activeTab && updatingTabs[activeTab.id])}
           tabs={tabs}
           activeTab={isOpen ? activeTab : undefined}
           activeTabId={activeTabId}

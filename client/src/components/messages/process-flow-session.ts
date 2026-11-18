@@ -20,6 +20,7 @@ export function captureProcessFlow(previous: ProcessFlowContext | null, input: {
   projectName?: string;
   projectPath?: string;
   knownProjects?: ProcessFlowContext['knownProjects'];
+  allowMissingRoot?: boolean;
 }): ProcessFlowContext | null {
   const messages = input.messages.filter(message => message.session_id === input.sessionId);
   const terminalTurns = new Set(messages.filter(isFlowReply).flatMap(message => [message.turn_id, message.requestTurnId].filter(Boolean)));
@@ -33,11 +34,23 @@ export function captureProcessFlow(previous: ProcessFlowContext | null, input: {
   };
   const candidate = [...messages].reverse().find(canStartFlow);
   const root = candidate && messages.find(message => message.turn_id === candidate.turn_id && canStartFlow(message));
-  if (!root) return null;
-  const sameFlow = previous?.id === root.id && previous.sessionId === input.sessionId;
+  if (!root) {
+    if (!input.allowMissingRoot || getFlowCompletionMessage(previous, messages)) return null;
+    return {
+      id: `pending:${input.sessionId}`, sessionId: input.sessionId, turnId: '',
+      root: { id: `missing:${input.sessionId}`, content: '', delivery: '原始用户输入尚未加载', state: 'unknown', positionKnown: false },
+      inputs: [], steps: input.steps, timeline: input.timeline,
+      projectName: input.projectName, projectPath: input.projectPath, knownProjects: input.knownProjects,
+      ui: previous?.sessionId === input.sessionId
+        ? previous.id === `pending:${input.sessionId}` ? previous.ui : { expanded: {}, details: {}, view: previous.ui.view }
+        : { expanded: {}, details: {} },
+    };
+  }
+  const sameSession = previous?.sessionId === input.sessionId;
+  const sameFlow = previous?.id === root.id && sameSession;
   const context: ProcessFlowContext = sameFlow ? previous : {
     id: root.id, sessionId: input.sessionId, turnId: root.turn_id,
-    root: makeFlowInput(root, true), inputs: [], ui: { expanded: {}, details: {} }, steps: [], timeline: [],
+    root: makeFlowInput(root, true), inputs: [], ui: sameSession && previous?.id === `pending:${input.sessionId}` ? previous.ui : { expanded: {}, details: {} }, steps: [], timeline: [],
   };
   const existing = new Map(context.inputs.map(item => [item.id, item]));
   const initialCapture = !sameFlow;
@@ -61,7 +74,7 @@ export function captureProcessFlow(previous: ProcessFlowContext | null, input: {
 }
 
 export function getFlowCompletionMessage(context: ProcessFlowContext | null, messages: Message[]): Message | undefined {
-  if (!context) return undefined;
+  if (!context?.turnId) return undefined;
   return [...messages].reverse().find(message => message.session_id === context.sessionId && (message.turn_id === context.turnId || message.requestTurnId === context.turnId) && isFlowReply(message));
 }
 

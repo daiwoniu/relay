@@ -1,4 +1,10 @@
 import { Hono } from 'hono';
+import { AnalyticsService,analyticsLoginId } from './analytics/service.js';
+import { createAnalyticsRouter } from './analytics/routes.js';
+import { getHttpClientIp,getHttpPeerAddress } from './http-client-ip.js';
+import { normalizeClientIp } from '../../scripts/lib/client-ip.mjs';
+import type { PageHosting } from './page-hosting/service.js';
+import { createHostingAdminRouter,createHostingPublicRouter } from './page-hosting/routes.js';
 import { cors } from 'hono/cors';
 import { secureHeaders } from 'hono/secure-headers';
 import { compress } from 'hono/compress';
@@ -38,6 +44,7 @@ import { createStoredNewsRouter } from './routes/stored-news.js';
 
 type Configuration<F extends (...args:any[])=>unknown>=Omit<Parameters<F>[0],'port'|'storeId'|'generation'>;
 export interface StoredHttpApplicationOptions {
+  hosting?:PageHosting;
   port:CoreStoragePort&CredentialStoragePort;storeId:string;generation:number;graph:StoredRuntimeGraph;ready:()=>boolean;
   auth:Omit<Configuration<typeof createStoredAuthModule>,'recheckUserAccess'|'publishUser'|'notificationPreferencesChanged'|'themeSettingsChanged'>;
   reads:Configuration<typeof createStoredResourceReadsRouter>;
@@ -77,6 +84,9 @@ export function createStoredHttpApplication(options:StoredHttpApplicationOptions
   app.use('*',cors({origin:origin=>isAllowedOrigin(origin)?origin:null,credentials:true}));
   app.use('/api/*',compress({threshold:1024}));
   app.use('/api/*',async(c,next)=>{
+    // Hosted scripts have an opaque browser origin. Reject their API requests before any handler,
+    // including simple requests whose side effects would otherwise survive a CORS rejection.
+    if(c.req.header('origin')==='null')return c.json(presentApiError('不允许此来源访问平台接口'),403);
     if(c.req.path==='/api/health')return next();
     if(!options.ready())return c.json(presentApiError('服务正在恢复，请稍后重试',{code:'SERVICE_RECOVERING'}),503);
     const raw=c.req.header('content-length'),size=Number(raw??0);
@@ -85,9 +95,19 @@ export function createStoredHttpApplication(options:StoredHttpApplicationOptions
     if(!isValidAccessToken(extractAccessToken(c.req.header('authorization'),c.req.header('x-relay-token'),c.req.query('token'))))return c.json(presentApiError('未授权访问'),401);
     return next();
   });
+  const analytics=new AnalyticsService(port,process.env.RELAY_ANALYTICS_ENABLED!=='0');
   const requireUser=createRequireStoredUserSession(port);
+  if(options.hosting){
+    const hosted=createHostingPublicRouter(options.hosting,(c,siteId)=>{
+      const trusted=isValidAccessToken(c.req.header('x-relay-token'));
+      analytics.server(c,'hosting_document',{siteId},{ip:trusted?getHttpClientIp(c):normalizeClientIp(getHttpPeerAddress(c))??null});
+    });
+    app.route('/p',hosted);app.route('/p-preview',hosted);
+    app.route('/api/admin/page-hosting',createHostingAdminRouter({port,service:options.hosting}));
+  }
   app.use('/api/*',(c,next)=>isUnauthenticatedApiRequest(c.req.method,c.req.path)?next():requireUser(c,next));
-  const auth=createStoredAuthModule({...options.auth,...base,getCatalog:options.writes.getCatalog,recheckUserAccess:id=>graph.hub.recheckUserAccess(id),
+  app.route('/',createAnalyticsRouter({port,service:analytics}));
+  const auth=createStoredAuthModule({...options.auth,...base,observeLogin:(c,event)=>analytics.server(c,'login_result',{result:event.result},{id:analyticsLoginId(event.id),userId:event.userId,role:event.role}),getCatalog:options.writes.getCatalog,recheckUserAccess:id=>graph.hub.recheckUserAccess(id),
     publishUser:async user=>{for(const client of graph.hub.clients())if(client.userId===user.id)await graph.hub.send(client,{type:'conversation_defaults_updated',user});},
     notificationPreferencesChanged:id=>graph.hub.broadcastNotificationPreferences(id,principal=>port.readNotificationPreferences({principal})),
     themeSettingsChanged:id=>graph.hub.broadcastThemeSettings(id,principal=>port.readThemeSettings({principal}))});
@@ -129,5 +149,5 @@ export function createStoredHttpApplication(options:StoredHttpApplicationOptions
   });
   app.onError((_error,c)=>c.json(presentApiError('服务暂不可用，请稍后重试',{code:'STORAGE_UNAVAILABLE'}),503));
   app.notFound(c=>c.json(presentApiError('接口不存在',{code:'ROUTE_NOT_FOUND'}),404));
-  return{app,dispose:async()=>{accepting=false;await Promise.allSettled([...pending]);auth.dispose();}};
+  return{app,dispose:async()=>{accepting=false;await Promise.allSettled([...pending]);await analytics.close();auth.dispose();}};
 }

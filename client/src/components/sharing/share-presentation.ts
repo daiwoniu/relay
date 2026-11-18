@@ -1,6 +1,11 @@
 import type { ShareSnapshotV1 } from '../../generated/relay-contracts';
 import { hasVisibleProcessPresentation, hasVisibleProcessStep } from '../../stores/process-step-visibility.ts';
 
+export function getShareMessageSummary(snapshot: ShareSnapshotV1) {
+  return { messageCount: snapshot.messages.length,
+    assistantMessageCount: snapshot.messages.filter(message => message.role === 'assistant').length };
+}
+
 export function getShareProcessSummary(snapshot: ShareSnapshotV1) {
   let messages = 0;
   let records = 0;

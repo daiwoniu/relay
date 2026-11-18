@@ -6,6 +6,32 @@ import {
 } from './storage.js';
 import { parseMessageItems } from './presenter.js';
 
+test('大批量文件上报保存压缩后仍保留步骤文件，重复投影不依赖截断参数', () => {
+  const reportedFileChanges = Array.from({ length: 120 }, (_, index) => ({ path: `D:/project/一段较长目录名称/另一个较长目录名称/图片文件-${index}.png`, changeType: 'added' }));
+  const arguments_ = JSON.stringify({ version: 1, reportedFileChanges });
+  assert(arguments_.length > 8192);
+  const [stored] = compactProcessItemsForStorage([{ id: 'batch-files', type: 'dynamicToolCall', status: 'completed', tool: 'relay_report_file_changes', success: true, arguments: arguments_ }]);
+  assert.deepEqual(stored.details.fileChanges, reportedFileChanges);
+  assert.throws(() => JSON.parse(stored.details.arguments as string));
+  assert.deepEqual(parseMessageItems(JSON.stringify([stored]))?.[0].details.fileChanges, reportedFileChanges);
+  assert.deepEqual(compactProcessItemsForStorage([stored])[0], stored);
+  const [failed] = compactProcessItemsForStorage([{ id: 'failed-report', type: 'dynamicToolCall', status: 'completed', tool: 'relay_report_file_changes', success: false, arguments: arguments_ }]);
+  assert.equal(failed.details.fileChanges, undefined);
+});
+
+test('image results omit binary data while retaining status and file metadata separately', () => {
+  const original = [{id:'image',type:'imageGeneration',status:'completed',result:'A'.repeat(4*1024*1024),savedPath:'image.png'},
+    {id:'failed-image',type:'imageGeneration',status:'failed',result:'B'.repeat(1024),errorCode:'IMAGE_FAILED'}];
+  const stored = compactProcessItemsForStorage(original);
+  assert.equal(stored[0].details.result,undefined);
+  assert.equal(stored[0].status,'completed');
+  assert.equal(stored[0].details.savedPath,'image.png');
+  assert.equal(stored[1].status,'incomplete');
+  assert.equal(stored[1].details.errorCode,'IMAGE_FAILED');
+  assert.equal(original[0].result.length,4*1024*1024);
+  assert.deepEqual(compactProcessItemsForStorage(stored),stored);
+});
+
 test('文件变更与协作结果压缩及历史再投影不丢工作目录、种类或结果', () => {
   const original=[{id:'files',type:'fileChange',cwd:'D:/outside/project',changes:[{path:'a.ts',kind:{type:'delete'}}]},
     {id:'collab',type:'collabAgentToolCall',agentsStates:{child:{status:'completed',message:'done'}}}];

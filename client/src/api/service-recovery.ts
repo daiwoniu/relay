@@ -1,4 +1,4 @@
-import { jsonBody, requestJson } from './client';
+import { jsonBody, requestJson } from './client.ts';
 import type { MaintenanceOutputSnapshotDto } from '../generated/relay-contracts.ts';
 
 export type ServiceRecoveryAction = 'auto' | 'restart_backend' | 'restart_frontend' | 'restart_relay' | 'repair_environment';
@@ -83,7 +83,7 @@ export function getFrontendStatus(signal?: AbortSignal): Promise<FrontendStatus>
 }
 
 export function getServiceRecoveryOperationOutput(operationId: string, signal?: AbortSignal): Promise<MaintenanceOutputSnapshotDto | null> {
-  return requestJson(`/api/system/recovery-operations/${encodeURIComponent(operationId)}/output`, { signal });
+  return requestJson(`/api/system/recovery-operations/${encodeURIComponent(operationId)}/output`, { signal, allowNullJson: true });
 }
 
 export function requestServiceRecovery(

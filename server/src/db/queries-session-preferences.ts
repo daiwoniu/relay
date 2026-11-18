@@ -1,6 +1,7 @@
 import { getDB, type SQLiteDB } from './index.js';
 import type { Session } from './query-types.js';
 import { withSessionResults } from './session-attention.js';
+import { withSessionMessageCounts } from './session-message-counts.js';
 
 export function getSessionInDatabase(db: Pick<SQLiteDB, 'get'>, id: string): Session | undefined {
   const session = db.get('SELECT * FROM sessions WHERE id = ? AND deleted_at IS NULL', [id]) as Session | undefined;
@@ -9,7 +10,7 @@ export function getSessionInDatabase(db: Pick<SQLiteDB, 'get'>, id: string): Ses
 
 export function getSession(id: string): Session | undefined {
   const session = getSessionInDatabase(getDB(), id);
-  return session ? withSessionResults(getDB(), [session])[0] : undefined;
+  return session ? withSessionResults(getDB(), withSessionMessageCounts(getDB(), [session]))[0] : undefined;
 }
 
 export interface UpdateSessionEnginePreferencesInput {
@@ -35,7 +36,7 @@ export function updateSessionEnginePreferencesInDatabase(db: Pick<SQLiteDB, 'run
 
 export function updateSessionEnginePreferences(id: string, input: UpdateSessionEnginePreferencesInput): Session | undefined {
   const session = updateSessionEnginePreferencesInDatabase(getDB(), id, input);
-  return session ? withSessionResults(getDB(), [session])[0] : undefined;
+  return session ? withSessionResults(getDB(), withSessionMessageCounts(getDB(), [session]))[0] : undefined;
 }
 
 export const updateEnginePreferences = updateSessionEnginePreferences;

@@ -10,6 +10,7 @@ import { StoredFrontendSync } from './stored-frontend-sync.js';
 import { createSessionRuntimeState, type SessionRuntime } from '../engine/runtime.js';
 import type { FrontendClient } from './frontend-client-hub.js';
 import { hashSessionToken } from '../auth/session.js';
+import { presentProcessItem } from '../messages/presenter.js';
 const session='22222222-2222-4222-8222-222222222222',project='11111111-1111-4111-8111-111111111111';
 const principal=(id='owner')=>({kind:'user' as const,userId:id,authSessionHash:hashSessionToken(`synthetic-sync-${id}`)});
 function deferred(){let resolve!:()=>void;const promise=new Promise<void>((r)=>{resolve=r;});return{promise,resolve};}
@@ -47,6 +48,33 @@ async function prepared(){
   }
   return {f,port,hub,runtimes,sync,client,running,pauseRead,cleanup:async()=>{hub.dispose();await port.close();f.cleanup();}};
 }
+test('large generated images survive full sync, manual resync and runtime-only refresh without binary transport',async()=>{
+  const p=await prepared();try{
+    const runtime=p.running();
+    const bytes='A'.repeat(4*1024*1024);
+    runtime.turnItems=Array.from({length:3},(_,n)=>({id:`image-${n}`,type:'imageGeneration',status:'completed',result:bytes,savedPath:`image-${n}.png`,prompt:`design ${n}`}));
+    const original=runtime.turnItems;
+    for(const reconnect of [false,true]){
+      const a=await p.client();assert.equal(await p.sync.connect(a.c),true);
+      for(const includeMessages of [true,true,false]){
+        a.socket.messages=[];
+        assert.equal(await p.sync.subscribe(a.c,session,true,includeMessages),true);
+        const state=a.socket.messages.find(m=>m.type===(includeMessages?'sync_state':'runtime_sync_state'));
+        assert.equal(state.isRunning,true);assert.equal(state.processSteps.length,3);
+        assert.equal(state.processSteps[0].details.prompt,'design 0');
+        assert.ok(Buffer.byteLength(JSON.stringify(a.socket.messages))<32*1024);
+        assert.equal(a.c.subscribedSessionIds.has(session),true);
+        const update=await p.hub.broadcastSession({type:'item_complete',sessionId:session,item:presentProcessItem(runtime.turnItems[0])!});
+        assert.equal(update.sent,1);
+        assert.ok(Buffer.byteLength(JSON.stringify(a.socket.messages))<32*1024);
+      }
+      if(!reconnect)p.hub.remove(a.c);
+    }
+    assert.equal(runtime.turnItems,original);
+    assert.equal(runtime.turnItems[0].result,bytes);
+  }finally{await p.cleanup();}
+});
+
 test('initial connection and reconnect restore receipts, terminal state, messages and owner followups without writes',async()=>{
   const p=await prepared();try{
     const first=await p.client();assert.equal(await p.sync.connect(first.c),true);

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, useRef } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useState, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { flushSync } from 'react-dom';
 import { DndContext, KeyboardSensor, PointerSensor, TouchSensor, closestCenter, useSensor, useSensors,
@@ -89,6 +89,8 @@ interface ContextMenu {
   sessionId?: string;
   anchorRect: DOMRect;
 }
+const PageHostingPanel = lazy(() => import('../page-hosting/PageHostingPage'));
+
 export default function Sidebar({
   serviceStatus = 'checking',
   onRequestComposerFocus,
@@ -177,6 +179,7 @@ export default function Sidebar({
   const [engineMaintenanceSummary, setEngineMaintenanceSummary] = useState<EngineMaintenanceResponseDto | null>(null);
   const [accountSettingsOpen, setAccountSettingsOpen] = useState(false);
   const [accountManagementOpen, setAccountManagementOpen] = useState(false);
+  const [pageHostingOpen, setPageHostingOpen] = useState(false);
   const [userResourceDialogOpen, setUserResourceDialogOpen] = useState(false);
   const [selectedResourceUser, setSelectedResourceUser] = useState<PublicUserDto | null>(null);
   const [uploadsProjects, setUploadsProjects] = useState<Project[]>([]);
@@ -411,7 +414,7 @@ export default function Sidebar({
       if (defaultProjectId) setCurrentProject(defaultProjectId);
       setActiveSession('', { autoOpenProjectPicker: !defaultProjectId, projectSelectionLocked: false });
     });
-    if (isWorkspaceConsole) navigate('/');
+    if (isWorkspaceConsole || location.pathname === '/admin/page-hosting') navigate('/');
     onRequestComposerFocus('new-chat');
   };
 
@@ -522,7 +525,7 @@ export default function Sidebar({
       setCurrentProject(projectId);
       setActiveSession('', { autoOpenProjectPicker: false, projectSelectionLocked });
     });
-    if (isWorkspaceConsole) navigate('/');
+    if (isWorkspaceConsole || location.pathname === '/admin/page-hosting') navigate('/');
     onRequestComposerFocus('new-chat');
     setContextMenu(null);
     closeAllOverlays();
@@ -1199,6 +1202,7 @@ export default function Sidebar({
                 onOpenShares={() => { restoreMinimizedPanel('my-shares-title'); setMySharesOpen(true); }}
                 onOpenTrash={() => { restoreMinimizedPanel('trash-dialog-title'); setTrashOpen(true); }}
                 onOpenAccountManagement={() => { restoreMinimizedPanel('account-management-title'); setAccountManagementOpen(true); }}
+                onOpenPageHosting={() => { restoreMinimizedPanel('page-hosting-title'); setPageHostingOpen(true); }}
                 onOpenServiceMaintenance={() => { restoreMinimizedPanel('service-maintenance-title'); setServiceMaintenanceOpen(true); }}
                 onOpenEngineMaintenance={openEngineMaintenance}
                 onLogout={() => setLogoutConfirmOpen(true)}
@@ -1222,7 +1226,7 @@ export default function Sidebar({
           title={mobileDetails?.type === 'project' ? '项目详情' : '会话详情'}
         >
           {mobileDetails?.type === 'project' && (
-            <ProjectDetailsContent project={mobileDetails.project} sessionCount={totalSessionCount(mobileDetails.project.id)} />
+            <ProjectDetailsContent project={mobileDetails.project} />
           )}
           {mobileDetails?.type === 'session' && (() => {
             const session = { ...mobileDetails.session, ...sessions.find((item) => item.id === mobileDetails.session.id) };
@@ -1281,6 +1285,7 @@ export default function Sidebar({
         <EngineMaintenanceDialog engineId={selectedMaintenanceEngine} open={engineMaintenanceOpen} onClose={() => setEngineMaintenanceOpen(false)} />
         <SettingsCenterDialog open={accountSettingsOpen} onClose={() => setAccountSettingsOpen(false)} mobile={isMobile} />
         {user?.role === 'admin' && <AccountManagementDialog open={accountManagementOpen} onClose={() => setAccountManagementOpen(false)} mobile={isMobile} />}
+        {user?.role === 'admin' && pageHostingOpen && <Suspense fallback={null}><PageHostingPanel onClose={() => setPageHostingOpen(false)} mobile={isMobile} /></Suspense>}
         {user?.role === 'admin' && <UserResourceDialog open={userResourceDialogOpen} onClose={() => setUserResourceDialogOpen(false)} mobile={isMobile} currentUser={user} selectedType={resourceViewType} selectedUserId={ownerFilterId} onSelect={selectUserResourceView} />}
         {uploadsProjects.map((project) => <ProjectUploadsDialog key={project.id} project={project} onClose={() => setUploadsProjects((current) => current.filter((item) => item.id !== project.id))} />)}
         {membersProjects.map((project) => <ProjectMembersDialog key={project.id} project={project} onClose={() => setMembersProjects((current) => current.filter((item) => item.id !== project.id))} onProjectUpdated={(updated) => { setMembersProjects((current) => current.map((item) => item.id === updated.id ? updated : item)); setProjects(projects.map((item) => item.id === updated.id ? updated : item)); }} />)}

@@ -32,7 +32,7 @@ export default function SpreadsheetPreview({
   const [retryVersion, setRetryVersion] = useState(0);
 
   useEffect(() => {
-    setSelectedName(document.activeSheet.name);
+    setSelectedName(name => document.sheets.some(sheet => sheet.name === name) ? name : document.activeSheet.name);
     setSheet(document.activeSheet);
     setError(null);
   }, [document]);

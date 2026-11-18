@@ -47,6 +47,59 @@ test('trash queries preserve owner/admin isolation, literal matching, parent gro
     assert.equal((await p.port.readTrash({principal:principal(),name:'options',input:{}}))[0]!.id,activeProject);
   }finally{await p.cleanup();}
 });
+
+test('trash creator filters preserve permission boundaries and project pages return ten records',async()=>{
+  const p=await prepared();try{
+    const admin=await p.send('/sessions?creatorId=other','GET','admin');assert.equal(admin.status,200);
+    const selected=await admin.json() as any;assert.equal(selected.total,1);assert.equal(selected.items[0].id,other);
+    const forbidden=await p.send('/sessions?creatorId=other');assert.equal((await forbidden.json() as any).total,0);
+    assert.equal((await (await p.send('/projects?creatorId=other','GET','admin')).json() as any).total,0);
+    assert.equal((await (await p.send('/projects?creatorId=owner&q=Trash','GET','admin')).json() as any).total,1);
+    for(let i=0;i<21;i++)p.f.mutate(`INSERT INTO sessions(id,owner_user_id,project_id,title,deleted_at,status,engine) VALUES('${randomUUID()}','owner','${project}','Page ${i}',${20+i},'completed','codex')`);
+    const pages=await Promise.all([0,10,20].map(async offset=>{
+      const response=await p.send(`/projects/${project}/sessions?limit=10&offset=${offset}`);
+      assert.equal(response.status,200);return await response.json() as any;
+    }));
+    assert.deepEqual(pages.map(page=>page.items.length),[10,10,3]);
+    assert.ok(pages.every(page=>page.total===23));
+    assert.equal(new Set(pages.flatMap(page=>page.items.map((item:any)=>item.id))).size,23);
+  }finally{await p.cleanup();}
+});
+
+test('trash counts persisted rows and assistants in lists, nested sessions and search hits independently of revision',async()=>{
+  const p=await prepared();try{
+    p.f.mutate(`UPDATE sessions SET message_revision=999 WHERE id IN ('${child}','${child2}','${individual}');
+      INSERT INTO messages(id,session_id,turn_id,role,content,created_at) VALUES('${randomUUID()}','${individual}','turn-5','user','followup',13)`);
+    const individualList=await p.port.readTrash({principal:principal(),name:'sessions',input:{limit:1,offset:0,q:'',projectId:null}});
+    assert.equal(individualList.items[0]!.messageCount,13);assert.equal(individualList.items[0]!.assistantMessageCount,6);
+    const nested=await p.port.readTrash({principal:principal(),name:'projectSessions',input:{projectId:project,limit:1,offset:0}});
+    assert.equal(nested.items[0]!.messageCount,1);assert.equal(nested.items[0]!.assistantMessageCount,1);
+    const empty=await p.port.readTrash({principal:principal(),name:'projectSessions',input:{projectId:project,limit:1,offset:1}});
+    assert.equal(empty.items[0]!.messageCount,0);assert.equal(empty.items[0]!.assistantMessageCount,0);
+    const search=await p.port.readTrash({principal:principal(),name:'projects',input:{limit:1,offset:0,q:'%_'}});
+    assert.equal(search.items[0]!.matchSessionMessageCount,1);assert.equal(search.items[0]!.matchSessionAssistantMessageCount,1);
+  }finally{await p.cleanup();}
+});
+
+test('trash HTTP lists expose engine session IDs for each engine and retain owner isolation',async()=>{
+  const p=await prepared();try{
+    p.f.mutate(`UPDATE sessions SET engine_session_id='codex-external' WHERE id='${child}';
+      UPDATE sessions SET engine_session_id='buddy-external' WHERE id='${child2}';
+      UPDATE sessions SET engine='opencode',engine_session_id='open-external' WHERE id='${individual}';
+      UPDATE sessions SET engine_session_id='other-private-external' WHERE id='${other}'`);
+    const nested=await p.send(`/projects/${project}/sessions`);assert.equal(nested.status,200);
+    const children=(await nested.json() as any).items;
+    assert.equal(children.find((s:any)=>s.id===child).engineSessionId,'codex-external');
+    assert.equal(children.find((s:any)=>s.id===child2).engineSessionId,'buddy-external');
+    const mine=await p.send('/sessions');assert.equal(mine.status,200);
+    assert.deepEqual((await mine.json() as any).items.map((s:any)=>[s.id,s.engineSessionId]),[[individual,'open-external']]);
+    assert.equal((await p.send(`/projects/${project}/sessions`,'GET','other')).status,404);
+    const admin=await p.send('/sessions','GET','admin');assert.equal(admin.status,200);
+    assert.equal((await admin.json() as any).items.find((s:any)=>s.id===other).engineSessionId,'other-private-external');
+    p.f.mutate(`UPDATE sessions SET engine_session_id=NULL WHERE id='${individual}'`);
+    assert.equal((await (await p.send('/sessions')).json() as any).items[0].engineSessionId,null);
+  }finally{await p.cleanup();}
+});
 test('project restore atomically recovers all children and sorting, then confirms only the trash-marked thread',async()=>{
   const p=await prepared();try{
     const key=randomUUID(),result=await p.service.restore(principal(),'project',project,key);assert.equal(result.state,'committed');if(result.state==='committed'){assert.equal(result.value.restoredSessionCount,2);assert.equal(result.value.unarchivedSessionCount,1);}

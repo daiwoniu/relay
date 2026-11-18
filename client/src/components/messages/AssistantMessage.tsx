@@ -287,7 +287,7 @@ function MarkdownLink({ href, children, projectPath, readOnly = false }: { href:
     const showText = linkText === fullPath || linkText.includes('\\') || linkText.includes('/')
       ? truncateDisplayPath(linkText)
       : linkText || displayPath;
-    if (readOnly) return <Tooltip content={fullPath} asChild><span className="md-link-file cursor-default">{showText}</span></Tooltip>;
+    if (readOnly) return <Tooltip overflowOnly content={fullPath} asChild><span data-tooltip-full-text={fullPath} className="md-link-file cursor-default">{showText}</span></Tooltip>;
     return (
       <Tooltip content={`点击预览文件：${fullPath}`} inline>
         <span
@@ -604,6 +604,7 @@ function AssistantMessage({ historicalRecords, historicalRecordCount, sessionId,
         {(hasVisibleProcess || historicalRecords || flowContext) && (
           <ProcessSteps
             key={flowContext?.id || 'ordinary-process'}
+            messageId={selectionMode ? undefined : messageId}
             flowContext={selectionMode ? undefined : readOnly && !flowContext?.readOnly ? undefined : flowContext}
             readOnly={readOnly}
             flowDetailsPending={!isStreaming && hasDetails && !hasLoadedDetails}

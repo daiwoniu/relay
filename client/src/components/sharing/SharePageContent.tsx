@@ -1,22 +1,25 @@
+import { formatDateTime } from '../../utils/date-display.ts';
 import type { SharePreviewResponseDto } from '../../generated/relay-contracts';
 import { engineLabel } from '../../engine/catalog';
 import PublicShareMessageList from './PublicShareMessageList';
 import { getShareScopePresentation } from './share-scope';
-import { getShareProcessSummary } from './share-presentation';
+import { getShareProcessSummary, getShareMessageSummary } from './share-presentation';
+import { formatMessageCounts } from '../../utils/message-counts';
 
 export default function SharePageContent({ data, preview = false, wideLayout = false, full = false }: {
   data: SharePreviewResponseDto; preview?: boolean; wideLayout?: boolean; full?: boolean;
 }) {
   const process = getShareProcessSummary(data.snapshot);
+  const counts = getShareMessageSummary(data.snapshot);
   return <main>
     <div className={`mx-auto w-full ${wideLayout ? 'max-w-none' : 'max-w-3xl'} px-4 pt-6`}>
       <h1 className="break-words text-xl font-semibold text-[var(--color-text)]">{data.title}</h1>
       <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-[var(--color-text-secondary)]">
         <span>来源：{engineLabel(data.snapshot.sourceEngine ?? 'codex')}</span>
         {data.snapshot.scope && <span>{getShareScopePresentation(data.snapshot.scope).label}</span>}
-        <span>{data.messageCount} 条消息</span>
-        <span>{preview ? '预览生成于' : '创建于'} {new Date(data.createdAt).toLocaleString()}</span>
-        <span>{preview ? '预计在线有效期' : '在线链接有效期'}：{data.expiresAt === null ? '永久有效' : new Date(data.expiresAt).toLocaleString()}</span>
+        <span className="whitespace-nowrap">{formatMessageCounts(counts.messageCount, counts.assistantMessageCount)}</span>
+        <span>{preview ? '预览生成于' : '创建于'} {formatDateTime(data.createdAt, { seconds: true })}</span>
+        <span>{preview ? '预计在线有效期' : '在线链接有效期'}：{data.expiresAt === null ? '永久有效' : formatDateTime(data.expiresAt, { seconds: true })}</span>
       </div>
       <div className="mt-3 space-y-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-3 py-2 text-xs leading-5 text-[var(--color-text-secondary)]">
         <p>{process.label}</p>

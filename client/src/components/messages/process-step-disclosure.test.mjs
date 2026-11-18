@@ -2,6 +2,10 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { getProcessStepDisclosureState } from './process-step-disclosure.ts';
 
+test('无详情活动可明确禁用展开，不影响其他操作的完整标题', () => {
+  assert.equal(getProcessStepDisclosureState({ title: 'food_sample', expandable: false }).canExpand, false);
+});
+
 test('只有标题的操作也可以展开查看完整内容', () => {
   assert.deepEqual(getProcessStepDisclosureState({
     title: '已整理较早的会话上下文…',

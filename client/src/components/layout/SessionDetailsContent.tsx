@@ -2,6 +2,7 @@ import type { Project, Session } from '../../stores/chat';
 import { engineLabel } from '../../engine/catalog';
 import { getSessionStatusPresentation, getSessionDisplayStage, type DisplayedSessionStatus } from './session-status';
 import { useAuth } from '../../auth/AuthContext';
+import { formatResourcePerson } from '../../utils/resource-person';
 
 export default function SessionDetailsContent({ session, project, status, engineSessionLoadFailed = false }: {
   session: Session & { engine_session_id?: string | null };
@@ -17,20 +18,21 @@ export default function SessionDetailsContent({ session, project, status, engine
       ? '正在读取…'
       : session.engine_session_id ?? '尚未绑定';
   const messageCount = session.message_count === undefined ? '—' : `${session.message_count} 条`;
+  const assistantMessageCount = session.assistant_message_count === undefined ? '—' : `${session.assistant_message_count} 条`;
+  const lastResultLabel = session.last_result ? getSessionStatusPresentation(session.last_result.status, null, true, session.last_result.executionStage).label : null;
   return (
     <div className="space-y-1.5 text-xs">
-      <div className="truncate font-medium text-[var(--color-text)]">{session.title}</div>
-      <div className="select-all break-all text-[11px] text-[var(--color-text-secondary)]">ID：{session.id}</div>
-      <div className="text-[var(--color-text-secondary)]">项目：{project?.name ?? '默认项目'}</div>
-      <div className="text-[var(--color-text-secondary)]">创建人：{session.owner ? `${session.owner.displayName} (@${session.owner.username})` : '未知'}</div>
-      <div className="text-[var(--color-text-secondary)]">引擎：{session.engine ? engineLabel(session.engine) : '尚未选择'}</div>
-      <div className="text-[var(--color-text-secondary)]">消息数量：{messageCount}</div>
-      <div className="break-all text-[11px] text-[var(--color-text-secondary)]">
-        引擎会话 ID：<span className={session.engine_session_id ? 'select-all' : undefined}>{engineSessionId}</span>
-      </div>
+      <div className="break-words font-medium text-[var(--color-text)]">{session.title}</div>
+      <div className="break-words text-[var(--color-text-secondary)]">项目：{project?.name ?? '未知项目'}</div>
+      <div className="break-words text-[var(--color-text-secondary)]">创建人：{formatResourcePerson(session.owner)}</div>
+      <div className="break-words text-[var(--color-text-secondary)]">引擎：{session.engine ? engineLabel(session.engine) : '尚未选择'} · 消息数量：{messageCount} · 助手：{assistantMessageCount}</div>
       <div className="text-[var(--color-text-secondary)]">状态：{presentation.label}</div>
-      {session.last_result && <div className="text-[var(--color-text-secondary)]">最近结果：{getSessionStatusPresentation(session.last_result.status, null, true, session.last_result.executionStage).label}</div>}
+      {lastResultLabel && lastResultLabel !== presentation.label && <div className="text-[var(--color-text-secondary)]">最近结果：{lastResultLabel}</div>}
       {session.codex_archived && <div className="text-[var(--color-text-secondary)]">归档：已归档</div>}
+      <div className="border-t border-[var(--color-border-light)] pt-1.5 text-[11px] text-[var(--color-text-tertiary)]">
+        <div className="select-all break-all">会话 ID：{session.id}</div>
+        <div className="mt-1 break-all">引擎会话 ID：<span className={session.engine_session_id ? 'select-all' : undefined}>{engineSessionId}</span></div>
+      </div>
     </div>
   );
 }

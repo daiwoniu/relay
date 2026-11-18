@@ -1,0 +1,91 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import { Hono } from 'hono';
+import { fixture } from './storage-fixture.test-support.js';
+import { StorageWorkerClient } from './worker-client.js';
+import { createStoredAuthModule } from '../routes/stored-auth.js';
+import { hashSessionToken } from '../auth/session.js';
+import { defaultPreviewPreferences, effectivePreviewPreferences } from '../contracts/preview-preferences.js';
+import { StoredFilesystem } from '../services/stored-filesystem.js';
+import { FileAccessGrants } from '../file-access.js';
+import { createPdfBuffer } from '../documents/test-documents.js';
+import { PDFDocument } from 'pdf-lib';
+
+test('preview preferences persist per account, patch atomically and enforce custom permission inside storage', async () => {
+  const f = fixture();
+  const principal = (id = 'owner') => ({ kind: 'user' as const, userId: id, authSessionHash: hashSessionToken(`preview-${id}`) });
+  for (const id of ['owner', 'other', 'admin']) f.mutate(`INSERT INTO auth_sessions(token_hash,user_id,expires_at) VALUES('${principal(id).authSessionHash}','${id}',${Date.now() + 600000})`);
+  let port = await StorageWorkerClient.open({ filename: f.filename, storeId: 'preview', generation: 1, initialize: true });
+  const read = (id = 'owner') => port.readPreviewPreferences({ principal: principal(id) });
+  const save = (changes: any, id = 'owner') => port.execute({ protocolVersion: 1, storeId: 'preview', workerGeneration: 1, requestId: randomUUID(), operationId: randomUUID(), principal: principal(id), command: { name: 'account.setPreviewPreferences', input: { changes } } });
+  try {
+    assert.deepEqual(await read(), defaultPreviewPreferences());
+    assert.equal((await save({ capacityPreset: 'enhanced' })).state, 'committed');
+    assert.equal((await save({ imagePreset: 'higher' })).state, 'committed');
+    assert.equal((await read()).capacityPreset, 'enhanced');
+    assert.equal((await read()).imagePreset, 'higher');
+    assert.deepEqual(await read('other'), defaultPreviewPreferences());
+    assert.deepEqual(await read('admin'), defaultPreviewPreferences());
+    const denied = await save({ capacityPreset: 'custom' });
+    assert.equal(denied.state, 'rejected');
+    if (denied.state === 'rejected') assert.equal(denied.code, 'FORBIDDEN');
+    assert.equal((await save({ capacityPreset: 'custom', customCapacity: { fileSizeMb: 15, documentItems: 125, spreadsheetRows: 300, spreadsheetColumns: 150 } }, 'admin')).state, 'committed');
+    assert.equal(effectivePreviewPreferences(await read('admin'), true).capacity.documentItems, 125);
+    f.mutate("UPDATE users SET role='member' WHERE id='admin'");
+    assert.equal((await read('admin')).capacityPreset, 'default');
+    assert.equal((await save({ capacityPreset: 'custom' }, 'admin')).state, 'rejected');
+    f.mutate("UPDATE users SET role='admin' WHERE id='admin'");
+    await assert.rejects(() => save({ customCapacity: { fileSizeMb: 999, documentItems: 125, spreadsheetRows: 300, spreadsheetColumns: 150 } }, 'admin'), { code: 'INVALID_ARGUMENT' });
+    await assert.rejects(() => save({ userId: 'other', capacityPreset: 'higher' }), { code: 'INVALID_ARGUMENT' });
+    await assert.rejects(port.readPreviewPreferences({ principal: principal(), userId: 'other' } as any), { code: 'INVALID_ARGUMENT' });
+    const app = new Hono().route('/api/auth', createStoredAuthModule({ port, storeId: 'preview', generation: 1, workspacePath: 'D:/synthetic-preview', recheckUserAccess: () => {} }).router);
+    assert.equal((await app.request('/api/auth/preview-preferences')).status, 401);
+    const response = await app.request('/api/auth/preview-preferences', { method: 'PATCH', headers: { cookie: 'relay_session=preview-owner', 'content-type': 'application/json' }, body: JSON.stringify({ capacityPreset: 'higher' }) });
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get('Cache-Control'), 'private, no-store');
+    await port.close();
+    port = await StorageWorkerClient.open({ filename: f.filename, storeId: 'preview', generation: 1 });
+    assert.equal((await read()).capacityPreset, 'higher');
+    assert.deepEqual(await read('other'), defaultPreviewPreferences());
+  } finally { await port.close(); f.cleanup(); }
+});
+
+test('stored filesystem uses the requesting account settings for text, image and both PDF endpoints', async () => {
+  const f = fixture();
+  const project = path.join(f.directory, 'project');
+  await fs.mkdir(project);
+  f.mutate(`UPDATE projects SET path='${project.replaceAll("'", "''")}' WHERE id='project'`);
+  const port = await StorageWorkerClient.open({ filename: f.filename, storeId: 'preview', generation: 1, initialize: true });
+  const service = new StoredFilesystem({ port, grants: new FileAccessGrants(), assertExclusiveWriter: async () => {} });
+  const principal = { kind: 'user' as const, userId: 'owner', authSessionHash: hashSessionToken('synthetic-preview-files') };
+  f.mutate(`UPDATE auth_sessions SET token_hash='${principal.authSessionHash}' WHERE user_id='owner'`);
+  const read = (name: string, route = '/read') => service.request(principal, `${route}?${new URLSearchParams({ path: path.join(project, name) })}`, 'GET');
+  try {
+    await fs.writeFile(path.join(project, 'large.txt'), 'x'.repeat(4 * 1024 * 1024));
+    await fs.writeFile(path.join(project, 'large.png'), Buffer.alloc(6 * 1024 * 1024));
+    await fs.writeFile(path.join(project, 'pages.pdf'), await createPdfBuffer(120));
+    assert.equal((await (await read('large.txt')).json() as any).truncated, true);
+    assert.equal((await (await read('large.png')).json() as any).type, 'image-preview-required');
+    assert.equal((await (await read('pages.pdf')).json() as any).displayedPages, 50);
+    const result = await port.execute({ protocolVersion: 1, storeId: 'preview', workerGeneration: 1, requestId: randomUUID(), operationId: randomUUID(), principal, command: { name: 'account.setPreviewPreferences', input: { changes: { capacityPreset: 'enhanced', imagePreset: 'enhanced' } } } });
+    assert.equal(result.state, 'committed');
+    const text = await (await read('large.txt')).json() as any;
+    assert.equal(text.truncated, undefined); assert.equal(text.content.length, 4 * 1024 * 1024);
+    assert.equal((await (await read('large.png')).json() as any).type, 'image');
+    assert.equal((await (await read('pages.pdf')).json() as any).displayedPages, 100);
+    const pdfResponse = await read('pages.pdf', '/preview-pdf-source');
+    assert.equal(pdfResponse.status, 200);
+    assert.equal((await PDFDocument.load(await pdfResponse.arrayBuffer())).getPageCount(), 100);
+    await port.execute({ protocolVersion: 1, storeId: 'preview', workerGeneration: 1, requestId: randomUUID(), operationId: randomUUID(), principal, command: { name: 'account.setPreviewPreferences', input: { changes: { capacityPreset: 'higher' } } } });
+    await fs.writeFile(path.join(project, 'escaped.txt'), '\t'.repeat(17 * 1024 * 1024));
+    const escapedResponse = await read('escaped.txt');
+    assert.equal(escapedResponse.status, 200);
+    const escaped = await escapedResponse.json() as any;
+    assert.equal(escaped.truncated, true); assert.equal(escaped.truncationReason, 'output-size'); assert.equal(escaped.content.length, 64 * 1024);
+    f.mutate("UPDATE user_preview_preferences SET settings_json='broken' WHERE user_id='owner'");
+    assert.equal((await read('large.txt', '/metadata')).status, 200, 'metadata remains independent of preference parsing');
+  } finally { await service.close(); await port.close(); f.cleanup(); }
+});

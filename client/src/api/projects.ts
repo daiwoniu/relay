@@ -12,6 +12,10 @@ export function listProjects(signal?: AbortSignal, timeoutMs = 8_000): Promise<P
   return requestJson('/api/projects', { signal, timeoutMs });
 }
 
+export function getProject(id: string, signal?: AbortSignal): Promise<ProjectDto> {
+  return requestJson(`/api/projects/${encodeURIComponent(id)}`, { signal, cache: 'no-store' });
+}
+
 export function createProject(path: string, name?: string): Promise<ProjectDto> {
   return requestJson('/api/projects', {
     method: 'POST',

@@ -1,3 +1,5 @@
+import { formatDateTime } from '../../utils/date-display.ts';
+
 const escapeHtml = (value: string) => value.replace(/[&<>"']/g, (char) => `&#${char.charCodeAt(0)};`);
 
 export const STATIC_SHARE_SCRIPT_HASH = 'mHMT+UMQiCVsplyeOATETTtk5alGSjf+pvCiVw6/bhY=';
@@ -34,7 +36,7 @@ html[data-static-share-document]{height:auto!important;min-height:100%;overflow-
 }
 
 export function prepareStaticShareRoot(root: HTMLElement, exportedAt = new Date()): void {
-  root.querySelectorAll<HTMLElement>('[data-static-share-exported-at]').forEach(time => { time.textContent = exportedAt.toLocaleString(); time.setAttribute('datetime', exportedAt.toISOString()); });
+  root.querySelectorAll<HTMLElement>('[data-static-share-exported-at]').forEach(time => { time.textContent = formatDateTime(exportedAt, { seconds: true }); time.setAttribute('datetime', exportedAt.toISOString()); });
   root.querySelectorAll('[data-static-share-exclude], .process-timeline__collapse').forEach(element => element.remove());
   const panels: Array<[string, string, string]> = [
     ['.changed-files-summary__toggle', '.changed-files-summary', '.changed-files-summary__content'],

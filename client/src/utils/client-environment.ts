@@ -1,21 +1,7 @@
+import { parseClientEnvironment,cleanVersion,chromiumBrand,explicitBrowser,parseOs,type NavigatorUAData } from '../../../scripts/lib/client-environment.mjs';
+export { parseClientEnvironment } from '../../../scripts/lib/client-environment.mjs';
+export type { ClientEnvironmentInput } from '../../../scripts/lib/client-environment.mjs';
 import type { ClientDiagnosticsDto, ClientEnvironmentDto } from '../generated/relay-contracts';
-
-interface NavigatorUAData {
-  mobile?: boolean;
-  platform?: string;
-  platformVersion?: string;
-  brands?: Array<{ brand: string; version: string }>;
-  getHighEntropyValues?: (hints: string[]) => Promise<{
-    architecture?: string;
-    bitness?: string;
-    formFactors?: string[];
-    model?: string;
-    platformVersion?: string;
-    uaFullVersion?: string;
-    wow64?: boolean;
-    fullVersionList?: Array<{ brand: string; version: string }>;
-  }>;
-}
 
 interface NavigatorConnection {
   type?: string;
@@ -31,19 +17,6 @@ type DiagnosticNavigator = Navigator & {
   deviceMemory?: number;
   connection?: NavigatorConnection;
 };
-
-export interface ClientEnvironmentInput {
-  userAgent: string;
-  uaData?: NavigatorUAData;
-  navigatorPlatform?: string;
-  maxTouchPoints?: number;
-  standalone?: boolean;
-  relayVersion: string;
-}
-
-function cleanVersion(value: string | undefined): string | undefined {
-  return value?.replace(/_/g, '.').trim() || undefined;
-}
 
 function boundedString(value: unknown, max: number): string | undefined {
   return typeof value === 'string' && value ? value.slice(0, max) : undefined;
@@ -167,87 +140,6 @@ export async function collectClientDiagnostics(
   }
 }
 
-function chromiumBrand(brands: Array<{ brand: string; version: string }> | undefined) {
-  return brands?.find((item) => !/not.?a.?brand|chromium/i.test(item.brand));
-}
-
-function parseBrowser(userAgent: string): Pick<ClientEnvironmentDto, 'browserName' | 'browserVersion'> {
-  const patterns: Array<[RegExp, string]> = [
-    [/(?:HuaweiBrowser|HBPC)\/([\d.]+)/i, '华为浏览器'],
-    [/EdgA?\/([\d.]+)/, 'Edge'],
-    [/EdgiOS\/([\d.]+)/, 'Edge'],
-    [/OPR\/([\d.]+)/, 'Opera'],
-    [/CriOS\/([\d.]+)/, 'Chrome'],
-    [/Chrome\/([\d.]+)/, 'Chrome'],
-    [/FxiOS\/([\d.]+)/, 'Firefox'],
-    [/Firefox\/([\d.]+)/, 'Firefox'],
-    [/Version\/([\d.]+).*Safari\//, 'Safari'],
-  ];
-  for (const [pattern, browserName] of patterns) {
-    const match = pattern.exec(userAgent);
-    if (match) return { browserName, browserVersion: cleanVersion(match[1]) };
-  }
-  return {};
-}
-
-function parseOs(userAgent: string, platform?: string, platformVersion?: string) {
-  if (/Windows/i.test(platform || '') || /Windows NT/i.test(userAgent)) {
-    let osVersion = cleanVersion(platformVersion);
-    if (osVersion) {
-      const major = Number(osVersion.split('.')[0]);
-      if (Number.isFinite(major)) osVersion = major >= 13 ? '11' : '10';
-    } else {
-      const match = /Windows NT ([\d.]+)/.exec(userAgent);
-      const legacy = match?.[1];
-      osVersion = legacy === '10.0' ? '10/11' : cleanVersion(legacy);
-    }
-    return { osName: 'Windows', ...(osVersion ? { osVersion } : {}) };
-  }
-  const harmony = /(?:HarmonyOS|OpenHarmony(?:OS)?)[\s/]([\d._]+)/i.exec(userAgent);
-  if (/HarmonyOS|OpenHarmony/i.test(platform || '') || harmony) {
-    const osVersion = cleanVersion(harmony?.[1]) || cleanVersion(platformVersion);
-    return { osName: 'HarmonyOS', ...(osVersion ? { osVersion } : {}) };
-  }
-  const android = /Android\s+([\d._]+)/i.exec(userAgent);
-  if (/Android/i.test(platform || '') || android) {
-    const osVersion = cleanVersion(platformVersion) || cleanVersion(android?.[1]);
-    return { osName: 'Android 兼容环境', ...(osVersion ? { osVersion } : {}) };
-  }
-  const ios = /(?:CPU (?:iPhone )?OS|iPhone OS)\s*([\d_]+)/i.exec(userAgent);
-  if (/iOS/i.test(platform || '') || ios) {
-    const osVersion = cleanVersion(platformVersion) || cleanVersion(ios?.[1]);
-    return { osName: 'iOS', ...(osVersion ? { osVersion } : {}) };
-  }
-  const mac = /Mac OS X\s*([\d_]+)/i.exec(userAgent);
-  if (/macOS/i.test(platform || '') || mac) {
-    const osVersion = cleanVersion(platformVersion) || cleanVersion(mac?.[1]);
-    return { osName: 'macOS', ...(osVersion ? { osVersion } : {}) };
-  }
-  if (/Linux/i.test(platform || '') || /Linux/i.test(userAgent)) return { osName: 'Linux' };
-  return {};
-}
-
-export function parseClientEnvironment(input: ClientEnvironmentInput): ClientEnvironmentDto {
-  const desktopIpad = input.navigatorPlatform === 'MacIntel' && (input.maxTouchPoints || 0) > 1;
-  const tablet = desktopIpad || /iPad|Tablet/i.test(input.userAgent)
-    || (/Android/i.test(input.userAgent) && !/Mobile/i.test(input.userAgent));
-  const phone = !desktopIpad && (input.uaData?.mobile === true || /Mobile|iPhone|Android.*Mobile/i.test(input.userAgent));
-  const brand = chromiumBrand(input.uaData?.brands);
-  const parsedBrowser = parseBrowser(input.userAgent);
-  const explicitHuaweiBrowser = /(?:HuaweiBrowser|HBPC)\/[\d.]+/i.test(input.userAgent);
-  return {
-    source: input.standalone ? 'pwa' : 'web',
-    deviceType: tablet ? 'tablet' : phone ? 'phone' : 'desktop',
-    ...(desktopIpad
-      ? { osName: 'iPadOS' }
-      : parseOs(input.userAgent, input.uaData?.platform, input.uaData?.platformVersion)),
-    ...(explicitHuaweiBrowser || !brand
-      ? parsedBrowser
-      : { browserName: brand.brand, browserVersion: cleanVersion(brand.version) }),
-    relayVersion: input.relayVersion,
-  };
-}
-
 export function collectBasicClientEnvironment(): ClientEnvironmentDto {
   const navigatorWithHints = navigator as Navigator & { userAgentData?: NavigatorUAData; standalone?: boolean };
   const standalone = standaloneMode(navigatorWithHints);
@@ -275,7 +167,7 @@ export async function collectClientEnvironment(): Promise<ClientEnvironmentDto> 
       ...(base.osName === 'iPadOS'
         ? { osName: 'iPadOS' }
         : parseOs(navigator.userAgent, navigatorWithHints.userAgentData?.platform, highEntropy.platformVersion)),
-      ...(base.browserName === '华为浏览器'
+      ...(explicitBrowser(base.browserName)
         ? {}
         : brand ? { browserName: brand.brand, browserVersion: cleanVersion(brand.version) } : {}),
     };

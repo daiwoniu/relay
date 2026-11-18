@@ -8,9 +8,11 @@ import { createMessageSearchSnippet,createLiteralSearchPattern } from '../db/que
 import { TrashProjectListResponseDtoSchema,TrashSessionListResponseDtoSchema } from '../contracts/index.js';
 import { appendAdminAuditEventInDatabase } from '../db/admin-audit.js';
 import { readTrashImpact } from './native-trash-impact.js';
+import { readTrashPeople } from './native-trash-people.js';
 type DB=ReturnType<typeof nativeQueries>;type Actor={id:string;role:string};
 const id=z.string().uuid(),q=z.string().trim().max(100),page={limit:z.number().int().min(1).max(100),offset:z.number().int().min(0).max(100000)};
-const reads={projects:z.object({...page,q}).strict(),sessions:z.object({...page,q,projectId:id.nullable()}).strict(),projectSessions:z.object({...page,projectId:id}).strict(),
+const creatorId=z.string().trim().min(1).max(128).optional();
+const reads={projects:z.object({...page,q,creatorId}).strict(),sessions:z.object({...page,q,creatorId,projectId:id.nullable()}).strict(),projectSessions:z.object({...page,projectId:id}).strict(),
   options:z.object({}).strict(),preview:z.object({sessionId:id}).strict(),matches:z.object({sessionId:id,q:q.refine(v=>v.length>0),offset:page.offset}).strict(),restorePlan:z.object({kind:z.enum(['project','session']),id}).strict(),impact:z.object({kind:z.enum(['project','session']),id}).strict()};
 export function isTrashCommand(name:string):name is 'trash.restoreProject'|'trash.restoreSession'{return name==='trash.restoreProject'||name==='trash.restoreSession';}
 function deny(code:ConstructorParameters<typeof StorageContractError>[0]):never{throw new StorageContractError(code);}
@@ -25,7 +27,7 @@ function match(db:DB,sessionId:string,query:string,offset=0){
   const row=db.get('SELECT id,role,content,created_at FROM messages WHERE session_id=? AND id=?',[sessionId,head.id]);if(!row)deny('CONFLICT');
   return {total,items:[{id:String(row.id),role:String(row.role),content:createMessageSearchSnippet(String(row.content),query,1200).text,createdAt:Number(row.created_at)}]};
 }
-function sessionDto(row:legacy.DeletedSessionRow){return {id:row.id,title:row.title,projectId:row.project_id,projectName:row.project_name,engine:row.engine,deletedAt:Number(row.deleted_at),messageCount:Number(row.message_count)};}
+function sessionDto(row:legacy.DeletedSessionRow){return {id:row.id,title:row.title,projectId:row.project_id,projectName:row.project_name,engine:row.engine,engineSessionId:row.engine_session_id,deletedAt:Number(row.deleted_at),messageCount:Number(row.message_count),assistantMessageCount:row.assistant_message_count};}
 function summary(db:DB,sessionId:string,query:string){if(!query)return {};const found=match(db,sessionId,query),first=found.items[0];return first?{matchMessageId:first.id,matchCount:found.total,matchSnippet:first.content}:{};}
 function restoration(db:DB,actor:Actor,kind:'project'|'session',target:string){
   let p:Record<string,any>,rows:Record<string,any>[];
@@ -49,15 +51,18 @@ export function readTrash<K extends keyof TrashReadInputs>(db:DB,actor:Actor,nam
   if(!Object.hasOwn(reads,name))deny('INVALID_ARGUMENT');const parsed=reads[name].safeParse(raw);if(!parsed.success)deny('INVALID_ARGUMENT');
   const input=parsed.data as any,owner=actor.role==='admin'?undefined:actor.id;let result:unknown;
   if(name==='projects'){
-    const filter={query:input.q},rows=legacy.listDeletedProjectsInDatabase(db,input.limit,input.offset,owner,filter);
+    const filter={query:input.q,creatorId:input.creatorId},rows=legacy.listDeletedProjectsInDatabase(db,input.limit,input.offset,owner,filter);
     const matches=input.q?legacy.listTrashProjectMatchingSessionsInDatabase(db,rows.map(r=>r.id),input.q):[];
-    result=TrashProjectListResponseDtoSchema.parse({items:rows.map(row=>{const found=matches.find(m=>m.project_id===row.id);return {id:row.id,name:row.name,path:row.path,deletedAt:Number(row.deleted_at),sessionCount:Number(row.session_count),
-      ...(found?{matchSessionId:found.id,matchSessionTitle:found.title,matchSessionMessageCount:Number(found.message_count),...summary(db,found.id,input.q)}:{})};}),total:legacy.countDeletedProjectsInDatabase(db,owner,filter),limit:input.limit,offset:input.offset});
+    const people=readTrashPeople(db,'project',rows.map(r=>r.id)),matchedPeople=readTrashPeople(db,'session',matches.map(r=>r.id));
+    result=TrashProjectListResponseDtoSchema.parse({items:rows.map(row=>{const found=matches.find(m=>m.project_id===row.id),matched=found?matchedPeople.get(found.id):null;return {id:row.id,name:row.name,path:row.path,deletedAt:Number(row.deleted_at),sessionCount:Number(row.session_count),...people.get(row.id),
+      ...(found?{matchSessionId:found.id,matchSessionTitle:found.title,matchSessionMessageCount:Number(found.message_count),matchSessionAssistantMessageCount:found.assistant_message_count,matchSessionEngine:found.engine,matchSessionEngineSessionId:found.engine_session_id,matchSessionDeletedAt:Number(found.deleted_at),matchSessionCreator:matched?.creator??null,matchSessionDeletedBy:matched?.deletedBy??null,...summary(db,found.id,input.q)}:{})};}),total:legacy.countDeletedProjectsInDatabase(db,owner,filter),limit:input.limit,offset:input.offset});
   }else if(name==='sessions'){
-    const filter={query:input.q,...(input.projectId?{projectId:input.projectId}:{})},rows=legacy.listDeletedSessionsInDatabase(db,input.limit,input.offset,owner,filter);
-    result=TrashSessionListResponseDtoSchema.parse({items:rows.map(r=>({...sessionDto(r),...summary(db,r.id,input.q)})),total:legacy.countDeletedSessionsInDatabase(db,owner,filter),limit:input.limit,offset:input.offset});
+    const filter={query:input.q,creatorId:input.creatorId,...(input.projectId?{projectId:input.projectId}:{})},rows=legacy.listDeletedSessionsInDatabase(db,input.limit,input.offset,owner,filter);
+    const people=readTrashPeople(db,'session',rows.map(r=>r.id));
+    result=TrashSessionListResponseDtoSchema.parse({items:rows.map(r=>({...sessionDto(r),...people.get(r.id),...summary(db,r.id,input.q)})),total:legacy.countDeletedSessionsInDatabase(db,owner,filter),limit:input.limit,offset:input.offset});
   }else if(name==='projectSessions'){
-    project(db,actor,input.projectId);result=TrashSessionListResponseDtoSchema.parse({items:legacy.listProjectTrashSessionsInDatabase(db,input.projectId,input.limit,input.offset,owner).map(sessionDto),total:legacy.countProjectTrashSessionsInDatabase(db,input.projectId,owner),limit:input.limit,offset:input.offset});
+    project(db,actor,input.projectId);const rows=legacy.listProjectTrashSessionsInDatabase(db,input.projectId,input.limit,input.offset,owner),people=readTrashPeople(db,'session',rows.map(r=>r.id));
+    result=TrashSessionListResponseDtoSchema.parse({items:rows.map(r=>({...sessionDto(r),...people.get(r.id)})),total:legacy.countProjectTrashSessionsInDatabase(db,input.projectId,owner),limit:input.limit,offset:input.offset});
   }else if(name==='options'){
     result=db.all(`SELECT p.id,p.name,p.path FROM projects p WHERE p.deleted_at IS NULL AND p.owner_user_id IS NOT NULL AND EXISTS(
       SELECT 1 FROM sessions s WHERE s.project_id=p.id AND s.deleted_at IS NOT NULL ${owner?'AND s.owner_user_id=?':''}) ORDER BY LOWER(p.name),p.id LIMIT 501`,owner?[owner]:[]);

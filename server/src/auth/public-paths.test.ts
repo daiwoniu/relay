@@ -2,8 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { isUnauthenticatedApiRequest } from './public-paths.js';
 
-test('tools expose only the three public day GET endpoints', () => {
-  for (const suffix of ['', '/calendar', '/weather']) {
+test('tools expose only the four public day GET endpoints', () => {
+  for (const suffix of ['', '/calendar', '/weather', '/hourly']) {
     const path = `/api/public/tools/china-day${suffix}`;
     assert.equal(isUnauthenticatedApiRequest('GET', path), true);
     for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) assert.equal(isUnauthenticatedApiRequest(method, path), false);

@@ -1,4 +1,5 @@
 import type {
+  ArchivePreviewDto,
   PdfDocumentPreviewDto,
   SpreadsheetDocumentPreviewDto,
   SpreadsheetSheetResponseDto,
@@ -6,8 +7,10 @@ import type {
 } from '../contracts/index.js';
 import type { DocumentPreviewErrorCode } from './document-preview-error.js';
 
+export interface DocumentPreviewOptions { maxFileSize: number; maxItems: number; maxRows: number; maxColumns: number }
 export type DocumentPreviewTask = {
-  kind: 'pdf-metadata' | 'pdf-source' | 'word' | 'spreadsheet';
+  options?: DocumentPreviewOptions;
+  kind: 'pdf-metadata' | 'pdf-source' | 'word' | 'spreadsheet' | 'archive';
   filePath: string;
   expectedSize: number;
   expectedMtimeMs: number;
@@ -15,6 +18,7 @@ export type DocumentPreviewTask = {
 };
 
 export type DocumentPreviewTaskResult =
+  | ArchivePreviewDto
   | PdfDocumentPreviewDto
   | WordDocumentPreviewDto
   | SpreadsheetDocumentPreviewDto

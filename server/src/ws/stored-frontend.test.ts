@@ -23,6 +23,15 @@ class Socket extends EventEmitter{
   command(value:unknown){this.emit('message',Buffer.from(JSON.stringify(value)),false);}
 }
 
+test('opaque hosted-page origins cannot open a socket even when an origin override is permissive',async()=>{
+  const wss=new EventEmitter();let authenticated=false;
+  const sockets=setupStoredWebSocket(wss as unknown as WebSocketServer,{port:{authenticateSession:async()=>{authenticated=true;return null;}} as any,graph:{} as any,commands:{} as any,acceptsOrigin:()=>true});
+  try{
+    const socket=new Socket();wss.emit('connection',socket,{headers:{origin:'null',cookie:'relay_session=synthetic'},socket:{remoteAddress:'127.0.0.1'}});
+    assert.equal(socket.code,1008);assert.equal(authenticated,false);assert.deepEqual(socket.messages,[]);
+  }finally{await sockets.close();}
+});
+
 test('Native socket reports uncertain and rejected stops without fabricating a terminal',async(t)=>{
   const f=fixture(),sessionId=randomUUID(),token='synthetic-stop-feedback',tokenHash=hashSessionToken(token);
   f.mutate(`INSERT INTO auth_sessions(token_hash,user_id,expires_at) VALUES('${tokenHash}','owner',${Date.now()+600000});

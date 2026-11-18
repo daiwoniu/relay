@@ -37,7 +37,7 @@ export interface TrashRepository {
   listSessionProjects(ownerUserId?: string): TrashProjectOptionRow[];
   getPreviewableSessionOwner(sessionId: string): { owner_user_id: string | null; project_owner_user_id: string | null } | undefined;
   listMessageMatches(sessionIds: string[], query: string): TrashMessageMatchRow[];
-  listProjectMatchingSessions(projectIds: string[], query: string): Array<{ project_id: string; id: string; title: string; message_count: number }>;
+  listProjectMatchingSessions(projectIds: string[], query: string): ReturnType<typeof repository.listTrashProjectMatchingSessions>;
   listSessionMatchPage(sessionId: string, query: string, offset: number): { items: Array<{ id: string; role: string; content: string; created_at: number }>; total: number };
   listProjectSessions(projectId: string, limit: number, offset: number, ownerUserId?: string): DeletedSessionRow[];
   countProjectSessions(projectId: string, ownerUserId?: string): number;
@@ -79,8 +79,10 @@ const presentTrashSession = (row: DeletedSessionRow) => ({
   projectId: row.project_id,
   projectName: row.project_name,
   engine: row.engine,
+  engineSessionId: row.engine_session_id,
   deletedAt: Number(row.deleted_at),
   messageCount: Number(row.message_count),
+  assistantMessageCount: row.assistant_message_count,
 });
 
 export interface TrashFilesystemPort {
@@ -259,7 +261,7 @@ export function createTrashService(
           const session = matchByProject.get(row.id);
           const message = session && messageBySession.get(session.id);
           return { id: row.id, name: row.name, path: row.path, deletedAt: Number(row.deleted_at), sessionCount: Number(row.session_count),
-            ...(session ? { matchSessionId: session.id, matchSessionTitle: session.title, matchSessionMessageCount: Number(session.message_count) } : {}),
+            ...(session ? { matchSessionId: session.id, matchSessionTitle: session.title, matchSessionMessageCount: Number(session.message_count), matchSessionAssistantMessageCount: session.assistant_message_count, matchSessionEngine: session.engine, matchSessionEngineSessionId: session.engine_session_id, matchSessionDeletedAt: Number(session.deleted_at) } : {}),
             ...(message ? { matchMessageId: message.id, matchCount: Number(message.match_count), matchSnippet: createMessageSearchSnippet(message.content, filter.query!).text } : {}) };
         }),
         total: trashRepository.countDeletedProjects(ownerUserId, filter), limit, offset,

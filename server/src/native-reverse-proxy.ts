@@ -35,7 +35,7 @@ function copyHeaders(headers: IncomingHttpHeaders, websocket: boolean): http.Out
     const normalized = name.toLowerCase();
     if (value === undefined) continue;
     if (!websocket && (HOP_BY_HOP_HEADERS.has(normalized) || connectionNames.has(normalized))) continue;
-    if (normalized === 'x-relay-token' || normalized.startsWith('x-forwarded-') || normalized === 'x-relay-client-address') continue;
+    if (normalized === 'x-relay-token' || normalized.startsWith('x-forwarded-') || normalized === 'x-relay-client-address' || normalized === 'x-relay-frontend-version') continue;
     copied[name] = value;
   }
   return copied;
@@ -65,6 +65,7 @@ export function createNativeReverseProxy(options: {
   target: string;
   accessToken: string;
   relayConfig: RelayConfig;
+  frontendVersion?: string;
 }) {
   const target = new URL(options.target);
   if (!['http:', 'https:'].includes(target.protocol)) throw new Error('正式前端网关后端地址只支持 http 或 https');
@@ -86,7 +87,8 @@ export function createNativeReverseProxy(options: {
   function applyGatewayHeaders(proxyRequest: ClientRequest, request: IncomingMessage): void {
     proxyRequest.removeHeader('x-relay-token');
     proxyRequest.setHeader('X-Relay-Token', options.accessToken);
-    applyTrustedForwardedHeaders(proxyRequest, request.headers.host, options.relayConfig, request.socket.remoteAddress);
+    applyTrustedForwardedHeaders(proxyRequest, request.headers.host, options.relayConfig, request.socket.remoteAddress, request.headers['x-forwarded-for']);
+    if(options.frontendVersion)proxyRequest.setHeader('X-Relay-Frontend-Version',options.frontendVersion);
   }
 
   function web(request: IncomingMessage, response: ServerResponse): void {

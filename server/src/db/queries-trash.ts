@@ -3,6 +3,7 @@ import { deleteWorkspaceLinksForSessionsInOpenTransaction } from './queries-work
 import type { EngineId, Project, Session } from './query-types.js';
 import { createHash } from 'node:crypto';
 import { parseMessageMetadata } from '../message-metadata.js';
+import { withSessionMessageCounts } from './session-message-counts.js';
 
 export interface DeletedProjectRow {
   id: string;
@@ -19,12 +20,14 @@ export interface DeletedSessionRow {
   project_id: string;
   project_name: string;
   engine: EngineId | null;
+  engine_session_id: string | null;
   deleted_at: number;
   owner_user_id?: string | null;
   message_count: number;
+  assistant_message_count?: number;
 }
 
-export interface TrashListFilter { query?: string; projectId?: string }
+export interface TrashListFilter { query?: string; projectId?: string; creatorId?: string }
 export interface TrashProjectOptionRow { id: string; name: string; path: string }
 export interface TrashMessageMatchRow {
   session_id: string;
@@ -53,6 +56,7 @@ export interface RestoredProjectRecord {
 export interface TrashPermanentDeleteImpact {
   sessionCount: number;
   messageCount: number;
+  assistantMessageCount?: number;
   shareCount: number;
   attachmentCount: number;
   releasableBytes: number;
@@ -108,6 +112,7 @@ const projectFilterSql = (ownerUserId?: string, filter: TrashListFilter = {}) =>
   const conditions = ['p.deleted_at IS NOT NULL'];
   const params: unknown[] = [];
   if (ownerUserId) { conditions.push('p.owner_user_id = ?'); params.push(ownerUserId); }
+  if (filter.creatorId) { conditions.push('p.owner_user_id = ?'); params.push(filter.creatorId); }
   if (filter.query?.trim()) {
     conditions.push(`(LOWER(p.name) LIKE LOWER(?) ESCAPE '\\' OR LOWER(p.path) LIKE LOWER(?) ESCAPE '\\'
       OR EXISTS (SELECT 1 FROM sessions s WHERE s.project_id = p.id AND LOWER(s.title) LIKE LOWER(?) ESCAPE '\\')
@@ -122,6 +127,7 @@ const sessionFilterSql = (ownerUserId?: string, filter: TrashListFilter = {}) =>
   const conditions = ['s.deleted_at IS NOT NULL'];
   const params: unknown[] = [];
   if (ownerUserId) { conditions.push('s.owner_user_id = ?'); params.push(ownerUserId); }
+  if (filter.creatorId) { conditions.push('s.owner_user_id = ?'); params.push(filter.creatorId); }
   if (filter.projectId) { conditions.push('s.project_id = ?'); params.push(filter.projectId); }
   if (filter.query?.trim()) {
     conditions.push(`(LOWER(s.title) LIKE LOWER(?) ESCAPE '\\' OR LOWER(p.name) LIKE LOWER(?) ESCAPE '\\'
@@ -165,9 +171,8 @@ export function listDeletedSessions(limit = 50, offset = 0, ownerUserId?: string
 
 export function listDeletedSessionsInDatabase(db: TrashReadDatabase, limit = 50, offset = 0, ownerUserId?: string, filter: TrashListFilter = {}): DeletedSessionRow[] {
   const { where, params } = sessionFilterSql(ownerUserId, filter);
-  return db.all(
-    `SELECT s.id, s.title, s.project_id, p.name AS project_name, s.engine, s.deleted_at, s.owner_user_id,
-            s.message_revision AS message_count
+  const rows = db.all(
+    `SELECT s.id, s.title, s.project_id, p.name AS project_name, s.engine, s.engine_session_id, s.deleted_at, s.owner_user_id
        FROM sessions s
        INNER JOIN projects p ON p.id = s.project_id AND p.deleted_at IS NULL
       WHERE ${where}
@@ -175,6 +180,7 @@ export function listDeletedSessionsInDatabase(db: TrashReadDatabase, limit = 50,
       LIMIT ? OFFSET ?`,
     [...params, pageSize(limit), pageOffset(offset)],
   ) as unknown as DeletedSessionRow[];
+  return withSessionMessageCounts(db, rows);
 }
 
 export function countDeletedSessions(ownerUserId?: string, filter: TrashListFilter = {}): number {
@@ -251,29 +257,32 @@ export function listTrashSessionMatchPageInDatabase(db: TrashReadDatabase, sessi
   return { items, total };
 }
 
-export function listTrashProjectMatchingSessions(projectIds: string[], query: string): Array<{ project_id: string; id: string; title: string; message_count: number }> {
+type TrashMatchingSessionRow = { project_id: string; id: string; title: string; engine: string | null; engine_session_id: string | null; deleted_at: number; message_count: number; assistant_message_count?: number };
+
+export function listTrashProjectMatchingSessions(projectIds: string[], query: string): TrashMatchingSessionRow[] {
   return listTrashProjectMatchingSessionsInDatabase(getDB(), projectIds, query);
 }
 
-export function listTrashProjectMatchingSessionsInDatabase(db: TrashReadDatabase, projectIds: string[], query: string): Array<{ project_id: string; id: string; title: string; message_count: number }> {
+export function listTrashProjectMatchingSessionsInDatabase(db: TrashReadDatabase, projectIds: string[], query: string): TrashMatchingSessionRow[] {
   if (!projectIds.length || !query.trim()) return [];
   const placeholders = projectIds.map(() => '?').join(', ');
-  return db.all(
+  const rows = db.all(
     `WITH candidates AS (
-       SELECT s.project_id, s.id, s.title, s.message_revision AS message_count,
+       SELECT s.project_id, s.id, s.title, s.engine, s.engine_session_id, COALESCE(s.deleted_at, p.deleted_at) AS deleted_at,
          (SELECT MAX(m.created_at) FROM messages m WHERE m.session_id = s.id
            AND m.role IN ('user', 'assistant') AND LOWER(m.content) LIKE LOWER(?) ESCAPE '\\') AS match_at,
          s.updated_at
-       FROM sessions s WHERE s.project_id IN (${placeholders})
+       FROM sessions s JOIN projects p ON p.id=s.project_id WHERE s.project_id IN (${placeholders})
          AND (LOWER(s.title) LIKE LOWER(?) ESCAPE '\\' OR EXISTS (
            SELECT 1 FROM messages m WHERE m.session_id = s.id AND m.role IN ('user', 'assistant')
              AND LOWER(m.content) LIKE LOWER(?) ESCAPE '\\'))
      ), ranked AS (
        SELECT *, ROW_NUMBER() OVER (PARTITION BY project_id ORDER BY match_at DESC, updated_at DESC, id DESC) AS rank
        FROM candidates
-     ) SELECT project_id, id, title, message_count FROM ranked WHERE rank = 1`,
+     ) SELECT project_id, id, title, engine, engine_session_id, deleted_at FROM ranked WHERE rank = 1`,
     [trashPattern(query), ...projectIds, trashPattern(query), trashPattern(query)],
-  ) as Array<{ project_id: string; id: string; title: string; message_count: number }>;
+  ) as Array<Omit<TrashMatchingSessionRow, 'message_count' | 'assistant_message_count'>>;
+  return withSessionMessageCounts(db, rows);
 }
 
 export function listProjectTrashSessions(projectId: string, limit = 50, offset = 0, ownerUserId?: string): DeletedSessionRow[] {
@@ -281,9 +290,8 @@ export function listProjectTrashSessions(projectId: string, limit = 50, offset =
 }
 
 export function listProjectTrashSessionsInDatabase(db: TrashReadDatabase, projectId: string, limit = 50, offset = 0, ownerUserId?: string): DeletedSessionRow[] {
-  return db.all(
-    `SELECT s.id, s.title, s.project_id, p.name AS project_name, s.engine, s.owner_user_id,
-            s.message_revision AS message_count,
+  const rows = db.all(
+    `SELECT s.id, s.title, s.project_id, p.name AS project_name, s.engine, s.engine_session_id, s.owner_user_id,
             COALESCE(s.deleted_at, p.deleted_at) AS deleted_at
        FROM sessions s
        INNER JOIN projects p ON p.id = s.project_id AND p.deleted_at IS NOT NULL
@@ -292,6 +300,7 @@ export function listProjectTrashSessionsInDatabase(db: TrashReadDatabase, projec
       LIMIT ? OFFSET ?`,
     [projectId, ...(ownerUserId ? [ownerUserId] : []), pageSize(limit), pageOffset(offset)],
   ) as unknown as DeletedSessionRow[];
+  return withSessionMessageCounts(db, rows);
 }
 
 export function countProjectTrashSessions(projectId: string, ownerUserId?: string): number {
@@ -464,9 +473,10 @@ function buildPermanentDeletePlan(
   const sessionIds = target.sessions.map((session) => session.id).sort();
   const placeholders = sessionIds.map(() => '?').join(', ');
   const messages = sessionIds.length === 0 ? [] : db.all(
-    `SELECT id, metadata FROM messages WHERE session_id IN (${placeholders}) ORDER BY id ASC`,
+    `SELECT id, role, metadata FROM messages WHERE session_id IN (${placeholders}) ORDER BY id ASC`,
     sessionIds,
   );
+  const assistantMessageCount = messages.filter(message => message.role === 'assistant').length;
   const shares = sessionIds.length === 0 ? [] : db.all(
     `SELECT id FROM shared_records WHERE source_session_id IN (${placeholders}) ORDER BY id ASC`,
     sessionIds,
@@ -554,6 +564,7 @@ function buildPermanentDeletePlan(
       updatedAt: session.updated_at,
     })).sort((left, right) => left.id.localeCompare(right.id)),
     messageIds: messages.map((message) => String(message.id)),
+    assistantMessageCount,
     shareIds: shares.map((share) => String(share.id)),
     attachments,
     contextCompactionKeys: contextCompactions.map((row) => `${row.session_id}:${row.thread_id}:${row.turn_id}`),
@@ -592,6 +603,7 @@ function buildPermanentDeletePlan(
     impact: {
       sessionCount: sessionIds.length,
       messageCount: messages.length,
+      assistantMessageCount,
       shareCount: shares.length,
       attachmentCount: attachments.length,
       releasableBytes: attachments.reduce((total, attachment) => total + attachment.size, 0),
