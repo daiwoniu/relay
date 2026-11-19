@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useFeatureView,featureAction,localAction } from '../../analytics/features';
 import type { CreateShareRequest, SharePreviewResponseDto, ShareScope } from '../../generated/relay-contracts';
 import { createShare, getShareUrl, previewShare } from '../../api/shares';
 import { copyToClipboard } from '../../utils/clipboard';
@@ -31,6 +32,7 @@ export interface ShareDraft {
 }
 
 export default function ShareCreateDialog({ draft, onClose }: { draft: ShareDraft | null; onClose: () => void }) {
+  useFeatureView('share',Boolean(draft),'message_menu');
   const [title, setTitle] = useState('');
   const [includeProcess, setIncludeProcess] = useState(false);
   const [expiryOption, setExpiryOption] = useState<ShareExpiryOption>('1d');
@@ -47,9 +49,10 @@ export default function ShareCreateDialog({ draft, onClose }: { draft: ShareDraf
   useEffect(() => () => gate.invalidate(), [gate]);
   const close = () => { if (submitting) return; gate.invalidate(); setPreview(null); onClose(); };
   const copyLink = async () => {
+    const report=localAction('share','copy_link','message_menu');
     const current = gate.begin();
-    try { await copyToClipboard(shareUrl); if (current()) { setCopied(true); setError(''); } }
-    catch { if (current()) setError('复制失败，请手动选择上方链接复制'); }
+    try { await copyToClipboard(shareUrl);report(true); if (current()) { setCopied(true); setError(''); } }
+    catch {report(false); if (current()) setError('复制失败，请手动选择上方链接复制'); }
   };
 
   useEffect(() => {
@@ -107,17 +110,18 @@ export default function ShareCreateDialog({ draft, onClose }: { draft: ShareDraf
 
   const openPreview = async () => {
     if (previewing || submitting) return;
+    const report=localAction('share','preview','message_menu');
     setError('');
     setPreviewing(true);
     const current = gate.begin();
     try {
       const request = buildRequest();
-      if (!request) return;
-      const result = await previewShare(request);
+      if (!request){report(false);return;}
+      const result = await previewShare(request);report(true);
       if (current()) setPreview(result);
     } catch (cause) {
       if (!current()) return;
-      setError(cause instanceof Error ? cause.message : '加载分享预览失败');
+      report(false);setError(cause instanceof Error ? cause.message : '加载分享预览失败');
     } finally {
       if (current()) setPreviewing(false);
     }
@@ -139,7 +143,7 @@ export default function ShareCreateDialog({ draft, onClose }: { draft: ShareDraf
           <h2 id="share-create-title" className="text-base font-semibold text-[var(--color-text)]">创建分享</h2>
           <p className="mt-1 text-xs text-[var(--color-text-secondary)]">创建后内容和有效期不可修改。</p>
         </div>
-        <div className="flex shrink-0 items-center gap-1"><IconActionButton label="最小化创建分享" variant="neutral" tooltip={false} className="h-8 w-8" onClick={() => setMinimized(true)}><svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 11.5h10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg></IconActionButton><IconActionButton label="关闭创建分享" variant="neutral" tooltip={false} className="h-8 w-8" disabled={submitting} onClick={close}><ClosePanelIcon /></IconActionButton></div>
+        <div className="flex shrink-0 items-center gap-1"><IconActionButton label="最小化创建分享" variant="neutral" tooltip={false} className="h-8 w-8" onClick={() => {featureAction('share','minimize','message_menu');setMinimized(true);}}><svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 11.5h10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg></IconActionButton><IconActionButton label="关闭创建分享" variant="neutral" tooltip={false} className="h-8 w-8" disabled={submitting} onClick={close}><ClosePanelIcon /></IconActionButton></div>
       </div>
 
       <div className="mb-3 flex items-center gap-2.5 rounded-xl border border-[var(--color-notice-info-border)] bg-[var(--color-notice-info-bg)] px-3 py-2.5">
@@ -154,7 +158,7 @@ export default function ShareCreateDialog({ draft, onClose }: { draft: ShareDraf
           <div className="rounded-xl border border-[var(--color-status-success)]/30 bg-[var(--color-status-success)]/10 p-2.5 text-sm text-[var(--color-text)]">分享已创建，可以复制链接或立即打开。</div>
           <div className="break-all rounded-lg bg-[var(--color-bg-secondary)] p-2.5 text-xs text-[var(--color-text-secondary)]">{shareUrl}</div>
           <div className={formActionsClassName}>
-            <button type="button" onClick={() => window.open(shareUrl, '_blank', 'noopener,noreferrer')} className={secondaryFormButtonClassName}>打开</button>
+            <button type="button" onClick={() => {const report=localAction('share','open_external','message_menu');try{window.open(shareUrl,'_blank','noopener,noreferrer');report(true);}catch{report(false);}}} className={secondaryFormButtonClassName}>打开</button>
             <button type="button" onClick={() => void copyLink()} className={primaryFormButtonClassName}>{copied ? '已复制' : '复制链接'}</button>
           </div>
           <FormFeedback message={error} error />
@@ -165,11 +169,11 @@ export default function ShareCreateDialog({ draft, onClose }: { draft: ShareDraf
             <input data-autofocus value={title} maxLength={120} onChange={(event) => setTitle(event.target.value)} enterKeyHint="done" className={formControlClassName} />
           </FormField>
           <label className={`${formCheckboxCardClassName} ${includeProcess ? 'is-selected' : ''}`.trim()}>
-            <input type="checkbox" checked={includeProcess} onChange={(event) => setIncludeProcess(event.target.checked)} className={`${formCheckboxClassName} mt-1`} />
+            <input type="checkbox" checked={includeProcess} onChange={(event) => {featureAction('share','configure','message_menu');setIncludeProcess(event.target.checked);}} className={`${formCheckboxClassName} mt-1`} />
             <span className="min-w-0 flex-1"><span className="flex flex-wrap items-center gap-2"><span className="font-medium">包含处理过程</span><span className="rounded-full border border-[var(--color-notice-attention-border)] bg-[var(--color-surface)] px-2 py-0.5 text-[10px] font-medium text-[var(--color-status-warning)]">谨慎</span></span><span className="mt-0.5 block text-xs leading-5 text-[var(--color-text-secondary)]">可能包含命令、本地路径和工具输出，默认关闭。</span></span>
           </label>
           <FormField label="有效期">
-            <select value={expiryOption} onChange={(event) => setExpiryOption(event.target.value as ShareExpiryOption)} className={formSelectClassName}>
+            <select value={expiryOption} onChange={(event) => {featureAction('share','configure','message_menu');setExpiryOption(event.target.value as ShareExpiryOption);}} className={formSelectClassName}>
               {SHARE_EXPIRY_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
             </select>
           </FormField>
@@ -184,7 +188,7 @@ export default function ShareCreateDialog({ draft, onClose }: { draft: ShareDraf
         </div>
       )}
     </Modal>
-    <MinimizedPanelBar open={draft !== null && minimized} panelId="share-create-title" title="创建分享" description="分享设置已保留" onRestore={() => setMinimized(false)} onClose={close} closeDisabled={submitting} />
+    <MinimizedPanelBar open={draft !== null && minimized} panelId="share-create-title" title="创建分享" description="分享设置已保留" onRestore={() => {featureAction('share','restore','message_menu');setMinimized(false);}} onClose={close} closeDisabled={submitting} />
     <SharePreviewDialog preview={preview} onClose={() => setPreview(null)} />
     </>
   );

@@ -1,4 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import {tracker} from '../../analytics/tracker';
+import {localAction} from '../../analytics/features';
 import { useParams } from 'react-router-dom';
 import { getPublicShare } from '../../api/shares';
 import RelayLogo from '../brand/RelayLogo';
@@ -22,11 +24,13 @@ export default function PublicSharePage({ invalid = false }: { invalid?: boolean
   const exporting = exportStatus === 'preparing';
   const pageRef = useRef<HTMLDivElement>(null);
   const exportRequestRef = useRef(0);
+  const exportReport=useRef<ReturnType<typeof localAction>|null>(null);
   const exportTokenRef = useRef(token);
   const exportSourceTokenRef = useRef<string | null>(null);
   exportTokenRef.current = token;
 
   useEffect(() => {
+    exportReport.current?.('cancelled');exportReport.current=null;
     exportRequestRef.current += 1;
     exportSourceTokenRef.current = null;
     setExportScript('');
@@ -37,19 +41,22 @@ export default function PublicSharePage({ invalid = false }: { invalid?: boolean
       return;
     }
     const controller = new AbortController();
+    const report=tracker.captureResult({feature:'share',action:'load_public',surface:'share_page'});
     setState({ type: 'loading' });
     getPublicShare(token, controller.signal)
-      .then((result) => { if (!controller.signal.aborted) setState(resolvePublicShareViewState(result)); })
-      .catch((error) => { if (!controller.signal.aborted && error?.name !== 'AbortError') { setShareFailure(error); setState(resolvePublicShareError(error)); } });
-    return () => controller.abort();
+      .then((result) => { if (!controller.signal.aborted){const next=resolvePublicShareViewState(result);report(next.type==='active'?'success':'rejected');setState(next);} })
+      .catch((error) => { if (!controller.signal.aborted && error?.name !== 'AbortError') {report('error',{reasonCode:'LOAD_FAILED'}); setShareFailure(error); setState(resolvePublicShareError(error)); } });
+    return () => {controller.abort();exportReport.current?.('cancelled');exportReport.current=null;};
   }, [invalid, token]);
 
   useLayoutEffect(() => {
     if (invalid || !exporting || state.type !== 'active' || !pageRef.current || exportSourceTokenRef.current !== token) return;
     try {
       downloadStaticSharePage(pageRef.current, state.data.title, exportScript);
+      exportReport.current?.(true);exportReport.current=null;
       setExportStatus('idle');
     } catch (error) {
+      exportReport.current?.(false);exportReport.current=null;
       setExportFailure(error);
       setExportStatus('error');
     } finally {
@@ -59,6 +66,7 @@ export default function PublicSharePage({ invalid = false }: { invalid?: boolean
 
   const handleDownload = async () => {
     if (exportStatus === 'loading' || exportStatus === 'preparing') return;
+    exportReport.current=localAction('share','export_html','share_page');
     const requestId = exportRequestRef.current + 1;
     const requestToken = token;
     exportRequestRef.current = requestId;
@@ -74,6 +82,7 @@ export default function PublicSharePage({ invalid = false }: { invalid?: boolean
     } catch (error) {
       if (requestId !== exportRequestRef.current || exportTokenRef.current !== requestToken) return;
       setExportFailure(error);
+      exportReport.current?.(false);exportReport.current=null;
       setExportStatus('error');
     }
   };

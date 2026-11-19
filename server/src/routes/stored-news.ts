@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import { recordCommittedOperation } from '../analytics/command-collector.js';
 import { getConnInfo } from '@hono/node-server/conninfo';
 import { getHttpClientIp } from '../http-client-ip.js';
 import type { RelayEnv } from '../auth/authorization.js';
@@ -13,7 +14,7 @@ export function createStoredNewsRouter(options:{port:CoreStoragePort;service:Pic
   router.all('*',async c=>{
     try{
       const clientId=options.getClientId?.(c)||getHttpClientIp(c);
-      return await options.service.request(c.get('relayStoragePrincipal')??null,c.req.raw,clientId??'local');
+      return await options.service.request(c.get('relayStoragePrincipal')??null,c.req.raw,clientId??'local',fact=>recordCommittedOperation(fact.feature,fact.action,fact.id,fact.result));
     }catch(error){const code=error instanceof StorageContractError?error.code:'STORAGE_UNAVAILABLE';return c.json(presentApiError('资讯操作暂不可用，请刷新状态核对',{code}),code==='FORBIDDEN'?403:code==='INVALID_ARGUMENT'?400:code==='PAYLOAD_TOO_LARGE'?413:503);}
   });return router;
 }

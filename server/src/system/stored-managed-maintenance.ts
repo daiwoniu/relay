@@ -1,4 +1,5 @@
 import type { EngineId } from '../contracts/index.js';
+import { recordTrustedResult } from '../analytics/command-collector.js';
 import type { EngineMaintenanceAdapter } from '../engine/maintenance.js';
 import type { CoreStoragePort } from '../storage/contracts.js';
 import { StorageContractError } from '../storage/command-boundary.js';
@@ -71,6 +72,7 @@ export async function createStoredManagedMaintenance(options:{port:CoreStoragePo
     isOtherOperationInProgress:()=>current!==null||maintenance?.isOperationInProgress()===true});
   const registry=createStoredMaintenanceRegistry(options.port,options.adapters);
   maintenance=createProcessEngineMaintenanceService(registry,processBridge,{inspectEnvironment:options.inspectEnvironment,
+    observeOperation:result=>recordTrustedResult(options.port,{userId:result.user.id,role:result.user.role},'maintenance',result.action,`maintenance:${result.operationId}`,result.operationId,result.status==='completed'?'success':'error',{engine:result.engineId}),
     getCodexWorkspaceRoots:()=>readStoredWorkspaceRoots(options.port),onTerminal:options.onTerminal,prepareOperation:prepare,settleOperation:settle,
     isOtherOperationInProgress:()=>current!==null||recovery.isOperationInProgress()});
   return{recovery,maintenance,registry,completeServiceStartup,

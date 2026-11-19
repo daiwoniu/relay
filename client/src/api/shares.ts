@@ -9,7 +9,7 @@ import type {
 import { jsonBody, requestJson } from './client';
 
 export function createShare(request: CreateShareRequest): Promise<CreateShareResponseDto> {
-  return requestJson('/api/shares', { method: 'POST', ...jsonBody(request) });
+  return requestJson('/api/shares', { analytics:{feature:'share',action:'create',surface:'message_menu'},method: 'POST', ...jsonBody(request) });
 }
 
 export function previewShare(request: CreateShareRequest): Promise<SharePreviewResponseDto> {
@@ -21,11 +21,11 @@ export function listShares(limit = 50, offset = 0): Promise<ShareListResponseDto
 }
 
 export function revokeShare(id: string): Promise<OkDto> {
-  return requestJson(`/api/shares/${encodeURIComponent(id)}/revoke`, { method: 'POST' });
+  return requestJson(`/api/shares/${encodeURIComponent(id)}/revoke`, { analytics:{feature:'share',action:'revoke',surface:'user_menu'},method: 'POST' });
 }
 
 export function deleteShare(id: string): Promise<OkDto> {
-  return requestJson(`/api/shares/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  return requestJson(`/api/shares/${encodeURIComponent(id)}`, { analytics:{feature:'share',action:'delete',surface:'user_menu'},method: 'DELETE' });
 }
 
 export function getPublicShare(token: string, signal?: AbortSignal): Promise<PublicShareResponseDto> {

@@ -47,39 +47,39 @@ export function getNewsPreferences(): Promise<NewsPersonalPreferencesDto> { retu
 export interface NewsRuleMatchStats { counts: Record<string, number>; sampled: number; truncated: boolean }
 export function getNewsRuleMatches(): Promise<NewsRuleMatchStats> { return requestJson('/api/news/preferences/matches'); }
 export function saveNewsPreferences(preferences: NewsPersonalPreferencesDto): Promise<NewsPersonalPreferencesDto> {
-  return requestJson('/api/news/preferences', { method: 'PUT', ...jsonBody(preferences) });
+  return requestJson('/api/news/preferences', { analytics:{feature:'news',action:'save_preferences',surface:'news'},method: 'PUT', ...jsonBody(preferences) });
 }
 
 export function getAdminNewsSources(): Promise<NewsAdminSourcesDto> { return requestJson('/api/admin/news/sources'); }
 export function verifyAdminNewsSource(source: NewsSourceConfigDto): Promise<{ valid: boolean; status: string; sampleCount: number; sampleTitles: string[]; error: string | null }> {
-  return requestJson('/api/admin/news/sources/validate', { method: 'POST', ...jsonBody(source) });
+  return requestJson('/api/admin/news/sources/validate', { analytics:{feature:'news_admin',action:'verify_source',surface:'admin'},method: 'POST', ...jsonBody(source) });
 }
 export function saveAdminNewsSource(source: NewsSourceConfigDto, existing = false): Promise<{ source: NewsSourceConfigDto }> {
-  return requestJson(`/api/admin/news/sources${existing ? `/${encodeURIComponent(source.id)}` : ''}`, { method: existing ? 'PUT' : 'POST', ...jsonBody(source) });
+  return requestJson(`/api/admin/news/sources${existing ? `/${encodeURIComponent(source.id)}` : ''}`, { analytics:{feature:'news_admin',action:'save_source',surface:'admin'},method: existing ? 'PUT' : 'POST', ...jsonBody(source) });
 }
 export function refreshAdminNewsSource(id: string): Promise<{ accepted: boolean; reason?: string }> {
-  return requestJson(`/api/admin/news/sources/${encodeURIComponent(id)}/refresh`, { method: 'POST' });
+  return requestJson(`/api/admin/news/sources/${encodeURIComponent(id)}/refresh`, { analytics:{feature:'news_admin',action:'refresh_source',surface:'admin'},method: 'POST' });
 }
 export interface NewsSocialItemInput {
   platform: 'wechat' | 'xiaohongshu' | 'douyin' | 'kuaishou' | 'weibo';
   url: string; title: string; description?: string; author: string; publishedAt: number;
 }
 export function addAdminNewsSocialItem(item: NewsSocialItemInput): Promise<{ itemId: string; inserted: boolean }> {
-  return requestJson('/api/admin/news/social-items', { method: 'POST', ...jsonBody(item) });
+  return requestJson('/api/admin/news/social-items', { analytics:{feature:'news_admin',action:'add_item',surface:'admin'},method: 'POST', ...jsonBody(item) });
 }
 export function getAdminNewsPolicy(): Promise<{ policy: NewsGlobalPolicyDto }> { return requestJson('/api/admin/news/policy'); }
 export function previewAdminNewsPolicy(policy: NewsGlobalPolicyDto): Promise<NewsPolicyPreviewDto> {
-  return requestJson('/api/admin/news/policy/preview', { method: 'POST', ...jsonBody(policy) });
+  return requestJson('/api/admin/news/policy/preview', { analytics:{feature:'news_admin',action:'preview_policy',surface:'admin'},method: 'POST', ...jsonBody(policy) });
 }
 export function saveAdminNewsPolicy(policy: NewsGlobalPolicyDto): Promise<{ policy: NewsGlobalPolicyDto }> {
-  return requestJson('/api/admin/news/policy', { method: 'PUT', ...jsonBody(policy) });
+  return requestJson('/api/admin/news/policy', { analytics:{feature:'news_admin',action:'save_policy',surface:'admin'},method: 'PUT', ...jsonBody(policy) });
 }
 export function saveAdminNewsCorrection(id: string, correction: { hidden: boolean; categoryId?: string; topicIds?: string[]; entityIds?: string[]; eventTypeId?: string | null }): Promise<unknown> {
-  return requestJson(`/api/admin/news/items/${encodeURIComponent(id)}`, { method: 'PUT', ...jsonBody(correction) });
+  return requestJson(`/api/admin/news/items/${encodeURIComponent(id)}`, { analytics:{feature:'news_admin',action:'correct_item',surface:'admin'},method: 'PUT', ...jsonBody(correction) });
 }
 export function getAdminNewsCategories(): Promise<{ categories: Array<{ id: string; label: string }> }> { return requestJson('/api/admin/news/categories'); }
 export function saveAdminNewsCategory(id: string, label: string): Promise<{ id: string; label: string }> {
-  return requestJson(`/api/admin/news/categories/${encodeURIComponent(id)}`, { method: 'PUT', ...jsonBody({ label }) });
+  return requestJson(`/api/admin/news/categories/${encodeURIComponent(id)}`, { analytics:{feature:'news_admin',action:'save_category',surface:'admin'},method: 'PUT', ...jsonBody({ label }) });
 }
 export interface NewsAdminStats { status: { version: number; lastSuccessAt: number | null; loadedShards: string[] }; storage: { itemCount: number; shardCount: number; bytes: number; freeBytes: number | null }; scheduler: { active: number } | null; sources: Array<{ id: string; lastError: string | null; lastDurationMs: number | null; lastFetchedCount: number | null }>; audit: Array<{ at: number; actorId: string; action: string }> }
 export function getAdminNewsStats(): Promise<NewsAdminStats> { return requestJson('/api/admin/news/stats'); }

@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { useFeatureView,featureAction } from '../../analytics/features';
+import { tracker } from '../../analytics/tracker';
 import { changePassword, changeUsername, removeAvatar, setDefaultEngine, setDefaultModel, setDefaultProject, updateProfile, uploadAvatar } from '../../api/auth';
 import type { EngineId } from '../../generated/relay-contracts';
 import { useAuth } from '../../auth/AuthContext';
@@ -76,6 +78,7 @@ function DefaultEnginePicker({ value, pending, onChange }: { value: EngineId; pe
 }
 
 export default function AccountSettingsDialog({ open, onClose, mobile }: { open: boolean; onClose: () => void; mobile: boolean }) {
+  useFeatureView('settings',open,mobile?'mobile_sheet':'user_menu');
   const { user, updateUser, finishPasswordChange } = useAuth();
   const projects = useChatStore((state) => state.projects);
   const [activeSection, setActiveSection] = useState<AccountSectionId>('profile');
@@ -253,12 +256,14 @@ export default function AccountSettingsDialog({ open, onClose, mobile }: { open:
       return false;
     }
     setActiveSection(sectionId);
+    tracker.action({feature:'settings',action:'section',surface:'settings',section:sectionId});
     return true;
   };
 
   const discardThemeAndContinue = () => {
     const action = pendingSettingsAction;
     themeSettingsRef.current?.discardChanges();
+    tracker.action({feature:'settings',action:'discard',surface:'settings'});
     setPendingSettingsAction(null);
     if (action === 'close') closeSettingsNow();
     else if (action) {
@@ -271,7 +276,7 @@ export default function AccountSettingsDialog({ open, onClose, mobile }: { open:
   const sectionNavigation = <SettingsNavigation items={navigationItems} activeId={selectedSection.id} onChange={requestSectionChange} mobile={mobile} label="账号设置分类" panelId="account-settings-panel" />;
 
   return <>
-    <PanelShell open={open} onClose={requestSettingsClose} closeDisabled={selectedSection.id === 'appearance' && themeBusy} closeOnEscape={!themeMinimized} suspended={themeMinimized} minimizable={selectedSection.id !== 'appearance'} title="设置中心" description={mobile ? selectedSection.description : '管理个人资料、账号安全、外观与通知'} titleId="account-settings-title" size="settings" mobile={mobile}
+    <PanelShell analyticsFeature="settings" open={open} onClose={requestSettingsClose} closeDisabled={selectedSection.id === 'appearance' && themeBusy} closeOnEscape={!themeMinimized} suspended={themeMinimized} minimizable={selectedSection.id !== 'appearance'} title="设置中心" description={mobile ? selectedSection.description : '管理个人资料、账号安全、外观与通知'} titleId="account-settings-title" size="settings" mobile={mobile}
       headerActions={selectedSection.id === 'appearance' ? <IconActionButton label="最小化主题预览" variant="neutral" className="h-9 w-9 rounded-xl" disabled={themeBusy} onClick={() => themeSettingsRef.current?.minimize()}><svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 11.5h10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg></IconActionButton> : undefined}
       navigation={mobile ? <div className="shrink-0 border-b border-[var(--color-border)] bg-[var(--color-bg-secondary)]/55">{sectionNavigation}</div> : undefined}
       sidebar={!mobile ? <>
@@ -366,6 +371,6 @@ export default function AccountSettingsDialog({ open, onClose, mobile }: { open:
         {selectedSection.id === 'notifications' && <div className="embedded-settings-content min-h-0 flex-1"><NotificationSettingsDialog open={open} onClose={closeSettingsNow} mobile={mobile} embedded /></div>}
           </div>
     </PanelShell>
-    <ConfirmDialog open={pendingSettingsAction !== null} tone="warning" title="放弃未保存的外观设置？" description="当前主题预览和未保存的背景图片将被丢弃。" cancelLabel="继续编辑" confirmLabel="放弃更改" onCancel={() => setPendingSettingsAction(null)} onConfirm={discardThemeAndContinue} />
+    <ConfirmDialog open={pendingSettingsAction !== null} tone="warning" title="放弃未保存的外观设置？" description="当前主题预览和未保存的背景图片将被丢弃。" cancelLabel="继续编辑" confirmLabel="放弃更改" onCancel={() => {featureAction('settings','cancel','settings');setPendingSettingsAction(null);}} onConfirm={discardThemeAndContinue} />
   </>;
 }

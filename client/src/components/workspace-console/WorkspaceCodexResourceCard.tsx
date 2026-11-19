@@ -1,5 +1,6 @@
 import { formatClockTime, formatDate, formatDateTime } from '../../utils/date-display.ts';
 import Tooltip from '../ui/Tooltip';
+import {localAction,featureAction} from '../../analytics/features';
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import FailureNotice from '../ui/FailureNotice';
 import { consumeCodexResetCredit, getCodexResourceSnapshot } from '../../api/codex-account';
@@ -114,18 +115,18 @@ export default function WorkspaceCodexResourceCard({ userId }: { userId: string 
     return () => { active = false; mounted.current = false; };
   }, [userId]);
 
-  const refresh = async () => {
-    if (loadingRef.current) return;
+  const refresh = async (manual=false) => {
+    if (loadingRef.current) return;const report=manual?localAction('workbench','refresh_quota','workbench'):()=>false;
     loadingRef.current = true;
     setResetSelection(null);
     setLoading(true); setError(null);
     try {
-      const value = await readResources();
+      const value = await readResources();report(value.status==='ready'&&value.sourceMeta?.state!=='snapshot');
       if (!mounted.current || activeUserId.current !== userId) return;
       setAttemptedAt(Date.now());
       setSnapshot((current) => value.status === 'ready' ? value : current ?? value);
       if (value.status !== 'ready') setError(value.errorMessage || '额度暂时不可用');
-    } catch (cause) {
+    } catch (cause) {report(false);
       if (!mounted.current || activeUserId.current !== userId) return;
       setAttemptedAt(Date.now());
       setError(cause instanceof Error ? cause.message : '额度读取失败');
@@ -216,13 +217,13 @@ export default function WorkspaceCodexResourceCard({ userId }: { userId: string 
   return <section aria-label="Codex 工作资源" className="min-w-0 self-start rounded-2xl border border-violet-300/20 bg-gradient-to-br from-violet-300/[0.10] via-[#192235] to-[#111927] p-3 text-left shadow-lg shadow-black/10">
     <div className="flex items-start justify-between gap-3">
       <div className="min-w-0"><h2 className="text-xs font-semibold tracking-wide text-violet-100">CODEX 额度 <Tooltip content="当前 Codex 账号套餐" asChild><span className="ml-1 font-normal text-slate-400">{planLabel}</span></Tooltip></h2><Tooltip overflowOnly content={view?.email} asChild><p className="mt-1 truncate text-[11px] text-slate-300">{view ? view.email : loading ? '正在读取账号…' : '未提供账号资料'}</p></Tooltip></div>
-      <button type="button" disabled={loading || resetting} onClick={() => void refresh()} className="shrink-0 rounded-lg border border-white/15 bg-white/5 px-2 py-1 text-[11px] text-slate-200 hover:bg-white/10 disabled:opacity-50">{loading ? '读取中' : '刷新'}</button>
+      <button type="button" disabled={loading || resetting} onClick={() => void refresh(true)} className="shrink-0 rounded-lg border border-white/15 bg-white/5 px-2 py-1 text-[11px] text-slate-200 hover:bg-white/10 disabled:opacity-50">{loading ? '读取中' : '刷新'}</button>
     </div>
     <div className={`mt-2 grid gap-2 ${view?.summaryWindows.length === 1 ? 'grid-cols-1' : 'grid-cols-2'}`}>
       {view?.summaryWindows.length ? view.summaryWindows.map((window) => <div key={window.key} className="min-w-0 rounded-lg border border-violet-300/20 bg-violet-300/[0.08] p-2"><div className="flex items-center justify-between gap-1"><Tooltip overflowOnly content={window.window} asChild><span className="truncate text-[10px] text-slate-300">{window.window}</span></Tooltip><strong className="shrink-0 text-sm leading-none tabular-nums text-violet-100">{window.remaining}%</strong></div><div role="meter" aria-label={`Codex ${window.window}剩余额度`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={window.remaining} aria-valuetext={`剩余 ${window.remaining}%`} className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/10"><div className="h-full rounded-full bg-gradient-to-r from-violet-400 to-cyan-300" style={{ width: `${window.remaining}%` }} /></div><Tooltip overflowOnly={Boolean(window.reset)} content={window.reset || '自动重置时间未提供'} asChild><p className="mt-1 truncate text-[10px] text-slate-400">{window.reset || '重置时间未提供'}</p></Tooltip></div>) : <p className="col-span-2 rounded-lg border border-white/10 bg-white/5 p-2 text-[11px] text-slate-400">{snapshot?.authMode === 'apikey' ? 'API Key 模式不提供订阅额度' : loading ? '正在读取额度…' : '额度窗口未提供'}</p>}
     </div>
     <div className="mt-2 flex flex-wrap items-center justify-between gap-x-2 gap-y-1 border-t border-white/10 pt-2"><p className="text-[10px] text-slate-500">{view ? snapshot?.sourceMeta?.state === 'snapshot' ? `上次同步于 ${formatDateTime(view.fetchedAt, { seconds: true })}` : `${formatCodexFetchedAt(view.fetchedAt)}${view.stale ? ' · 旧数据' : ''}` : attemptedAt ? `读取于 ${formatClockTime(attemptedAt, { seconds: true })}` : '尚未读取'}</p>{view && <button ref={detailsButton} type="button" popoverTarget={detailsId} onClick={placeDetails} className="text-[11px] font-medium text-cyan-200 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-300">额度与用量详情 →</button>}</div>
-    {codexNotice && <p role="status" className="mt-2 text-[11px] text-amber-200">{error ? <FailureNotice error={error} /> : codexNotice} <button type="button" onClick={() => void refresh()} className="underline underline-offset-2">重试</button></p>}
+    {codexNotice && <p role="status" className="mt-2 text-[11px] text-amber-200">{error ? <FailureNotice error={error} /> : codexNotice} <button type="button" onClick={() => void refresh(true)} className="underline underline-offset-2">重试</button></p>}
     {view && <div id={detailsId} ref={detailsPanel} popover="auto" role="region" aria-label="Codex 额度与用量详情" className="fixed inset-x-3 bottom-3 top-auto m-0 max-h-[min(78vh,640px)] w-[calc(100vw-1.5rem)] max-w-none overflow-y-auto rounded-2xl border border-violet-300/25 bg-slate-900 p-4 text-xs text-slate-200 shadow-2xl shadow-black/60 lg:inset-x-auto lg:bottom-auto lg:top-[var(--codex-details-top)] lg:right-[var(--codex-details-right)] lg:w-[min(820px,calc(100vw-2rem))] lg:max-h-[min(70vh,520px)]">
       <div className="sticky top-0 z-10 -mx-4 -mt-4 border-b border-white/10 bg-slate-900 px-4 py-3">
         <div className="flex items-start justify-between gap-3">
@@ -230,7 +231,7 @@ export default function WorkspaceCodexResourceCard({ userId }: { userId: string 
           <div className="hidden flex-wrap justify-end gap-1.5 sm:flex">{view.summaryWindows.map((window) => <span key={window.key} className="rounded-md border border-violet-300/20 bg-violet-300/[0.08] px-2 py-1 text-[11px] text-slate-300">{window.window} · 剩余 <strong className="tabular-nums text-violet-100">{window.remaining}%</strong></span>)}{view.manualResets !== null && <span className="rounded-md border border-amber-300/20 bg-amber-300/5 px-2 py-1 text-[11px] text-amber-200">手动重置 {view.manualResets} 次</span>}</div>
           <button type="button" popoverTarget={detailsId} popoverTargetAction="hide" className="shrink-0 rounded-md border border-white/15 px-2 py-1 text-[11px]">关闭</button>
         </div>
-        <div className="mt-3 flex gap-2" role="group" aria-label="Codex 详情视图"><button type="button" onClick={() => { setDetailTab('limits'); detailsPanel.current?.scrollTo({ top: 0 }); }} aria-pressed={detailTab === 'limits'} className={`rounded-md border px-3 py-1.5 text-[11px] font-medium ${detailTab === 'limits' ? 'border-cyan-300/40 bg-cyan-300/10 text-cyan-200' : 'border-white/10 text-slate-400'}`}>额度与重置</button><button type="button" onClick={() => { setDetailTab('usage'); detailsPanel.current?.scrollTo({ top: 0 }); }} aria-pressed={detailTab === 'usage'} className={`rounded-md border px-3 py-1.5 text-[11px] font-medium ${detailTab === 'usage' ? 'border-cyan-300/40 bg-cyan-300/10 text-cyan-200' : 'border-white/10 text-slate-400'}`}>Token 用量</button></div>
+        <div className="mt-3 flex gap-2" role="group" aria-label="Codex 详情视图"><button type="button" onClick={() => { featureAction('workbench','mode','workbench');setDetailTab('limits'); detailsPanel.current?.scrollTo({ top: 0 }); }} aria-pressed={detailTab === 'limits'} className={`rounded-md border px-3 py-1.5 text-[11px] font-medium ${detailTab === 'limits' ? 'border-cyan-300/40 bg-cyan-300/10 text-cyan-200' : 'border-white/10 text-slate-400'}`}>额度与重置</button><button type="button" onClick={() => { featureAction('workbench','mode','workbench');setDetailTab('usage'); detailsPanel.current?.scrollTo({ top: 0 }); }} aria-pressed={detailTab === 'usage'} className={`rounded-md border px-3 py-1.5 text-[11px] font-medium ${detailTab === 'usage' ? 'border-cyan-300/40 bg-cyan-300/10 text-cyan-200' : 'border-white/10 text-slate-400'}`}>Token 用量</button></div>
       </div>
       <div className="mt-4 space-y-4">
         {detailTab === 'limits' && <>

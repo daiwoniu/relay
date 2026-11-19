@@ -6,5 +6,5 @@ export function getNotificationPreferences(signal?: AbortSignal): Promise<Notifi
 }
 
 export function updateNotificationPreferences(updates: Partial<NotificationPreferencesDto>): Promise<NotificationPreferencesResponseDto> {
-  return requestJson('/api/auth/notification-preferences', { method: 'PATCH', ...jsonBody(updates) });
+  return requestJson('/api/auth/notification-preferences', { analytics:{feature:'settings',action:'save',surface:'settings',settingKey:'notification'},method: 'PATCH', ...jsonBody(updates) });
 }

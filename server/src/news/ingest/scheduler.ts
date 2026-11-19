@@ -1,4 +1,5 @@
 import { performance } from 'node:perf_hooks';
+import {randomUUID} from 'node:crypto';
 import type { NewsItemInput } from '../types.js';
 import type { NewsRepository } from '../storage/news-repository.js';
 import { fetchSource as defaultFetchSource } from '../sources/fetch-source.js';
@@ -16,6 +17,7 @@ export interface NewsSchedulerOptions {
   clock?: () => number;
   limits?: { maxConcurrent?: number };
   canWrite?: (items: NewsItemInput[]) => boolean;
+  observeManualRefresh?:(fact:{userId:string;factId:string;operationId:string;result:'success'|'error'})=>void;
 }
 
 export interface NewsSchedulerStatus {
@@ -99,7 +101,7 @@ export class NewsScheduler {
     }
   }
 
-  refreshSource(sourceId: string, actor: { id: string; role: string }): { accepted: boolean; reason?: string } {
+  refreshSource(sourceId: string, actor: { id: string; role: string },correlation?:string): { accepted: boolean; reason?: string } {
     if (actor.role !== 'admin') return { accepted: false, reason: 'forbidden' };
     const source = this.sources.find((entry) => entry.id === sourceId);
     if (!source) return { accepted: false, reason: 'source_disabled_or_missing' };
@@ -107,7 +109,10 @@ export class NewsScheduler {
     if (this.active.size >= Math.min(2, Math.max(1, this.options.limits?.maxConcurrent ?? 2))) return { accepted: false, reason: 'capacity' };
     const state = this.options.repository.getSourceState(sourceId);
     if (state?.lastCheckedAt && this.clock() - state.lastCheckedAt < 120_000) return { accepted: false, reason: 'cooldown' };
-    void this.runSource(source).catch((error: unknown) => {
+    const factId=randomUUID(),operationId=correlation&&/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i.test(correlation)?correlation:factId;
+    const observe=(result:'success'|'error')=>{try{this.options.observeManualRefresh?.({userId:actor.id,factId,operationId,result});}catch{/* No business dependency on analytics. */}};
+    void this.runSource(source).then(()=>observe(this.options.repository.getSourceState(source.id)?.failureCount?'error':'success')).catch((error: unknown) => {
+      observe('error');
       console.warn('[News] 手动采集失败:', error instanceof Error ? error.message : String(error));
     });
     return { accepted: true };

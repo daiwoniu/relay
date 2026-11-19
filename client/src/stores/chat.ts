@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { tracker } from '../analytics/tracker.ts';
 import type {
   ArchivePreviewDto,
   MessageDto,
@@ -148,6 +149,8 @@ interface ChatStore {
   // Sessions
   sessions: Session[];
   activeSessionId: string | null;
+  // 本地/URL 位置尚未由服务端确认时，不允许触发会话内容加载。
+  pendingRestoreSessionId: string | null;
   activeSessionOpenVersion: number;
   autoOpenProjectPicker: boolean;
   projectSelectionLocked: boolean;
@@ -261,7 +264,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   setProjects: (projects) => set({ projects }),
   setCurrentProject: (id) => {
     const state = get();
-    if (!state.activeSessionId) storeEmptyChatLocation(id || null, undefined, state.autoOpenProjectPicker, state.projectSelectionLocked);
+    if (!state.activeSessionId && !state.pendingRestoreSessionId) storeEmptyChatLocation(id || null, undefined, state.autoOpenProjectPicker, state.projectSelectionLocked);
     set({ currentProjectId: id, pendingProjectPath: null });
   },
   addProject: (project) => set((state) => ({
@@ -342,8 +345,9 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   })),
 
   sessions: [],
-  activeSessionId: initialChatCandidate.activeSessionId,
-  activeSessionOpenVersion: initialChatCandidate.activeSessionId ? 1 : 0,
+  activeSessionId: null,
+  pendingRestoreSessionId: initialChatCandidate.activeSessionId,
+  activeSessionOpenVersion: 0,
   autoOpenProjectPicker: initialChatCandidate.autoOpenProjectPicker,
   projectSelectionLocked: initialChatCandidate.projectSelectionLocked === true,
   navigationLoadState: createRegionLoadState(),
@@ -373,9 +377,10 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   restoreStoredChatCandidate: () => {
     const candidate = getInitialChatCandidate();
     set((state) => ({
-      activeSessionId: candidate.activeSessionId,
+      activeSessionId: null,
+      pendingRestoreSessionId: candidate.activeSessionId,
       currentProjectId: candidate.currentProjectId,
-      activeSessionOpenVersion: state.activeSessionOpenVersion + (state.activeSessionId === candidate.activeSessionId ? 0 : 1),
+      activeSessionOpenVersion: state.activeSessionOpenVersion + (state.activeSessionId ? 1 : 0),
       autoOpenProjectPicker: candidate.autoOpenProjectPicker,
       projectSelectionLocked: candidate.projectSelectionLocked === true,
       navigationLoadState: createRegionLoadState(),
@@ -391,6 +396,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       pendingProjectPath: null,
       sessions: [],
       activeSessionId: null,
+      pendingRestoreSessionId: null,
       activeSessionOpenVersion: 0,
       autoOpenProjectPicker: true,
       projectSelectionLocked: false,
@@ -540,6 +546,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     };
   }),
   setActiveSession: (id, options) => {
+    if(id&&get().activeSessionId!==id)tracker.track('feature_view',{feature:'session',action:'open',surface:'unknown'});
     const state = get();
     for (const tab of state.rightPanelTabs) disposeFilePreviewTab(tab);
     if (id) storeSessionChatLocation(id);
@@ -554,12 +561,12 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     if (id) {
       const session = state.sessions.find((s) => s.id === id);
       if (session?.project_id) {
-        set({ activeSessionId: id, activeSessionOpenVersion: state.activeSessionOpenVersion + 1, currentProjectId: session.project_id, pendingProjectPath: null, projectSelectionLocked: false, rightPanelTabs: [], activeTabId: null, prevActiveTabId: null, panelVisible: false, rightPanelPinned: false });
+        set({ activeSessionId: id, pendingRestoreSessionId: null, activeSessionOpenVersion: state.activeSessionOpenVersion + 1, currentProjectId: session.project_id, pendingProjectPath: null, projectSelectionLocked: false, rightPanelTabs: [], activeTabId: null, prevActiveTabId: null, panelVisible: false, rightPanelPinned: false });
       } else {
-        set({ activeSessionId: id, activeSessionOpenVersion: state.activeSessionOpenVersion + 1, pendingProjectPath: null, projectSelectionLocked: false, rightPanelTabs: [], activeTabId: null, prevActiveTabId: null, panelVisible: false, rightPanelPinned: false });
+        set({ activeSessionId: id, pendingRestoreSessionId: null, activeSessionOpenVersion: state.activeSessionOpenVersion + 1, pendingProjectPath: null, projectSelectionLocked: false, rightPanelTabs: [], activeTabId: null, prevActiveTabId: null, panelVisible: false, rightPanelPinned: false });
       }
     } else {
-      set({ activeSessionId: id, activeSessionOpenVersion: state.activeSessionOpenVersion + 1, autoOpenProjectPicker: options?.autoOpenProjectPicker ?? true, projectSelectionLocked: options?.projectSelectionLocked ?? false, rightPanelTabs: [], activeTabId: null, prevActiveTabId: null, panelVisible: false, rightPanelPinned: false });
+      set({ activeSessionId: id, pendingRestoreSessionId: null, activeSessionOpenVersion: state.activeSessionOpenVersion + 1, autoOpenProjectPicker: options?.autoOpenProjectPicker ?? true, projectSelectionLocked: options?.projectSelectionLocked ?? false, rightPanelTabs: [], activeTabId: null, prevActiveTabId: null, panelVisible: false, rightPanelPinned: false });
     }
   },
   addSession: (session) => set((state) => ({
@@ -834,7 +841,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   sidebarAccountScope: 'mine',
   connectionError: null,
   protocolMismatch: null,
-  toggleSidebar: () => set((state) => ({ sidebarOpen: !state.sidebarOpen })),
+  toggleSidebar: () => {tracker.action({feature:'layout',action:'toggle_sidebar',surface:'sidebar'});set((state) => ({ sidebarOpen: !state.sidebarOpen }));},
   setSidebarOpen: (open) => set({ sidebarOpen: open }),
   setSidebarAccountScope: (scope) => set({ sidebarAccountScope: scope }),
   setConnectionError: (message) => set({ connectionError: message }),
@@ -859,6 +866,8 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     // 如果同名 tab 已存在，更新它并切换过去
     const existing = state.rightPanelTabs.find((t) => t.title === params.title);
     if (existing) {
+      if(!state.panelVisible)tracker.action({feature:'file_preview',action:'restore',surface:'message_file'});
+      else if(state.activeTabId!==existing.id)tracker.action({feature:'file_preview',action:'activate',surface:'message_file'});
       disposeFilePreviewTab(existing);
       set({
         rightPanelTabs: state.rightPanelTabs.map((t) =>
@@ -869,6 +878,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       });
       return existing.id;
     } else {
+      tracker.track('feature_view',{feature:'file_preview',action:'open',surface:'message_file'});
       set({
         rightPanelTabs: [...state.rightPanelTabs, newTab],
         activeTabId: id,
@@ -881,6 +891,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     const state = get();
     if (state.activeTabId) {
       const closing = state.rightPanelTabs.find((tab) => tab.id === state.activeTabId);
+      if(closing)tracker.action({feature:'file_preview',action:'close',surface:'keyboard'});
       if (closing) disposeFilePreviewTab(closing);
       const remaining = state.rightPanelTabs.filter((t) => t.id !== state.activeTabId);
       const newActive = remaining.length > 0 ? remaining[remaining.length - 1].id : null;
@@ -890,6 +901,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   closeRightPanelTab: (tabId) => {
     const state = get();
     const closing = state.rightPanelTabs.find((tab) => tab.id === tabId);
+    if(closing)tracker.action({feature:'file_preview',action:'close',surface:'preview_tab'});
     if (closing) disposeFilePreviewTab(closing);
     const remaining = state.rightPanelTabs.filter((t) => t.id !== tabId);
     const newActive = state.activeTabId === tabId
@@ -904,11 +916,12 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     });
   },
   closeAllRightPanelTabs: () => {
+    if(get().rightPanelTabs.length)tracker.action({feature:'file_preview',action:'close_all',surface:'preview_toolbar'});
     for (const tab of get().rightPanelTabs) disposeFilePreviewTab(tab);
     set({ rightPanelTabs: [], activeTabId: null, prevActiveTabId: null, panelVisible: false, rightPanelPinned: false });
   },
-  hideRightPanel: () => set({ panelVisible: false }),
-  setActiveTabId: (id) => set({ activeTabId: id }),
+  hideRightPanel: () => {if(get().panelVisible)tracker.action({feature:'file_preview',action:'minimize',surface:'preview_toolbar'});set({ panelVisible: false });},
+  setActiveTabId: (id) => {if(id!==get().activeTabId)tracker.action({feature:'file_preview',action:'activate',surface:'preview_tab'});set({ activeTabId: id });},
   updateRightPanelTab: (tabId, params) => {
     if (!get().rightPanelTabs.some((tab) => tab.id === tabId)) return false;
     set((state) => ({
@@ -920,14 +933,16 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     return true;
   },
   setRightPanelWidth: (width) => set({ rightPanelWidth: width }),
-  toggleRightPanelPinned: () => set((state) => ({ rightPanelPinned: !state.rightPanelPinned })),
+  toggleRightPanelPinned: () => {tracker.action({feature:'file_preview',action:get().rightPanelPinned?'unpin':'pin',surface:'preview_toolbar'});set((state) => ({ rightPanelPinned: !state.rightPanelPinned }));},
   toggleRightPanel: () => {
     const state = get();
     if (state.panelVisible) {
+      tracker.action({feature:'file_preview',action:'minimize',surface:'keyboard'});
       // 当前可见 → 隐藏
       set({ panelVisible: false });
     } else {
       // 当前隐藏 → 打开面板
+      tracker.action({feature:'file_preview',action:'restore',surface:'keyboard'});
       // 如果有 tab，恢复之前的 tab；没有 tab 时打开空白页
       const restoreId = state.prevActiveTabId && state.rightPanelTabs.some((t) => t.id === state.prevActiveTabId)
         ? state.prevActiveTabId

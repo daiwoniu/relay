@@ -1,4 +1,5 @@
 import Tooltip from '../ui/Tooltip';
+import { featureAction } from '../../analytics/features';
 import type { PublicUserDto } from '../../generated/relay-contracts';
 import RelayLogo from '../brand/RelayLogo';
 import UserAvatar from '../account/UserAvatar';
@@ -62,6 +63,6 @@ export default function SidebarWorkbench({
       <button type="button" onClick={onExitUserResources} aria-label="退出用户资源视图" className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus-ring)]"><span aria-hidden="true">×</span></button>
     </div>}
 
-    <ListSearchField value={searchQuery} onChange={onSearch} onClear={onClearSearch} placeholder={searchPlaceholder} label="搜索会话和消息" compact className="sidebar-search" />
+    <ListSearchField value={searchQuery} onChange={onSearch} onClear={()=>{featureAction('session','cancel','sidebar');onClearSearch();}} onCommit={()=>featureAction('session','search','sidebar')} placeholder={searchPlaceholder} label="搜索会话和消息" compact className="sidebar-search" />
   </div>;
 }

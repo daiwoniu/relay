@@ -18,7 +18,7 @@ async function requestApprovalTrust(
   options: ApprovalTrustRequestOptions,
 ): Promise<ApprovalTrustStateDto> {
   if (!options.fetchImpl) {
-    return requestJson<ApprovalTrustStateDto>(path, { ...init, signal: options.signal });
+    return requestJson<ApprovalTrustStateDto>(path, { ...(init.method==='PUT'||init.method==='DELETE'?{analytics:{feature:'interaction',action:init.method==='PUT'?'save_trust':'clear_trust',surface:'settings'} as const}:{}),...init, signal: options.signal });
   }
   const response = await options.fetchImpl(path, {
     credentials: 'same-origin',

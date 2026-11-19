@@ -1,4 +1,5 @@
 import type { PendingApprovalDto } from '../generated/relay-contracts';
+import { tracker } from '../analytics/tracker.ts';
 import { getApprovalPresentation } from '../components/authorization/approval-presentation.ts';
 import type { SessionEndAttentionEvent } from './session-end-policy.ts';
 import type { QueueStartAttentionEvent } from '../stores/queue-start-attention.ts';
@@ -26,16 +27,20 @@ export function buildApprovalNotificationContent(approvals: PendingApprovalDto[]
 
 export function showApprovalBrowserNotification(approvals: PendingApprovalDto[], onClick: () => void): Notification | null {
   if (typeof Notification === 'undefined' || Notification.permission !== 'granted' || approvals.length === 0) return null;
+  const report=tracker.captureResult({feature:'notifications',action:'deliver',surface:'system'});
   try {
     const content = buildApprovalNotificationContent(approvals);
     const notification = new Notification(content.title, { body: content.body, tag: 'relay-pending-approvals' });
+    report('success');
     notification.onclick = () => {
+      tracker.action({feature:'notifications',action:'activate',surface:'notification'});
       window.focus();
       onClick();
       notification.close();
     };
     return notification;
   } catch {
+    report('error');
     return null;
   }
 }
@@ -53,25 +58,31 @@ export function buildSessionEndNotificationContent(event: Pick<SessionEndAttenti
 
 export function showSessionEndBrowserNotification(event: SessionEndAttentionEvent, onClick: () => void): Notification | null {
   if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return null;
+  const report=tracker.captureResult({feature:'notifications',action:'deliver',surface:'system'});
   try {
     const content = buildSessionEndNotificationContent(event);
     const notification = new Notification(content.title, { body: content.body, tag: `relay-session-ended:${event.sessionId}` });
+    report('success');
     notification.onclick = () => {
+      tracker.action({feature:'notifications',action:'activate',surface:'notification'});
       window.focus();
       onClick();
       notification.close();
     };
     return notification;
   } catch {
+    report('error');
     return null;
   }
 }
 
 export function showQueueStartBrowserNotification(event: QueueStartAttentionEvent, onClick: () => void): Notification | null {
   if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return null;
+  const report=tracker.captureResult({feature:'notifications',action:'deliver',surface:'system'});
   try {
     const notification = new Notification('排队任务已开始', { body: `会话：${event.sessionTitle}`, tag: `relay-queue-started:${event.queueId}` });
-    notification.onclick = () => { window.focus(); onClick(); notification.close(); };
+    report('success');
+    notification.onclick = () => { tracker.action({feature:'notifications',action:'activate',surface:'notification'});window.focus(); onClick(); notification.close(); };
     return notification;
-  } catch { return null; }
+  } catch { report('error');return null; }
 }

@@ -183,7 +183,32 @@ test('keeps a complete workbench projection when legacy responsibility classific
     unverified_items: [{ work_item_id: '9001000003', reason: 'owner_not_verified' }],
   }, expected);
   assert.equal(result.complete, false);
+  assert.equal(result.unverifiedCount, 1);
   assert.deepEqual(result.workbenchItems[0]?.mySubtasks.map((child) => child.id), ['9001000028']);
+});
+
+test('classification diagnostics preserve counts without exposing raw unverified records', () => {
+  const parsed = parseResponsibilityReport({ ...report, complete: false,
+    integrity: { ...report.integrity, classification_complete: false, unverified_count: 1 },
+    unverified_items: [{ work_item_id: '9001000003', reason: 'owner_not_verified', private_detail: 'not-for-client' }],
+  }, expected);
+  assert.equal(parsed.unverifiedCount, 1);
+  assert.equal(parsed.stale, false);
+  assert.equal(parsed.error, null);
+  assert.ok(parsed.workbenchItems.length > 0);
+  assert.equal(JSON.stringify(parsed).includes('private_detail'), false);
+  assert.equal(Object.hasOwn(parseResponsibilityReport(report, expected), 'unverifiedCount'), false);
+  assert.equal(parseResponsibilityReport({ ...report, unverified_items: [],
+    integrity: { ...report.integrity, unverified_count: 0 } }, expected).unverifiedCount, 0);
+});
+
+test('classification diagnostics reject conflicting counts and invalid records containers', () => {
+  for (const invalid of [
+    { ...report, unverified_items: {} },
+    { ...report, unverified_items: [{ work_item_id: '9001000003' }] },
+    { ...report, unverified_items: [], integrity: { ...report.integrity, unverified_count: 1 } },
+    { ...report, complete: false, unverified_items: [], integrity: { ...report.integrity, classification_complete: false } },
+  ]) assert.throws(() => parseResponsibilityReport(invalid, expected), /待核实/);
 });
 
 test('shows an unfinished child in a completed node as a single unverified item', () => {

@@ -1343,6 +1343,7 @@ export interface WorkspaceConsoleResponsibilityDto {
   complete: boolean;
   stale: boolean;
   error: string | null;
+  unverifiedCount?: number;
   sourceMeta?: {
     state: 'live' | 'snapshot' | 'failed_snapshot' | 'unavailable';
     lastSuccessAt: number | null;

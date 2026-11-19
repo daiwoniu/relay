@@ -6,6 +6,7 @@ import { getFileIconType } from './file-icon-type';
 import { useFilePreview } from './useFilePreview';
 import { areProcessFilesEqual, type ProcessFileResource } from './process-file-resources';
 
+import {featureAction} from '../../analytics/features';
 const PAGE_SIZE = 6;
 const THUMBNAIL_SOURCE_LIMIT = 4 * 1024 * 1024;
 
@@ -57,6 +58,6 @@ export default memo(function ProcessFileList({ files }: { files: ProcessFileReso
       <span className="process-file-list__identity"><span className="process-file-list__name">{file.name}</span><span className="process-file-list__directory">{file.directory}</span></span>
       <span className="process-file-list__action">{file.deleted ? '已删除' : file.action}</span>
     </button>)}
-    {files.length > limit && <button type="button" className="flow-more" onClick={() => setLimit(value => value + PAGE_SIZE)}>再显示 {Math.min(PAGE_SIZE, files.length - limit)} 个文件（剩余 {files.length - limit} 个）</button>}
+    {files.length > limit && <button type="button" className="flow-more" onClick={() => {featureAction('message','expand_files','message_file');setLimit(value => value + PAGE_SIZE);}}>再显示 {Math.min(PAGE_SIZE, files.length - limit)} 个文件（剩余 {files.length - limit} 个）</button>}
   </div>;
 }, (previous, next) => areProcessFilesEqual(previous.files, next.files));

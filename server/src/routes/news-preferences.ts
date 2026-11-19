@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import { observeNews,type NewsAnalyticsObserver } from '../news/analytics-observation.js';
 import { getRequestActor, type Actor, type RelayEnv } from '../auth/authorization.js';
 import { isAllowedOrigin } from '../security.js';
 import type { NewsRepository } from '../news/storage/news-repository.js';
@@ -13,6 +14,7 @@ type Repo = Pick<NewsRepository, 'getStatus' | 'getUserPreferences' | 'saveUserP
 const DAY_MS = 86_400_000;
 
 export function createNewsPreferencesRouter(options: {
+  observe?:NewsAnalyticsObserver;
   repository: () => Repo | null;
   getActor?: (context: Parameters<typeof getRequestActor>[0]) => Actor | Promise<Actor>;
   originAllowed?: (origin?: string | null) => boolean;
@@ -69,6 +71,7 @@ export function createNewsPreferencesRouter(options: {
     if (!parsed.success) return c.json({ error: '关注规则无效' }, 400);
     if (new Set(parsed.data.rules.map((rule) => rule.id)).size !== parsed.data.rules.length) return c.json({ error: '规则 ID 重复' }, 400);
     options.repository()!.saveUserPreferences((await actor(c)).userId, parsed.data);
+    observeNews(options.observe,c,'save_preferences','success','news');
     return c.json(parsed.data);
   });
   router.get('/', async (c) => {

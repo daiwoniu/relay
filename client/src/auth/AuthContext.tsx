@@ -56,6 +56,8 @@ export function AuthProvider({ children, skipInitialCheck = false }: { children:
   }, []);
 
   const becomeGuest = useCallback(() => {
+    tracker.reset();
+    tracker.resume('guest');
     void resetAuthenticatedClientState().catch(() => undefined);
     resetThemeBootstrapFromLocalPreference();
     setUser(null);
@@ -67,7 +69,7 @@ export function AuthProvider({ children, skipInitialCheck = false }: { children:
     if (!skipInitialCheck) setStatus((current) => current === 'guest' ? 'loading' : current);
   }, [skipInitialCheck]);
 
-  const retryInitialCheck = useCallback(() => {
+  const retryInitialCheck = useCallback(() => {tracker.action({feature:'auth',action:'retry_initialization',surface:'system'});
     setInitialError('');
     setStatus('loading');
     setInitialCheckVersion((version) => version + 1);
@@ -111,6 +113,7 @@ export function AuthProvider({ children, skipInitialCheck = false }: { children:
       setStatus('authenticated');
       return null;
     } catch (error) {
+      tracker.resume(userRef.current?.id ?? 'guest');
       if (error instanceof ApiError) return getLoginErrorMessage(error.status, error.data);
       return getLoginErrorMessage(0, null);
     }

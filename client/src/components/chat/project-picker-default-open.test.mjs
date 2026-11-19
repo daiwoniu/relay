@@ -45,7 +45,7 @@ test('从项目加号或项目菜单新建会话时不自动打开项目选择�
 });
 
 test('从全部项目创建的空会话锁定项目选择控件', () => {
-  assert.match(inputSource, /const canSelectProject = !activeSessionId && !projectSelectionLocked/);
+  assert.match(inputSource, /const canSelectProject = !activeSessionId && !pendingRestoreSessionId && !projectSelectionLocked/);
 });
 
 test('删除当前会话进入空会话时保留项目且不打开项目选择面板', () => {

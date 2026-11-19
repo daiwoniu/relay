@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState,useRef } from 'react';
+import { featureAction } from '../../analytics/features';
 import type { ArchivePreviewDto } from '../../generated/relay-contracts';
 import FileTypeIcon from '../messages/FileTypeIcon';
 import { formControlClassName } from '../ui/FormControls';
@@ -10,10 +11,12 @@ export default function ArchivePreview({ archive }: { archive: ArchivePreviewDto
   const [directory, setDirectory] = useState('');
   const [query, setQuery] = useState('');
   const [limit, setLimit] = useState(PAGE_SIZE);
+  const committedQuery=useRef('');
+  const commitSearch=()=>{if(query!==committedQuery.current){featureAction('file_preview','search_archive','preview_content');committedQuery.current=query;}};
   useEffect(() => { setDirectory(''); setQuery(''); setLimit(PAGE_SIZE); }, [archive]);
   const rows = useMemo(() => getArchiveRows(archive.entries, directory, query), [archive.entries, directory, query]);
   const searching = Boolean(query.trim());
-  const navigate = (path: string) => { setDirectory(path); setQuery(''); setLimit(PAGE_SIZE); };
+  const navigate = (path: string) => { if(path!==directory)featureAction('file_preview','browse_archive','preview_content');setDirectory(path); setQuery(''); setLimit(PAGE_SIZE); };
   const parts = directory ? directory.split('/') : [];
   return <section className="archive-preview" aria-label="ZIP 压缩包目录">
     <header className="archive-preview-summary">
@@ -22,7 +25,7 @@ export default function ArchivePreview({ archive }: { archive: ArchivePreviewDto
       <span>仅查看目录和文件信息</span>
     </header>
     {archive.truncated && <p className="workspace-preview-notice is-warning" role="status">目录共 {archive.totalEntries.toLocaleString()} 条，已加载前 {archive.entries.length.toLocaleString()} 条；浏览和搜索仅覆盖已加载条目，请下载查看完整目录。</p>}
-    <label className="archive-preview-search"><span className="sr-only">搜索压缩包目录</span><input type="search" className={formControlClassName} value={query} placeholder="搜索文件名或路径" onChange={event => { setQuery(event.target.value); setLimit(PAGE_SIZE); }} /></label>
+    <label className="archive-preview-search"><span className="sr-only">搜索压缩包目录</span><input type="search" className={formControlClassName} value={query} placeholder="搜索文件名或路径" onBlur={commitSearch} onKeyDown={event=>{if(event.key==='Enter')commitSearch();}} onChange={event => { setQuery(event.target.value); setLimit(PAGE_SIZE); }} /></label>
     <nav className="archive-preview-breadcrumbs" aria-label="压缩包内路径">
       <button type="button" onClick={() => navigate('')} aria-current={!directory && !searching ? 'page' : undefined}>根目录</button>
       {!searching && parts.map((part, index) => <span key={index}> / <button type="button" aria-current={index === parts.length - 1 ? 'page' : undefined} onClick={() => navigate(parts.slice(0, index + 1).join('/'))}>{part}</button></span>)}

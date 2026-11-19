@@ -9,8 +9,10 @@ export interface MessageRepairPreview {
   issues: { sessionId: string; title: string; turnCount: number; reason: string }[];
 }
 export const previewMessageRepair = (cursor?: string) => requestJson<MessageRepairPreview>('/api/system/message-repair/preview', {
+  analytics:{feature:'maintenance',action:'preview_repair',surface:'admin'},
   method: 'POST', ...jsonBody(cursor ? { cursor } : {}), timeoutMs: 120_000,
 });
 export const applyMessageRepair = (planId: string) => requestJson<{ restoredCount: number }>('/api/system/message-repair/apply', {
+  analytics:{feature:'maintenance',action:'apply_repair',surface:'admin'},
   method: 'POST', ...jsonBody({ planId }), timeoutMs: 180_000,
 });

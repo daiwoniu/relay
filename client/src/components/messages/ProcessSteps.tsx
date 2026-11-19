@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, useMemo, memo, lazy, Suspense, type ReactNode } from 'react';
+import {featureAction} from '../../analytics/features';
 import { useSessionFollowupStore } from '../../stores/session-followups';
 import type { ProcessStep, ProcessTimelineEntry } from '../../stores/chat';
 import { upsertProcessStep } from '../../stores/process-steps';
@@ -334,7 +335,7 @@ function ProcessNarrativeRow({ content, detail, status, defaultExpanded, itemId,
     narrativePreviousScrollTopRef.current = container.scrollTop;
   };
 
-  const toggleExpanded = () => {
+  const toggleExpanded = () => {featureAction('message',expanded?'close':'expand_process','message');
     setExpanded((value) => {
       const nextExpanded = !value;
       if (nextExpanded && status === 'in_progress') narrativeFollowLatestRef.current = true;
@@ -419,7 +420,7 @@ function ProcessOperationGroup({ steps, searchTargetItemId, full }: { steps: Pro
     <section className={`process-group process-group--${state.tone} overflow-hidden rounded-lg border border-[var(--color-border-light)] bg-transparent`}>
       <button
         type="button"
-        onClick={() => setExpanded((value) => !value)}
+        onClick={() => {featureAction('message',expanded?'close':'expand_details','message');setExpanded((value) => !value);}}
         aria-expanded={effectiveExpanded}
         className="process-group__main flex w-full min-w-0 items-center gap-1.5 text-left text-xs text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--color-surface-hover)]"
       >
@@ -522,7 +523,7 @@ function ProcessStepRow({ step, searchTarget = false, full, hideTiming = false, 
     >
       {!contentOnly && <button
         type="button"
-        onClick={() => reportControl ? reportControl.onToggle() : disclosure.canExpand && setDetailsExpanded((value) => !value)}
+        onClick={() => {if(canExpand)featureAction('message',reportControl?'expand_report':'expand_details','message');return reportControl ? reportControl.onToggle() : disclosure.canExpand && setDetailsExpanded((value) => !value);}}
         disabled={!canExpand}
         aria-expanded={canExpand ? effectiveDetailsExpanded : undefined}
         className={`process-step__main w-full min-w-0 flex items-center text-left ${canExpand ? 'cursor-pointer' : 'cursor-default'}`}
@@ -576,7 +577,7 @@ function ProcessStepRow({ step, searchTarget = false, full, hideTiming = false, 
 
 function FlowRawRecord({ step }: { step: ProcessStep }) {
   const [open, setOpen] = useState(false);
-  return <details className="flow-raw" onToggle={event => setOpen(event.currentTarget.open)}><summary>原始记录</summary>{open && <pre>{JSON.stringify(step, null, 2)}</pre>}</details>;
+  return <details className="flow-raw" onToggle={event => {if(event.currentTarget.open!==open)featureAction('message',event.currentTarget.open?'expand_details':'close','message');setOpen(event.currentTarget.open);}}><summary>原始记录</summary>{open && <pre>{JSON.stringify(step, null, 2)}</pre>}</details>;
 }
 
 function ProcessStepsComponent({ steps, sessionId, messageId, processContent, processContentDetail, processTimeline, renderNarrativeDetail, defaultCollapsed = true, preserveExpandedOnSettle = false, settled = true, narrativeStatus = 'completed', onInteractionRespond, onAsyncQuestionAnswer, answeredAsyncQuestionIds, asyncQuestionAnswers, canAnswerAsyncQuestion, searchTargetScope, searchTargetItemId, full, historicalRecords, historicalRecordCount = 0, flowContext, flowFinalContent, flowFinalRecordedAt, flowOutcome, flowRuntimeStatus, flowDetailsPending, onLoadFlowDetails, readOnly = false }: Props) {
@@ -731,7 +732,7 @@ function ProcessStepsComponent({ steps, sessionId, messageId, processContent, pr
       <button
         ref={headerButtonRef}
         type="button"
-        onClick={() => setCollapsed(!collapsed)}
+        onClick={() => {featureAction('message',collapsed?'expand_process':'close','message');setCollapsed(!collapsed);}}
         aria-expanded={!effectiveCollapsed}
         className="process-timeline__trigger flex items-center gap-1.5 text-xs text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)] transition-colors"
       >

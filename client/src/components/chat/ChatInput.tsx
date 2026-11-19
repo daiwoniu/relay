@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useLayoutEffect, useMemo, useCallback } from 'react';
+import { useFeatureView,featureAction } from '../../analytics/features';
 import { useChatStore } from '../../stores/chat';
 import IconActionButton from '../ui/IconActionButton';
 import { appendNoteToDraft } from '../../stores/local-notes';
@@ -108,6 +109,7 @@ interface Props {
 }
 
 export default function ChatInput({ onSend, onEnsureProject, onStop, onCancelQueued, isStreaming, isStopping = false, isAwaitingAction = false, canRespondToInteraction = true, isQueued = false, isQueueWaiting = false, isCancellingQueued = false, sessionId, projectName, selectedEngine, engineStatuses, engineLocked, engineFallbackNotice, onEngineChange, onEngineStatusesChange, engineStatusNotice = null, tokenUsageAvailable, wideLayout = false, suggestedReply = null, focusRequest = null, registerComposerFocusHandler }: Props) {
+  useFeatureView('composer',true,'composer');
   const { user } = useAuth();
   const [projectMenuAnchor, setProjectMenuAnchor] = useState<DOMRect | null>(null);
   const [extensionMenuAnchor, setExtensionMenuAnchor] = useState<DOMRect | null>(null);
@@ -117,6 +119,7 @@ export default function ChatInput({ onSend, onEnsureProject, onStop, onCancelQue
   const [attachmentNotice, setAttachmentNotice] = useState<ComposerNoticePayload | null>(null);
   const [queuedPresentationSessionId, setQueuedPresentationSessionId] = useState<string | null>(null);
   const [mobileDetails, setMobileDetails] = useState<ChatInputMobileDetails | null>(null);
+  const editingStarted=useRef(false);
   const [stopConfirmOpen, setStopConfirmOpen] = useState(false);
   const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
   const engineSelectionRequired = !selectedEngine;
@@ -152,6 +155,7 @@ export default function ChatInput({ onSend, onEnsureProject, onStop, onCancelQue
     setActiveSession,
     pendingProjectPath,
     activeSessionId,
+    pendingRestoreSessionId,
     activeSessionOpenVersion,
     autoOpenProjectPicker,
     projectSelectionLocked,
@@ -428,7 +432,7 @@ export default function ChatInput({ onSend, onEnsureProject, onStop, onCancelQue
     return () => window.removeEventListener('resize', updateTextareaLayout);
   }, [updateTextareaLayout]);
 
-  const handleClearInput = () => { setInput(''); setClearConfirmOpen(false); textareaRef.current?.focus(); };
+  const handleClearInput = () => { if(input)featureAction('composer','clear','composer');setInput(''); setClearConfirmOpen(false); textareaRef.current?.focus(); };
 
   const selectSuggestedReplyOnce = useCallback((target: HTMLTextAreaElement, defer = false) => {
     if (!suggestedReplySelectionPendingRef.current) return false;
@@ -552,6 +556,7 @@ export default function ChatInput({ onSend, onEnsureProject, onStop, onCancelQue
 
   const handleStop = () => {
     if (stopClickedRef.current) return;
+    featureAction('composer','stop','composer');
     stopClickedRef.current = true;
     const sourceElement = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     pendingStopFocusSourceRef.current = sourceElement;
@@ -573,6 +578,7 @@ export default function ChatInput({ onSend, onEnsureProject, onStop, onCancelQue
   };
 
   const handleSelectDirectory = (dirPath: string) => {
+    featureAction('composer','select_directory','composer');
     const sourceElement = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const focusedSynchronously = tryFocusInput('project-selected', sourceElement);
     setPendingProject(dirPath);
@@ -588,6 +594,7 @@ export default function ChatInput({ onSend, onEnsureProject, onStop, onCancelQue
   };
 
   const handleAddHostFiles = (incoming: HostFileDraft[]) => {
+    if(incoming.length)featureAction('attachments','select','host_picker');
     const sourceElement = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const focusedSynchronously = tryFocusInput('attachment-selected', sourceElement);
     const merged = mergeHostAttachmentDrafts(attachments, incoming);
@@ -607,6 +614,7 @@ export default function ChatInput({ onSend, onEnsureProject, onStop, onCancelQue
   };
 
   const handleCancelHostFilePicker = () => {
+    featureAction('attachments','cancel','host_picker');
     const sourceElement = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const focusedSynchronously = tryFocusInput('attachment-cancelled', sourceElement);
     setShowHostFilePicker(false);
@@ -616,6 +624,7 @@ export default function ChatInput({ onSend, onEnsureProject, onStop, onCancelQue
   const handleSelectedUploadFiles = (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.target.files || []);
     if (files.length > 0) {
+      featureAction('attachments','select','device_picker');
       const focusedSynchronously = tryFocusInput('attachment-selected', event.currentTarget);
       if (!focusedSynchronously) requestInputFocus('attachment-selected', event.currentTarget);
     }
@@ -713,6 +722,7 @@ export default function ChatInput({ onSend, onEnsureProject, onStop, onCancelQue
     if (files.length === 0) return;
     event.preventDefault();
     queueUploadFiles(files);
+    featureAction('attachments','select','paste');
   };
 
   const handleFileDragEnter = (event: React.DragEvent<HTMLDivElement>) => {
@@ -743,10 +753,10 @@ export default function ChatInput({ onSend, onEnsureProject, onStop, onCancelQue
     setIsFileDragActive(false);
     if (isSubmitting) return;
     const files = extractTransferredFiles(event.dataTransfer);
-    if (files.length > 0) queueUploadFiles(files);
+    if (files.length > 0){featureAction('attachments','select','drop');queueUploadFiles(files);}
   };
 
-  const removeAttachment = async (id: string) => {
+  const removeAttachment = async (id: string, reason: 'remove' | 'cancel' = 'remove') => {
     const attachment = attachments.find((entry) => entry.id === id);
     if (!attachment) return;
     const targetDraftKey = attachmentDraftKey;
@@ -776,11 +786,12 @@ export default function ChatInput({ onSend, onEnsureProject, onStop, onCancelQue
       if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
     }
     updateAttachments((current) => current.filter((entry) => entry.id !== id));
+    if(reason==='remove')featureAction('attachments','remove_local','composer');
     if (attachments.filter((entry) => entry.id !== id && entry.kind === 'uploaded_file').length === 0) messageDraftIdRef.current = null;
     setAttachmentNotice(null);
   };
 
-  const cancelUpload = (id: string) => { void removeAttachment(id); };
+  const cancelUpload = (id: string) => {featureAction('attachments','cancel','composer'); void removeAttachment(id,'cancel'); };
 
   const retryUpload = async (id: string) => {
     const failed = attachments.find((entry): entry is PendingUploadedAttachmentDraft => entry.id === id && entry.kind === 'uploaded_file' && entry.status === 'failed');
@@ -809,8 +820,8 @@ export default function ChatInput({ onSend, onEnsureProject, onStop, onCancelQue
     : null;
   const displayName = projectName || pendingName || currentProject?.name || '选择项目';
 
-  // 新会话（无 activeSessionId）时可以选择项目，已有会话只读展示
-  const canSelectProject = !activeSessionId && !projectSelectionLocked;
+  // 待恢复位置尚未校验时，也不能把它当作可选项目的新会话。
+  const canSelectProject = !activeSessionId && !pendingRestoreSessionId && !projectSelectionLocked;
 
   useLayoutEffect(() => {
     if (!canSelectProject || !autoOpenProjectPicker) {
@@ -917,6 +928,7 @@ export default function ChatInput({ onSend, onEnsureProject, onStop, onCancelQue
           return;
         }
         setModelDraft(modelDraftKey, selectedEngine, preferences);
+        featureAction('composer','apply_model_draft','composer');
       }}
     />
   ) : <span className="truncate whitespace-nowrap text-xs text-[var(--color-text-tertiary)]">请先选择引擎</span>;
@@ -940,6 +952,7 @@ export default function ChatInput({ onSend, onEnsureProject, onStop, onCancelQue
             }}
             onCloseProjectMenu={closeProjectMenu}
             onSelectProject={(projectId) => {
+              featureAction('composer','select_project','composer');
               setCurrentProject(projectId);
               closeProjectMenu();
             }}
@@ -954,7 +967,7 @@ export default function ChatInput({ onSend, onEnsureProject, onStop, onCancelQue
             engineLocked={engineLocked}
             engineFallbackNotice={engineFallbackNotice}
             isMobile={isMobile}
-            onEngineChange={onEngineChange}
+            onEngineChange={(engine) => () => { if(engine!==selectedEngine)featureAction('composer','select_engine','composer');onEngineChange(engine)(); }}
             onEngineStatusesChange={onEngineStatusesChange}
             modelSettingsControl={modelSettingsControl}
             onOpenMobileDetails={setMobileDetails}
@@ -1027,7 +1040,8 @@ export default function ChatInput({ onSend, onEnsureProject, onStop, onCancelQue
               <textarea
                 ref={textareaRef}
                 value={input}
-                onChange={(e) => setInput(e.target.value)}
+                onChange={(e) => {if(e.target.value&&!editingStarted.current){editingStarted.current=true;featureAction('composer','edit_start','composer');}setInput(e.target.value);}}
+                onBlur={()=>{editingStarted.current=false;}}
                 onBeforeInput={(event) => selectSuggestedReplyOnce(event.currentTarget)}
                 onPaste={handlePasteFiles}
                 onKeyDown={handleKeyDown}
@@ -1076,10 +1090,10 @@ export default function ChatInput({ onSend, onEnsureProject, onStop, onCancelQue
         contextUsageDetails={contextUsageDetails}
         stopConfirmOpen={stopConfirmOpen}
         isAwaitingAction={isAwaitingAction}
-        onCancelStop={() => setStopConfirmOpen(false)}
+        onCancelStop={() => {featureAction('composer','cancel_stop','composer');setStopConfirmOpen(false);}}
         onConfirmStop={confirmStop}
         clearConfirmOpen={clearConfirmOpen}
-        onCancelClear={() => setClearConfirmOpen(false)}
+        onCancelClear={() => {featureAction('composer','cancel_clear','composer');setClearConfirmOpen(false);}}
         onConfirmClear={handleClearInput}
         showDirPicker={showDirPicker}
         initialDirectoryPath={pendingProjectPath || undefined}

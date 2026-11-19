@@ -5,6 +5,7 @@ import rehypeHighlight from 'rehype-highlight';
 import 'highlight.js/styles/github.css';
 import type { ProcessStep, StreamingBlock } from '../../stores/chat';
 import { copyToClipboard } from '../../utils/clipboard';
+import { localAction,featureAction } from '../../analytics/features';
 import { shouldDimShareMessage } from '../sharing/share-selection';
 import ProcessSteps from './ProcessSteps';
 import { hasPendingInteraction } from './process-panel-state';
@@ -325,10 +326,12 @@ const CodeBlock = memo(function CodeBlock({ language, code, renderedCode, readOn
   const [copied, setCopied] = useState(false);
 
   const handleCopy = useCallback(() => {
+    const report=localAction('message','copy','message');
     copyToClipboard(code).then(() => {
+      report(true);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
-    }).catch(() => {});
+    }).catch(() => {report(false);});
   }, [code]);
 
   return (
@@ -459,13 +462,15 @@ function AssistantMessage({ historicalRecords, historicalRecordCount, sessionId,
   const openFilePreview = useFilePreview();
 
   const handleCopy = useCallback(() => {
+    const report=localAction('message','copy','message');
     const textToCopy = showSource
       ? content
       : getRenderedMessageCopyText(contentRef.current) ?? content;
     copyToClipboard(textToCopy).then(() => {
+      report(true);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
-    });
+    }).catch(()=>report(false));
   }, [content, showSource]);
 
   // createdAt 是服务端保存完成消息的时间，已经代表真实完成时刻。
@@ -536,7 +541,7 @@ function AssistantMessage({ historicalRecords, historicalRecordCount, sessionId,
     messageActionItems.push({
       key: 'source',
       label: showSource ? '渲染显示' : '源码显示',
-      onClick: () => setShowSource(!showSource),
+      onClick: () => {featureAction('message',showSource?'rendered':'source','message_menu');setShowSource(!showSource);},
       icon: <MenuIcon type={showSource ? 'render' : 'source'} />,
     });
   }

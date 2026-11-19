@@ -1,4 +1,5 @@
 import FailureNotice from '../ui/FailureNotice';
+import { useFeatureView } from '../../analytics/features';
 import { useEffect, useMemo, useState } from 'react';
 import type { ProjectDto, PublicUserDto } from '../../generated/relay-contracts';
 import { listProjectMemberCandidates, listProjectMembers, removeProjectMember, setProjectMember, type ProjectMemberDto, type ProjectMemberRole } from '../../api/projects';
@@ -13,6 +14,7 @@ interface Props {
 }
 
 export default function ProjectMembersDialog({ project, onClose }: Props) {
+  useFeatureView('project_members',Boolean(project),'sidebar');
   const [members, setMembers] = useState<ProjectMemberDto[]>([]);
   const [users, setUsers] = useState<PublicUserDto[]>([]);
   const [selected, setSelected] = useState('');

@@ -1,4 +1,5 @@
 import { Worker } from 'node:worker_threads';
+import { publishCommandObservation } from './command-observation.js';
 import { randomUUID } from 'node:crypto';
 import { canonicalJson, lostReply, parseCommandEnvelope, StorageContractError } from './command-boundary.js';
 import type { CoreCommandInputs, CoreCommandName, CommandResult, CoreStoragePort, StorageCommandEnvelope,TrashReadInputs,TrashReadOutputs,StoragePrincipal } from './contracts.js';
@@ -162,11 +163,16 @@ export class StorageWorkerClient implements CoreStoragePort, CredentialStoragePo
   }
   async execute<K extends CoreCommandName>(request: StorageCommandEnvelope & { command: { name: K; input: CoreCommandInputs[K] } }, options?: { timeoutMs: number }): Promise<CommandResult<K>> {
     const parsed = parseCommandEnvelope(request);
-    try { return await this.request('execute', parsed, false, options?.timeoutMs); }
+    try {
+      const result=await this.request('execute',parsed,false,options?.timeoutMs) as CommandResult<K>;
+      publishCommandObservation(this,parsed,result);return result;
+    }
     catch (error) {
       if (error instanceof DeliveryFailure) return lostReply(request.operationId,
         error.submitted ? 'may-have-executed' : 'cancelled-before-execution', error.causeCode);
-      if (error instanceof StorageContractError) return { state: 'rejected', operationId: request.operationId, code: error.code };
+      if (error instanceof StorageContractError) {
+        const result={state:'rejected' as const,operationId:request.operationId,code:error.code};publishCommandObservation(this,parsed,result);return result;
+      }
       return lostReply(request.operationId, 'may-have-executed', 'transport');
     }
   }

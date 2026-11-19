@@ -40,10 +40,10 @@ export function getTrashSessionPreview(sessionId: string): Promise<TrashMessageP
   return requestJson(`/api/trash/sessions/${encodeURIComponent(sessionId)}/preview`);
 }
 export function restoreTrashProject(projectId: string): Promise<TrashRestoreResponseDto> {
-  return requestJson(`/api/trash/projects/${encodeURIComponent(projectId)}/restore`, { method: 'POST' });
+  return requestJson(`/api/trash/projects/${encodeURIComponent(projectId)}/restore`, { analytics:{feature:'trash',action:'restore',surface:'user_menu'},method: 'POST' });
 }
 export function restoreTrashSession(sessionId: string): Promise<TrashRestoreResponseDto> {
-  return requestJson(`/api/trash/sessions/${encodeURIComponent(sessionId)}/restore`, { method: 'POST' });
+  return requestJson(`/api/trash/sessions/${encodeURIComponent(sessionId)}/restore`, { analytics:{feature:'trash',action:'restore',surface:'user_menu'},method: 'POST' });
 }
 export function getTrashProjectImpact(projectId: string): Promise<TrashImpactDto> {
   return requestJson(`/api/trash/projects/${encodeURIComponent(projectId)}/impact`);
@@ -52,8 +52,8 @@ export function getTrashSessionImpact(sessionId: string): Promise<TrashImpactDto
   return requestJson(`/api/trash/sessions/${encodeURIComponent(sessionId)}/impact`);
 }
 export function permanentlyDeleteTrashProject(projectId: string, input: TrashProjectDeleteRequest): Promise<TrashDeleteResponseDto> {
-  return requestJson(`/api/trash/projects/${encodeURIComponent(projectId)}`, { method: 'DELETE', ...jsonBody(input) });
+  return requestJson(`/api/trash/projects/${encodeURIComponent(projectId)}`, { analytics:{feature:'trash',action:'delete_permanently',surface:'user_menu'},method: 'DELETE', ...jsonBody(input) });
 }
 export function permanentlyDeleteTrashSession(sessionId: string, input: TrashSessionDeleteRequest): Promise<TrashDeleteResponseDto> {
-  return requestJson(`/api/trash/sessions/${encodeURIComponent(sessionId)}`, { method: 'DELETE', ...jsonBody(input) });
+  return requestJson(`/api/trash/sessions/${encodeURIComponent(sessionId)}`, { analytics:{feature:'trash',action:'delete_permanently',surface:'user_menu'},method: 'DELETE', ...jsonBody(input) });
 }

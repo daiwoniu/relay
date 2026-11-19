@@ -12,6 +12,7 @@ import { canTranslateNewsInBrowser, translateNewsInBrowser, type ChineseNewsText
 import { TOPICS } from './news-topics';
 import '../../styles/news.css';
 import { tracker } from '../../analytics/tracker';
+import {featureAction,localAction} from '../../analytics/features';
 
 const CATEGORIES = [
   ['all', '全部'], ['models_products', '模型与产品'], ['research', '研究'],
@@ -70,6 +71,7 @@ function NewsCard({ item, category, authenticated, canTranslate, onFollow, onMut
 }
 
 export default function NewsPage() {
+  const pendingRefreshReport=useRef<ReturnType<typeof localAction>|null>(null);
   const { status, user } = useAuth();
   const [canTranslate, setCanTranslate] = useState(false);
   const [category, setCategory] = useState('all');
@@ -138,15 +140,17 @@ export default function NewsPage() {
 
   useEffect(() => {
     const controller = new AbortController();
+    const report=pendingRefreshReport.current;pendingRefreshReport.current=null;
     setLoading(true);
     setError('');
     (member ? getMemberNews({ ...query, view }, controller.signal) : getPublicNews(query, controller.signal)).then((result) => {
-      setPage(result); setItems(result.items); setNewer(false);
+      report?.(true);setPage(result); setItems(result.items); setNewer(false);
     }).catch((reason: unknown) => {
-      if (controller.signal.aborted) return;
+      if (controller.signal.aborted){report?.('cancelled');return;}
+      report?.(false);
       setError(reason instanceof Error ? reason.message : '资讯暂时无法加载');
     }).finally(() => { if (!controller.signal.aborted) setLoading(false); });
-    return () => controller.abort();
+    return () => {controller.abort();report?.('cancelled');};
   // Query is deliberately serialized to make primitive filter changes the effect dependency.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [queryKey, refreshKey]);
@@ -179,7 +183,8 @@ export default function NewsPage() {
   }, [page?.version]);
 
   const refresh = useCallback(() => { setRangeEnd(newsTimeBucket()); setRefreshKey((value) => value + 1); }, []);
-  const submitSearch = (event: FormEvent) => { event.preventDefault(); setSearch(searchInput.trim().slice(0, 120)); };
+  const refreshUser=()=>{pendingRefreshReport.current?.('cancelled');pendingRefreshReport.current=localAction('news','refresh','news');refresh();};
+  const submitSearch = (event: FormEvent) => { event.preventDefault();if(search!==searchInput.trim().slice(0,120))featureAction('news','search','news');setSearch(searchInput.trim().slice(0, 120)); };
   const applyCustomRange = (event: FormEvent) => {
     event.preventDefault();
     const from = new Date(`${customStart}T00:00:00`).getTime();
@@ -189,7 +194,7 @@ export default function NewsPage() {
   };
   const loadMore = async () => {
     if (!page?.nextCursor || loadingMore) return;
-    const requestKey = activeRequestKey.current;
+    featureAction('news','load_more','news');const requestKey = activeRequestKey.current;
     setLoadingMore(true);
     try {
       const result = member ? await getMemberNews({ ...query, view, cursor: page.nextCursor }) : await getPublicNews({ ...query, cursor: page.nextCursor });
@@ -235,7 +240,7 @@ export default function NewsPage() {
         <span className="news-brand">AI 情报</span>
         <nav aria-label="账户">
           <Link to="/tools">工具集</Link>
-          {status === 'authenticated' && user ? <><button type="button" onClick={() => setShowPreferences(true)}>我的设置</button>{user.role === 'admin' && <Link className="news-admin-link" to="/admin/news">管理来源</Link>}</>
+          {status === 'authenticated' && user ? <><button type="button" onClick={() => {featureAction('news','show_rule_matches','news');setShowPreferences(true);}}>我的设置</button>{user.role === 'admin' && <Link className="news-admin-link" to="/admin/news">管理来源</Link>}</>
             : <Link to="/?next=%2Fnews">登录后设置关注</Link>}
         </nav>
       </div>
@@ -243,33 +248,33 @@ export default function NewsPage() {
     <main className="news-main">
       <div className="news-toolbar">
         <div className="news-primary-filters">
-          {member && <div className="news-view-tabs" role="group" aria-label="资讯视图"><button type="button" className={view === 'all' ? 'active' : ''} onClick={() => setView('all')}>全部</button><button type="button" className={view === 'following' ? 'active' : ''} onClick={() => setView('following')}>我的关注</button></div>}
-          <div className="news-view-tabs" role="group" aria-label="资讯地区"><button type="button" className={region === 'all' ? 'active' : ''} onClick={() => setRegion('all')}>国内外</button><button type="button" className={region === 'cn' ? 'active' : ''} onClick={() => setRegion('cn')}>国内</button><button type="button" className={region === 'global' ? 'active' : ''} onClick={() => setRegion('global')}>海外</button></div>
+          {member && <div className="news-view-tabs" role="group" aria-label="资讯视图"><button type="button" className={view === 'all' ? 'active' : ''} onClick={() => {if(view!=='all')featureAction('news','mode','news');setView('all');}}>全部</button><button type="button" className={view === 'following' ? 'active' : ''} onClick={() => {if(view!=='following')featureAction('news','mode','news');setView('following');}}>我的关注</button></div>}
+          <div className="news-view-tabs" role="group" aria-label="资讯地区"><button type="button" className={region === 'all' ? 'active' : ''} onClick={() => {if(region!=='all')featureAction('news','filter','news');setRegion('all');}}>国内外</button><button type="button" className={region === 'cn' ? 'active' : ''} onClick={() => {if(region!=='cn')featureAction('news','filter','news');setRegion('cn');}}>国内</button><button type="button" className={region === 'global' ? 'active' : ''} onClick={() => {if(region!=='global')featureAction('news','filter','news');setRegion('global');}}>海外</button></div>
           <div className="news-category-tabs" role="group" aria-label="资讯分类">
-            {([['all', '全部'] as const, ...(page?.categories.length ? page.categories.map((entry) => [entry.id, entry.label] as const) : CATEGORIES.slice(1))]).map(([id, label]) => <button key={id} type="button" className={category === id ? 'active' : ''} onClick={() => setCategory(id)}>{label}</button>)}
+            {([['all', '全部'] as const, ...(page?.categories.length ? page.categories.map((entry) => [entry.id, entry.label] as const) : CATEGORIES.slice(1))]).map(([id, label]) => <button key={id} type="button" className={category === id ? 'active' : ''} onClick={() => {if(category!==id)featureAction('news','filter','news');setCategory(id);}}>{label}</button>)}
           </div>
         </div>
         <div className="news-tools-row">
-          <label className="news-select-label">时间 <select value={days} onChange={(event) => { setDays(Number(event.target.value)); setRangeEnd(newsTimeBucket()); }}><option value={1}>最近 24 小时</option><option value={2}>最近 48 小时</option><option value={3}>最近 3 天</option><option value={7}>最近 7 天</option><option value={30}>最近 30 天</option><option value={0}>自选时间</option></select></label>
+          <label className="news-select-label">时间 <select value={days} onChange={(event) => { featureAction('news','filter','news');setDays(Number(event.target.value)); setRangeEnd(newsTimeBucket()); }}><option value={1}>最近 24 小时</option><option value={2}>最近 48 小时</option><option value={3}>最近 3 天</option><option value={7}>最近 7 天</option><option value={30}>最近 30 天</option><option value={0}>自选时间</option></select></label>
           <button type="button" className="news-advanced-toggle" aria-expanded={advancedOpen} onClick={() => setAdvancedOpen((open) => !open)}>更多筛选{advancedFilterCount > 0 && <span className="news-filter-count">{advancedFilterCount}</span>}<span aria-hidden="true">⌄</span></button>
           <form className="news-search" onSubmit={submitSearch}><input value={searchInput} maxLength={120} onChange={(event) => setSearchInput(event.target.value)} placeholder="搜标题或摘要" aria-label="搜索资讯" enterKeyHint="search" /><button type="submit">搜索</button></form>
         </div>
         {advancedOpen && <div className="news-advanced-filter-fields">
-              <label className="news-select-label">话题 <select value={topic} onChange={(event) => setTopic(event.target.value)}>{TOPICS.map(([id, label]) => <option value={id} key={id}>{label}</option>)}</select></label>
-              <label className="news-select-label">主体 <select value={entity} onChange={(event) => setEntity(event.target.value)}>{ENTITIES.map(([id, label]) => <option value={id} key={id}>{label}</option>)}</select></label>
-              <label className="news-select-label">事件 <select value={eventType} onChange={(event) => setEventType(event.target.value)}>{EVENT_TYPES.map(([id, label]) => <option value={id} key={id}>{label}</option>)}</select></label>
-              <label className="news-select-label">来源 <select value={source} onChange={(event) => setSource(event.target.value)}><option value="all">所有来源</option>{page?.sources.map((entry) => <option value={entry.id} key={entry.id}>{entry.name}</option>)}</select></label>
-              <label className="news-select-label">语言 <select value={language} onChange={(event) => setLanguage(event.target.value)}><option value="all">全部</option><option value="zh">中文</option><option value="en">英文</option></select></label>
+              <label className="news-select-label">话题 <select value={topic} onChange={(event) => {featureAction('news','filter','news');setTopic(event.target.value);}}>{TOPICS.map(([id, label]) => <option value={id} key={id}>{label}</option>)}</select></label>
+              <label className="news-select-label">主体 <select value={entity} onChange={(event) => {featureAction('news','filter','news');setEntity(event.target.value);}}>{ENTITIES.map(([id, label]) => <option value={id} key={id}>{label}</option>)}</select></label>
+              <label className="news-select-label">事件 <select value={eventType} onChange={(event) => {featureAction('news','filter','news');setEventType(event.target.value);}}>{EVENT_TYPES.map(([id, label]) => <option value={id} key={id}>{label}</option>)}</select></label>
+              <label className="news-select-label">来源 <select value={source} onChange={(event) => {featureAction('news','filter','news');setSource(event.target.value);}}><option value="all">所有来源</option>{page?.sources.map((entry) => <option value={entry.id} key={entry.id}>{entry.name}</option>)}</select></label>
+              <label className="news-select-label">语言 <select value={language} onChange={(event) => {featureAction('news','filter','news');setLanguage(event.target.value);}}><option value="all">全部</option><option value="zh">中文</option><option value="en">英文</option></select></label>
         </div>}
         {days === 0 && <form className="news-custom-range" onSubmit={applyCustomRange}><label>从 <input type="date" required value={customStart} onChange={(event) => setCustomStart(event.target.value)} /></label><label>到 <input type="date" required value={customEnd} onChange={(event) => setCustomEnd(event.target.value)} /></label><button type="submit">查看历史</button><span>每次最多查 31 天</span></form>}
       </div>
       <div className="news-feed-heading">
         <div><h2>新鲜资讯</h2><p>{page?.lastSuccessAt ? `上次成功更新 ${relativeNewsTime(page.lastSuccessAt)}` : '正在等待首次更新'}{page?.partialFailure ? ' · 部分来源暂时未更新' : ''}</p></div>
-        <button type="button" onClick={refresh} disabled={loading}>刷新</button>
+        <button type="button" onClick={refreshUser} disabled={loading}>刷新</button>
       </div>
-      {newer && <button className="news-newer" type="button" onClick={refresh}>有新资讯了，点这里看看 ↑</button>}
-      {error && <div className="news-message error" role="alert"><FailureNotice error={error} /> <button type="button" onClick={refresh}>重试</button></div>}
-      {loading ? <div className="news-message" role="status">正在整理最新资讯…</div> : !items.length ? <div className="news-message">{page?.nextCursor ? <>前面的资讯已被当前规则过滤，后面还有内容。<button type="button" onClick={loadMore} disabled={loadingMore}>{loadingMore ? '继续查找中…' : '继续查找'}</button></> : member && view === 'following' && page && 'hasFollowRules' in page && !page.hasFollowRules ? <>还没有关注规则。<button type="button" onClick={() => setShowPreferences(true)}>去设置关注</button></> : '这里暂时没有匹配的资讯，换个筛选看看。'}</div> : (
+      {newer && <button className="news-newer" type="button" onClick={refreshUser}>有新资讯了，点这里看看 ↑</button>}
+      {error && <div className="news-message error" role="alert"><FailureNotice error={error} /> <button type="button" onClick={refreshUser}>重试</button></div>}
+      {loading ? <div className="news-message" role="status">正在整理最新资讯…</div> : !items.length ? <div className="news-message">{page?.nextCursor ? <>前面的资讯已被当前规则过滤，后面还有内容。<button type="button" onClick={loadMore} disabled={loadingMore}>{loadingMore ? '继续查找中…' : '继续查找'}</button></> : member && view === 'following' && page && 'hasFollowRules' in page && !page.hasFollowRules ? <>还没有关注规则。<button type="button" onClick={() => {featureAction('news','show_rule_matches','news');setShowPreferences(true);}}>去设置关注</button></> : '这里暂时没有匹配的资讯，换个筛选看看。'}</div> : (
         <div className="news-feed">
           {[...groups.entries()].map(([date, group]) => <section className="news-day" key={date}>
             <h2>{readableDate(group[0]!.publishedAt)}</h2>

@@ -1,5 +1,6 @@
 import { formatDate, formatDateTime } from '../../utils/date-display.ts';
 import Tooltip from '../ui/Tooltip';
+import {tracker} from '../../analytics/tracker';
 import FailureNotice from '../ui/FailureNotice';
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type RefObject } from 'react';
 import { getChinaCalendarMonth, getChinaWeatherRange, type ChinaCalendarMonthData, type ChinaWeatherRangeData } from '../../api/china-day';
@@ -99,7 +100,7 @@ export function WorkspaceCalendarPanel({ today, anchorRef, onClose, placement }:
     setFetchedAt(null);
     setLoading(true);
     setError(null);
-    void getChinaCalendarMonth(year, month, controller.signal, forceRefresh).then((value) => {
+    void getChinaCalendarMonth(year, month, controller.signal, forceRefresh,placement==='inline'?'tools':'workbench').then((value) => {
       if (controller.signal.aborted) return;
       setMonthData(value);
       setFetchedAt(value.fetchedAt);
@@ -110,7 +111,7 @@ export function WorkspaceCalendarPanel({ today, anchorRef, onClose, placement }:
   }, [year, month, retry]);
 
   const changeMonth = (nextYear: number, nextMonth: number) => {
-    if (nextYear < 1901 || nextYear > 2099) return;
+    if (nextYear < 1901 || nextYear > 2099) return;if(year!==nextYear||month!==nextMonth)tracker.action({feature:'tools',action:'change_month',surface:placement==='inline'?'tools':'workbench',toolId:'calendar'});
     setYear(nextYear);
     setMonth(nextMonth);
     setSelectedDate(`${nextYear}-${String(nextMonth).padStart(2, '0')}-01`);
@@ -142,7 +143,7 @@ export function WorkspaceCalendarPanel({ today, anchorRef, onClose, placement }:
         const active = day.date === selectedDate;
         const border = active ? 'border-violet-500' : day.date === today ? 'border-cyan-500' : holiday?.isOffDay ? 'border-emerald-300/30' : holiday ? 'border-amber-300/30' : weekend ? 'border-sky-300/25' : 'border-white/10';
         const background = holiday?.isOffDay ? 'bg-emerald-300/10' : holiday ? 'bg-amber-300/10' : weekend ? 'bg-sky-300/[0.07]' : 'bg-white/[0.03]';
-        return <button key={day.date} type="button" onClick={() => setSelectedDate(day.date)} aria-label={`${displayDate(day.date)}，农历${shortLunar(day.lunarDate)}${occasion ? `，${occasion}` : ''}${holiday ? holiday.isOffDay ? '，休假' : '，调休上班' : weekend ? '，周末休息' : ''}`} aria-pressed={active} className={`flex aspect-square min-w-0 flex-col items-center justify-center rounded-lg border p-1 text-center text-[11px] leading-tight hover:shadow-sm ${border} ${background} ${day.inMonth ? '' : 'opacity-50'}`}>
+        return <button key={day.date} type="button" onClick={() => {if(selectedDate!==day.date)tracker.action({feature:'tools',action:'select_day',surface:placement==='inline'?'tools':'workbench',toolId:'calendar'});setSelectedDate(day.date);}} aria-label={`${displayDate(day.date)}，农历${shortLunar(day.lunarDate)}${occasion ? `，${occasion}` : ''}${holiday ? holiday.isOffDay ? '，休假' : '，调休上班' : weekend ? '，周末休息' : ''}`} aria-pressed={active} className={`flex aspect-square min-w-0 flex-col items-center justify-center rounded-lg border p-1 text-center text-[11px] leading-tight hover:shadow-sm ${border} ${background} ${day.inMonth ? '' : 'opacity-50'}`}>
           <span className="relative flex w-full justify-center"><strong className={`text-base font-semibold leading-6 ${day.date === today ? 'text-cyan-300' : 'text-slate-100'}`}>{Number(day.date.slice(-2))}</strong>{holiday && <span className={`absolute right-0 top-0 text-[10px] ${holiday.isOffDay ? 'text-emerald-300' : 'text-amber-300'}`}>{holiday.isOffDay ? '休' : '班'}</span>}</span>
           <Tooltip overflowOnly content={day.lunarDate} asChild><span data-tooltip-truncated={shortLunar(day.lunarDate) !== day.lunarDate || undefined} className="w-full truncate text-slate-400">{shortLunar(day.lunarDate)}</span></Tooltip>
           {occasion && <Tooltip overflowOnly content={occasion} asChild><span className={`w-full truncate ${day.solarTerm ? 'text-violet-300' : festival ? 'text-rose-300' : 'text-emerald-300'}`}>{occasion}</span></Tooltip>}
@@ -203,7 +204,7 @@ export function WorkspaceWeatherPanel({ city, today, anchorRef, onClose, placeme
     setFetchedAt(null);
     setLoading(true);
     setError(null);
-    void getChinaWeatherRange(requestedCity, controller.signal, forceRefresh).then((value) => {
+    void getChinaWeatherRange(requestedCity, controller.signal, forceRefresh,placement==='inline'?'tools':'workbench').then((value) => {
       if (controller.signal.aborted) return;
       setRange(value);
       setFetchedAt(value.fetchedAt);
@@ -215,10 +216,10 @@ export function WorkspaceWeatherPanel({ city, today, anchorRef, onClose, placeme
   return <PanelShell title={range ? `${range.location.city}最近天气` : '最近天气'} kind="weather" placement={placement} anchorRef={anchorRef} onClose={onClose}
     actions={<button type="button" onClick={() => setRetry((value) => value + 1)} disabled={loading} className="rounded-lg border border-cyan-300/30 px-2.5 py-1.5 text-xs text-cyan-200 hover:bg-cyan-300/10 disabled:opacity-50">刷新</button>}
     footer={<>数据来源：Open-Meteo 逐日预报，过去三天为模型回溯{fetchedAt && ` · 更新于 ${formatDateTime(fetchedAt, { seconds: true })}`} · 5 小时内复用</>}>
-    {(placement === 'card' || placement === 'inline') && <form onSubmit={(event) => { event.preventDefault(); const next = cityInput.trim(); if (next) setSelectedCity(next); }} className="mb-4 flex flex-wrap items-center gap-2">
+    {(placement === 'card' || placement === 'inline') && <form onSubmit={(event) => { event.preventDefault(); const next = cityInput.trim(); if (next){if(next!==selectedCity)tracker.action({feature:'tools',action:'change_city',surface:placement==='inline'?'tools':'workbench',toolId:'weather'});setSelectedCity(next);} }} className="mb-4 flex flex-wrap items-center gap-2">
       <input aria-label="天气城市" placeholder="输入城市或区县，如酒泉市" maxLength={30} value={cityInput} onChange={(event) => setCityInput(event.target.value)} enterKeyHint="search" className="min-h-10 min-w-0 flex-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-3 py-2 text-base sm:max-w-64 sm:text-sm" />
       <button type="submit" disabled={!cityInput.trim()} className="rounded-lg border border-white/15 px-3 py-2 text-xs hover:bg-white/10 disabled:opacity-50">切换城市</button>
-      <button type="button" onClick={() => { setCityInput(''); setSelectedCity(undefined); }} disabled={!selectedCity} className="rounded-lg border border-white/15 px-3 py-2 text-xs hover:bg-white/10 disabled:opacity-50">当前地区</button>
+      <button type="button" onClick={() => {tracker.action({feature:'tools',action:'change_city',surface:placement==='inline'?'tools':'workbench',toolId:'weather'}); setCityInput(''); setSelectedCity(undefined); }} disabled={!selectedCity} className="rounded-lg border border-white/15 px-3 py-2 text-xs hover:bg-white/10 disabled:opacity-50">当前地区</button>
       <p className="w-full text-xs text-slate-400">{selectedCity ? `正在查看：${selectedCity}` : '默认按网络 IP 识别当前地区，代理可能影响结果。'}</p>
     </form>}
     {error && <div role="alert" className="mt-4 rounded-lg border border-rose-400/20 bg-rose-400/5 p-3 text-xs text-rose-200">天气读取失败：<FailureNotice error={error} /> <button type="button" onClick={() => setRetry((value) => value + 1)} className="ml-2 underline">重试</button></div>}

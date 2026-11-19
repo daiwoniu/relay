@@ -1,4 +1,5 @@
 import { useRef, useEffect, useLayoutEffect, useState, useCallback, useMemo } from 'react';
+import { featureAction } from '../../analytics/features';
 import type { Message, ProcessStep, ProcessTimelineEntry, StreamingBlock } from '../../stores/chat';
 import AssistantMessage from '../messages/AssistantMessage';
 import UserMessage from '../messages/UserMessage';
@@ -364,6 +365,7 @@ export default function MessageList({ sessionId, messages, hasOlderMessages, onL
       scrollHeight: container.scrollHeight,
     };
     loadingOlderRef.current = true;
+    featureAction('message','load_history','message');
     void onLoadOlder()
       .then(({ loadedCount, hasMore }) => {
         setCanLoadOlder(hasMore);
@@ -398,6 +400,7 @@ export default function MessageList({ sessionId, messages, hasOlderMessages, onL
   };
 
   const scrollToBottom = () => {
+    featureAction('message','scroll_bottom','message');
     const container = scrollContainerRef.current;
     if (!container) return;
     processLayoutPausedRef.current = false;

@@ -1,5 +1,6 @@
 import { formatDateTime } from '../../utils/date-display.ts';
 import Tooltip from '../ui/Tooltip';
+import {useFeatureView,featureAction} from '../../analytics/features';
 import { useEffect, useState, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
 import FailureNotice from '../ui/FailureNotice';
@@ -16,7 +17,7 @@ const blankPolicy: NewsGlobalPolicyDto = { blockedDomains: [], blockedKeywords: 
 const toLines = (items: string[]) => items.join('\n');
 const fromLines = (raw: string) => [...new Set(raw.split(/\r?\n/).map((entry) => entry.trim()).filter(Boolean))];
 
-export default function NewsAdminPage() {
+export default function NewsAdminPage() {useFeatureView('news_admin',true,'admin');
   const [sources, setSources] = useState<NewsAdminSourceDto[]>([]);
   const [sourceRegion, setSourceRegion] = useState<'all' | 'cn' | 'global'>('all');
   const [sourceStatus, setSourceStatus] = useState<'all' | 'enabled' | 'disabled'>('all');
@@ -86,7 +87,7 @@ export default function NewsAdminPage() {
       {message && <div className="news-admin-message" role={failure ? 'alert' : 'status'}>{failure ? <FailureNotice error={failure} /> : message}</div>}
       <div className="news-admin-overview">
         <div className="news-admin-summary"><span><strong>{sources.filter((entry) => entry.enabled).length}</strong> 个启用来源</span><span><strong>{stats?.scheduler?.active ?? 0}</strong> 个正在采集</span><span><strong>{stats?.storage.itemCount ?? 0}</strong> 条已存资讯</span></div>
-        <button type="button" className="news-admin-technical-toggle" aria-expanded={storageOpen} onClick={() => setStorageOpen((open) => !open)}>存储详情 <span aria-hidden="true">⌄</span></button>
+        <button type="button" className="news-admin-technical-toggle" aria-expanded={storageOpen} onClick={() => {featureAction('news_admin','section','admin');setStorageOpen((open) => !open);}}>存储详情 <span aria-hidden="true">⌄</span></button>
       </div>
       {storageOpen && <p className="news-admin-technical">资讯版本 {stats?.status.version ?? 0} · 历史月份 {stats?.storage.shardCount ?? 0} · 数据大小 {(stats?.storage.bytes ?? 0) / 1024 / 1024 < 1 ? '< 1' : ((stats?.storage.bytes ?? 0) / 1024 / 1024).toFixed(1)} MiB{stats?.storage.freeBytes != null ? ` · 磁盘可用 ${(stats.storage.freeBytes / 1024 / 1024 / 1024).toFixed(1)} GiB` : ''}</p>}
       <section className="news-admin-section">
@@ -124,7 +125,7 @@ export default function NewsAdminPage() {
             <label>来源地区<select value={source.region ?? 'global'} onChange={(event) => setSource({ ...source, region: event.target.value as 'cn' | 'global' })}><option value="cn">国内</option><option value="global">海外</option></select></label>
             <label className="news-admin-checkbox"><input type="checkbox" checked={source.enabled} onChange={(event) => setSource({ ...source, enabled: event.target.checked })} />启用采集</label>
           </div>
-          <div className="news-admin-actions"><button type="button" disabled={busy} onClick={() => void run(async () => { const result = await verifyAdminNewsSource(source); if (!result.valid) throw new Error(result.error ?? '验证未通过'); setMessage(`验证通过，解析出 ${result.sampleCount} 条样例`); }, '验证通过', false)}>验证来源</button><button type="submit" disabled={busy}>保存来源</button><button type="button" disabled={busy} onClick={() => setSourceEditorOpen(false)}>取消</button></div>
+          <div className="news-admin-actions"><button type="button" disabled={busy} onClick={() => void run(async () => { const result = await verifyAdminNewsSource(source); if (!result.valid) throw new Error(result.error ?? '验证未通过'); setMessage(`验证通过，解析出 ${result.sampleCount} 条样例`); }, '验证通过', false)}>验证来源</button><button type="submit" disabled={busy}>保存来源</button><button type="button" disabled={busy} onClick={() => {featureAction('news_admin','cancel','admin');setSourceEditorOpen(false);}}>取消</button></div>
         </form>}
         <div className="news-admin-source-list">
           {visibleSources.map((entry) => <div key={entry.id} className="news-admin-source">
@@ -182,7 +183,7 @@ export default function NewsAdminPage() {
               </div>
               {editor && <div className="news-admin-correction-editor">
                 {editor.mode === 'category' ? <label>选择分类<select value={editor.categoryId} onChange={(event) => setCorrectionEditor({ ...editor, categoryId: event.target.value })}>{editor.categoryId && !categories.some((entry) => entry.id === editor.categoryId) && <option value={editor.categoryId}>原分类：{editor.categoryId}</option>}{categories.map((entry) => <option value={entry.id} key={entry.id}>{entry.label}</option>)}</select></label> : <div><div className="news-admin-topic-options">{TOPICS.slice(1).map(([id, label]) => <label key={id}><input type="checkbox" checked={editor.topicIds.includes(id)} onChange={(event) => setCorrectionEditor({ ...editor, topicIds: event.target.checked ? [...editor.topicIds, id] : editor.topicIds.filter((value) => value !== id) })} />{label}</label>)}{editor.topicIds.filter((id) => !TOPICS.some(([known]) => known === id)).map((id) => <label key={id}><input type="checkbox" checked onChange={() => setCorrectionEditor({ ...editor, topicIds: editor.topicIds.filter((value) => value !== id) })} />原主题：{id}</label>)}</div><small>保存后替换此条资讯的主题；不选表示清空。</small></div>}
-                <div className="news-admin-actions"><button type="button" disabled={busy || (editor.mode === 'category' && !editor.categoryId)} onClick={() => void run(() => saveAdminNewsCorrection(item.id, editor.mode === 'category' ? { ...(item.correction ?? {}), hidden: Boolean(item.correction?.hidden), categoryId: editor.categoryId } : { ...(item.correction ?? {}), hidden: Boolean(item.correction?.hidden), topicIds: editor.topicIds }), editor.mode === 'category' ? '分类已修正' : '主题已修正', true, () => setCorrectionEditor(null))}>保存修正</button><button type="button" onClick={() => setCorrectionEditor(null)}>取消</button></div>
+                <div className="news-admin-actions"><button type="button" disabled={busy || (editor.mode === 'category' && !editor.categoryId)} onClick={() => void run(() => saveAdminNewsCorrection(item.id, editor.mode === 'category' ? { ...(item.correction ?? {}), hidden: Boolean(item.correction?.hidden), categoryId: editor.categoryId } : { ...(item.correction ?? {}), hidden: Boolean(item.correction?.hidden), topicIds: editor.topicIds }), editor.mode === 'category' ? '分类已修正' : '主题已修正', true, () => setCorrectionEditor(null))}>保存修正</button><button type="button" onClick={() => {featureAction('news_admin','cancel','admin');setCorrectionEditor(null);}}>取消</button></div>
               </div>}
             </div>;
           })}

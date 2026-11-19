@@ -21,6 +21,23 @@ function fetched(id: string, at: number): SourceFetchResult {
   return { status: 'ok', etag: null, lastModified: null, candidates: [{ sourceId: id, rawUrl: '/release', baseUrl: `https://example.org/${id}`, title: 'OpenAI releases new model Orion', description: 'AI model', rawPublishedAt: new Date(at).toISOString() }] };
 }
 
+test('手动刷新在真实采集结算后才观察一次，202受理和自动任务不伪造成功',async()=>{
+  const facts:Array<{userId:string;factId:string;operationId:string;result:string}>=[],states=new Map<string,any>(),release:Array<(result:SourceFetchResult)=>void>=[];
+  let completed!:()=>void;const observed=new Promise<void>(resolve=>{completed=resolve;});
+  const scheduler=createNewsScheduler({sources:[source('one'),source('two')],repository:{getSourceState:(id:string)=>states.get(id),recordSourceAttempt:(value:any)=>{states.set(value.sourceId,{failureCount:value.failed?1:0});}} as any,
+    fetchSource:()=>new Promise(resolve=>release.push(resolve)),observeManualRefresh:fact=>{facts.push(fact);if(facts.length===2)completed();}});
+  const operationId='00000000-0000-4000-8000-000000000001';
+  assert.equal(scheduler.refreshSource('one',{id:'admin-owner',role:'admin'},operationId).accepted,true);
+  assert.equal(scheduler.refreshSource('two',{id:'admin-owner',role:'admin'},operationId).accepted,true);
+  assert.equal(facts.length,0,'受理时尚未完成');
+  release[0]({status:'not_modified',candidates:[],etag:null,lastModified:null});
+  release[1]({status:'failed',candidates:[],etag:null,lastModified:null,error:'sensitive-failure'});
+  await observed;await scheduler.stop();
+  assert.equal(facts.length,2);assert.equal(facts[0].operationId,operationId);assert.deepEqual(facts.map(f=>f.result),['success','error']);
+  assert.notEqual(facts[0].factId,facts[1].factId,'关联号复用不能合并独立业务事实');
+  assert.doesNotMatch(JSON.stringify(facts),/sensitive-failure|example.org/);
+});
+
 test('归并候选会跨过最近 50 条事件', async () => {
   const dir = fixtureDirectory();
   try {

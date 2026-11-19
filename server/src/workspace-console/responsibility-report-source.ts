@@ -67,6 +67,7 @@ export interface WorkspaceResponsibilitySnapshot {
   fetchedAt: number;
   servedFromCache: boolean;
   complete: boolean;
+  unverifiedCount?: number;
   stale: boolean;
   error: string | null;
   sourceMeta?: z.infer<typeof WorkspaceSourceMetaDtoSchema>;
@@ -174,6 +175,14 @@ export function parseResponsibilityReport(raw: unknown, expected: ExpectedIdenti
     throw new Error('Project 责任报表生成时间无效');
   }
   if (typeof report.report_id !== 'string' || !report.report_id) throw new Error('Project 责任报表 ID 缺失');
+  if (report.unverified_items !== undefined && !Array.isArray(report.unverified_items)) {
+    throw new Error('Project 待核实事项结构无效');
+  }
+  const unverifiedCount = Array.isArray(report.unverified_items) ? report.unverified_items.length : undefined;
+  if (unverifiedCount !== undefined && (report.complete !== (unverifiedCount === 0)
+    || integrity.unverified_count !== undefined && integrity.unverified_count !== unverifiedCount)) {
+    throw new Error('Project 待核实数量与分类完整性不一致');
+  }
   if (!Array.isArray(report.items) || !Array.isArray(report.business_items) || !Array.isArray(report.workbench_items)) throw new Error('Project 责任事项结构无效');
   const workbenchParentIds = new Set<string>();
   const workbenchItems: WorkbenchItem[] = report.workbench_items.map((value) => {
@@ -340,7 +349,9 @@ export function parseResponsibilityReport(raw: unknown, expected: ExpectedIdenti
   };
   return {
     reportKind: 'project_responsibility', sourceUserKey: expected.userKey, todoEquivalent: false,
-    generatedAt: report.generated_at, fetchedAt: 0, servedFromCache: false, complete: report.complete, stale: false, error: null, items, workbenchItems, localAssociated, counts,
+    generatedAt: report.generated_at, fetchedAt: 0, servedFromCache: false, complete: report.complete,
+    ...(unverifiedCount !== undefined ? { unverifiedCount } : {}),
+    stale: false, error: null, items, workbenchItems, localAssociated, counts,
   };
 }
 

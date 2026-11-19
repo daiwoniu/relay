@@ -50,6 +50,17 @@ export function isWorkbenchItemOwner(item: Pick<WorkbenchItem, 'ownerUserKey' | 
   return !!userKey && (item.ownerUserKey === userKey || item.roleOwnerUserKeys?.includes(userKey) === true);
 }
 
+export function workbenchParticipationLabel(item: WorkbenchItem, userKey: string | undefined): string {
+  return userKey && (isWorkbenchItemOwner(item, userKey) || item.myNodes?.length || item.mySubtasks.length)
+    ? '本人参与' : '待核实';
+}
+
+export function responsibilityClassificationNotice(report: Pick<WorkspaceConsoleResponsibilityDto, 'complete' | 'unverifiedCount'> | null): string | null {
+  if (!report || report.complete) return null;
+  const count = report.unverifiedCount;
+  return `飞书责任尚未全部核实${typeof count === 'number' && count > 0 ? `：还有 ${count} 个候选待核实` : ''}。已保留可用事项，当前数据不代表完整责任清单。`;
+}
+
 export function currentNodeResponsibilityLabel(item: Pick<WorkbenchItem, 'currentNodeNames' | 'currentNodes'>): string {
   if (item.currentNodes?.length) return `当前节点：${item.currentNodes.map((node) =>
     `${node.name}（节点负责人：${node.ownerNames.length ? node.ownerNames.map((name) =>

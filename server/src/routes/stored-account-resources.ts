@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import {recordCommittedOperation} from '../analytics/command-collector.js';
 import { z } from 'zod';
 import type { RelayEnv } from '../auth/authorization.js';
 import { createRequireStoredUserSession } from '../auth/stored-session.js';
@@ -39,7 +40,9 @@ export function createStoredAccountResourcesRouter(options:{
     const request=z.object({idempotencyKey:z.string().uuid(),creditId:z.string().min(1).max(256).optional()}).strict().safeParse(await c.req.json().catch(()=>null));
     if(!request.success||Object.keys(c.req.query()).length)return c.json(presentApiError('重置额度请求格式无效',{code:'CODEX_RESET_INVALID'}),400);
     if(!options.creditReset)return c.json(presentApiError('重置额度暂不可用',{code:'CODEX_RESET_UNAVAILABLE'}),503);
-    try{return c.json(CodexResetCreditResultDtoSchema.parse({outcome:await options.creditReset.run(c.get('relayStoragePrincipal')!,request.data)}));}
+    try{const outcome=await options.creditReset.run(c.get('relayStoragePrincipal')!,request.data);
+      recordCommittedOperation('workbench','reset_quota',`credit-reset:${request.data.idempotencyKey}`,outcome==='reset'?'success':outcome==='noCredit'?'rejected':'cancelled');
+      return c.json(CodexResetCreditResultDtoSchema.parse({outcome}));}
     catch(error){
       const code=error instanceof StorageContractError?error.code:'STORAGE_UNAVAILABLE';
       return c.json(presentApiError(code==='FORBIDDEN'?'仅管理员可以使用手动重置额度':code==='CONFLICT'?'重置请求与已记录的操作冲突，请刷新额度核对':'重置结果尚未确认，请先刷新额度核对',

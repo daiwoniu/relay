@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useFeatureView,featureAction,localAction } from '../../analytics/features';
 import { formatClockTime } from '../../utils/date-display.ts';
 import { useLocalNotes } from '../../hooks/useLocalNotes';
 import {
@@ -57,6 +58,7 @@ export default function LocalNotesControl({ isMobile, onInsert }: Props) {
   const feedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const undoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const open = anchorRect !== null;
+  useFeatureView('notes',open,isMobile?'mobile_sheet':'composer');
   const atLimit = notes.length >= LOCAL_NOTES_LIMIT;
   const panelWidth = getLocalNotesPanelWidth(notes.map((note) => note.content));
 
@@ -92,6 +94,7 @@ export default function LocalNotesControl({ isMobile, onInsert }: Props) {
 
   const handleCreate = () => {
     const note = createNote();
+    featureAction('notes',note?'create':'limit_reached','composer');
     if (note) {
       initialEditorHeightsRef.current.set(note.id, 24);
       setEditingNoteId(note.id);
@@ -100,7 +103,7 @@ export default function LocalNotesControl({ isMobile, onInsert }: Props) {
     }
   };
 
-  const handleStartEditing = (id: string, viewHeight: number) => {
+  const handleStartEditing = (id: string, viewHeight: number) => {featureAction('notes','activate','composer');
     const editorHeight = getLocalNoteInitialEditorHeight(viewHeight);
     initialEditorHeightsRef.current.set(id, editorHeight);
     setEditingNoteId(id);
@@ -109,20 +112,21 @@ export default function LocalNotesControl({ isMobile, onInsert }: Props) {
   };
 
   const handleEditorBlur = (id: string, content: string) => {
+    if(editingNoteId===id)featureAction('notes','edit_commit','composer');
     setEditingNoteId((current) => current === id ? null : current);
     setEditingViewHeight(null);
     initialEditorHeightsRef.current.delete(id);
     if (!content.trim()) removeEmptyNotes();
   };
 
-  const handleCopy = async (id: string, content: string) => {
+  const handleCopy = async (id: string, content: string) => {const report=localAction('notes','copy','composer');
     try {
-      await copyToClipboard(content);
+      await copyToClipboard(content);report(true);
       setCopyFeedback({ id, ok: true });
       if (feedbackTimerRef.current) clearTimeout(feedbackTimerRef.current);
       feedbackTimerRef.current = setTimeout(() => setCopyFeedback(null), 1600);
     } catch {
-      setCopyFeedback({ id, ok: false });
+      report(false);setCopyFeedback({ id, ok: false });
       if (feedbackTimerRef.current) clearTimeout(feedbackTimerRef.current);
       feedbackTimerRef.current = setTimeout(() => setCopyFeedback(null), 2000);
     }
@@ -130,6 +134,7 @@ export default function LocalNotesControl({ isMobile, onInsert }: Props) {
 
   const handleDelete = (id: string) => {
     const deleted = removeNote(id);
+    if(deleted)featureAction('notes','delete','composer');
     setDeletedNote(deleted);
     if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
     undoTimerRef.current = setTimeout(() => setDeletedNote(null), 5000);
@@ -145,6 +150,7 @@ export default function LocalNotesControl({ isMobile, onInsert }: Props) {
   const handleInsert = (content: string) => {
     if (!content.trim()) return;
     onInsert(content);
+    featureAction('notes','insert','composer');
     closePanel();
   };
 

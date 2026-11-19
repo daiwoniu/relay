@@ -1,6 +1,7 @@
 import { lazy, Suspense, useEffect, useRef,useState } from 'react';
 import { createPomodoro, diffLines, formatJson, parseZonedDateTime, readPomodoro, tickPomodoro, timestampMilliseconds, type DiffLine, type LocalToolId } from './local-tools-model';
 import { CopyButton, ToolError, toolButton, toolInput,ToolAnalyticsContext } from './tool-ui';
+import {tracker} from '../../analytics/tracker';
 import { trackToolAction } from '../../analytics/tracker';
 import { formatDateTime } from '../../utils/date-display.ts';
 
@@ -110,10 +111,10 @@ function PomodoroTool({ storageKey }: { storageKey: string }) {
   return <div className="space-y-5 text-center"><p className="text-sm text-[var(--color-text-secondary)]">{timer.mode === 'focus' ? '专注时间' : '休息时间'} · 已完成 {timer.rounds} 轮专注</p>
     <p role="timer" aria-label={`剩余${Math.floor(seconds / 60)}分${seconds % 60}秒`} className="py-4 text-5xl font-semibold tabular-nums sm:text-6xl">{String(Math.floor(seconds / 60)).padStart(2, '0')}:{String(seconds % 60).padStart(2, '0')}</p>
     {finished && <p role="status" className="text-sm">{timer.mode === 'focus' ? '本轮专注结束，休息一下吧。' : '休息结束，准备好下一轮了吗？'}</p>}
-    <div className="flex flex-wrap justify-center gap-3">{running ? <button type="button" className={toolButton} onClick={() => setTimer((state) => ({ ...tickPomodoro(state, Date.now()), deadline: null }))}>暂停</button> : <button type="button" className={toolButton} onClick={start}>{finished ? timer.mode === 'focus' ? '开始休息' : '开始下一轮' : '开始 / 继续'}</button>}
+    <div className="flex flex-wrap justify-center gap-3">{running ? <button type="button" className={toolButton} onClick={() => {tracker.action({feature:'tools',action:'pause',surface:'tools',toolId:'pomodoro'});setTimer((state) => ({ ...tickPomodoro(state, Date.now()), deadline: null }));}}>暂停</button> : <button type="button" className={toolButton} onClick={start}>{finished ? timer.mode === 'focus' ? '开始休息' : '开始下一轮' : '开始 / 继续'}</button>}
       <button type="button" className={toolButton} onClick={() => {if(running)trackToolAction('pomodoro','cancel','cancelled');setTimer((state) => ({ ...createPomodoro(state.focusMinutes, state.breakMinutes), rounds: state.rounds }));}}>重置</button></div>
-    <div className="mx-auto grid max-w-sm grid-cols-2 gap-3 text-left"><label className="space-y-2 text-sm"><span>专注时长</span><select disabled={running} className={toolInput} value={timer.focusMinutes} onChange={(event) => setTimer((state) => ({ ...createPomodoro(Number(event.target.value), state.breakMinutes), rounds: state.rounds }))}>{[15, 25, 45, 50].map((value) => <option key={value} value={value}>{value} 分钟</option>)}</select></label>
-      <label className="space-y-2 text-sm"><span>休息时长</span><select disabled={running} className={toolInput} value={timer.breakMinutes} onChange={(event) => setTimer((state) => ({ ...createPomodoro(state.focusMinutes, Number(event.target.value)), rounds: state.rounds }))}>{[5, 10, 15].map((value) => <option key={value} value={value}>{value} 分钟</option>)}</select></label></div>
+    <div className="mx-auto grid max-w-sm grid-cols-2 gap-3 text-left"><label className="space-y-2 text-sm"><span>专注时长</span><select disabled={running} className={toolInput} value={timer.focusMinutes} onChange={(event) => {tracker.action({feature:'tools',action:'configure',surface:'tools',toolId:'pomodoro'});setTimer((state) => ({ ...createPomodoro(Number(event.target.value), state.breakMinutes), rounds: state.rounds }));}}>{[15, 25, 45, 50].map((value) => <option key={value} value={value}>{value} 分钟</option>)}</select></label>
+      <label className="space-y-2 text-sm"><span>休息时长</span><select disabled={running} className={toolInput} value={timer.breakMinutes} onChange={(event) => {tracker.action({feature:'tools',action:'configure',surface:'tools',toolId:'pomodoro'});setTimer((state) => ({ ...createPomodoro(state.focusMinutes, Number(event.target.value)), rounds: state.rounds }));}}>{[5, 10, 15].map((value) => <option key={value} value={value}>{value} 分钟</option>)}</select></label></div>
     <p className="text-xs leading-5 text-[var(--color-text-secondary)]">计时保存在当前设备，刷新或重新打开工具可继续。后台计时按结束时间校准；关闭页面后不发送提醒。</p><ToolError message={storageError ? '浏览器存储不可用，收起或刷新后计时不会保留。' : ''} />
   </div>;
 }

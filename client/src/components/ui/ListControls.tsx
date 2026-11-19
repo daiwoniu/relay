@@ -11,7 +11,9 @@ export function ListSearchField({
   disabled = false,
   compact = false,
   className = '',
+  onCommit,
 }: {
+  onCommit?:()=>void;
   value: string;
   onChange: (value: string) => void;
   onClear: () => void;
@@ -23,12 +25,16 @@ export function ListSearchField({
   className?: string;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const committedValue=useRef(value);
+  const commit=()=>{if(value!==committedValue.current){committedValue.current=value;onCommit?.();}};
   const change = (event: ChangeEvent<HTMLInputElement>) => onChange(event.target.value);
   const clear = () => {
+    committedValue.current='';
     onClear();
     requestAnimationFrame(() => inputRef.current?.focus());
   };
   const handleKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+    if(event.key==='Enter')commit();
     if (event.key === 'Escape' && value) {
       event.preventDefault();
       clear();
@@ -43,6 +49,7 @@ export function ListSearchField({
       enterKeyHint="search"
       value={value}
       onChange={change}
+      onBlur={commit}
       onKeyDown={handleKeyDown}
       placeholder={placeholder}
       aria-label={label}

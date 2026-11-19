@@ -10,7 +10,7 @@ export function getWorkspaceConsoleResponsibility(signal?: AbortSignal, force = 
   trigger: ResponsibilityRefreshTrigger = 'open'): Promise<WorkspaceConsoleResponsibilityDto> {
   const query = new URLSearchParams({ trigger });
   if (force) query.set('refresh', '1');
-  return requestJson<WorkspaceConsoleResponsibilityDto>(`/api/admin/workspace-console/responsibility?${query}`, { signal, timeoutMs: 100_000, cache: 'no-store' });
+  return requestJson<WorkspaceConsoleResponsibilityDto>(`/api/admin/workspace-console/responsibility?${query}`, { ...(trigger==='manual'||trigger==='retry'?{analytics:{feature:'workbench' as const,action:'refresh',surface:'workbench' as const}}:{}),signal, timeoutMs: 100_000, cache: 'no-store' });
 }
 
 export function getWorkspaceOperationRecords(parentId: string, anchor: string, cursor?: string | null,
@@ -24,12 +24,14 @@ export function getWorkspaceOperationRecords(parentId: string, anchor: string, c
 
 export function linkWorkspaceTaskSession(taskId: string, sessionId: string): Promise<WorkspaceTaskSessionLinkResponseDto> {
   return requestJson(`/api/admin/workspace-console/tasks/${encodeURIComponent(taskId)}/sessions`, {
+    analytics:{feature:'workbench',action:'link_session',surface:'workbench'},
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sessionId }), timeoutMs: 12_000,
   });
 }
 
 export function unlinkWorkspaceTaskSession(taskId: string, sessionId: string): Promise<WorkspaceTaskSessionLinkResponseDto> {
   return requestJson(`/api/admin/workspace-console/tasks/${encodeURIComponent(taskId)}/sessions/${encodeURIComponent(sessionId)}`, {
+    analytics:{feature:'workbench',action:'unlink_session',surface:'workbench'},
     method: 'DELETE', timeoutMs: 12_000,
   });
 }

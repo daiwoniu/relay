@@ -5,6 +5,7 @@ import type {
   ProjectUploadUsageDto,
 } from '../generated/relay-contracts';
 import { ApiError, AUTH_REQUIRED_EVENT, parseApiErrorDto, requestJson, jsonBody } from './client';
+import { remoteIntent } from '../analytics/features.ts';
 
 export interface UploadProjectFileOptions {
   uploadId: string;
@@ -23,6 +24,8 @@ export function uploadProjectFile(projectId: string, file: File, options: Upload
   const promise = new Promise<ProjectUploadResponseDto>((resolve, reject) => {
     request.open('POST', `/api/projects/${encodeURIComponent(projectId)}/uploads`);
     request.withCredentials = true;
+    const analyticsId=remoteIntent('attachments','upload','device_picker');
+    if(analyticsId)request.setRequestHeader('X-Relay-Analytics-Operation',analyticsId);
     request.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
     request.setRequestHeader('X-Relay-Upload-Id', options.uploadId);
     request.setRequestHeader('X-Relay-Message-Id', options.messageId);
@@ -50,7 +53,7 @@ export function uploadProjectFile(projectId: string, file: File, options: Upload
 }
 
 export function deleteUploadDraft(projectId: string, uploadId: string): Promise<ProjectUploadDeleteResponseDto> {
-  return requestJson(`/api/projects/${encodeURIComponent(projectId)}/uploads/drafts/${encodeURIComponent(uploadId)}`, { method: 'DELETE' });
+  return requestJson(`/api/projects/${encodeURIComponent(projectId)}/uploads/drafts/${encodeURIComponent(uploadId)}`, { analytics:{feature:'attachments',action:'remove',surface:'composer'},method: 'DELETE' });
 }
 
 export function getProjectUploadUsage(projectId: string): Promise<ProjectUploadUsageDto> {
@@ -62,16 +65,17 @@ export function listProjectUploads(projectId: string): Promise<ProjectUploadsRes
 }
 
 export function deleteProjectUpload(projectId: string, attachmentId: string): Promise<ProjectUploadDeleteResponseDto> {
-  return requestJson(`/api/projects/${encodeURIComponent(projectId)}/uploads/${encodeURIComponent(attachmentId)}`, { method: 'DELETE' });
+  return requestJson(`/api/projects/${encodeURIComponent(projectId)}/uploads/${encodeURIComponent(attachmentId)}`, { analytics:{feature:'project_uploads',action:'delete',surface:'sidebar'},method: 'DELETE' });
 }
 
 export function deleteSelectedProjectUploads(projectId: string, attachmentIds: string[]): Promise<ProjectUploadDeleteResponseDto> {
   return requestJson(`/api/projects/${encodeURIComponent(projectId)}/uploads/delete`, {
+    analytics:{feature:'project_uploads',action:'delete',surface:'sidebar'},
     method: 'POST',
     ...jsonBody({ attachmentIds }),
   });
 }
 
 export function clearProjectUploads(projectId: string): Promise<ProjectUploadDeleteResponseDto> {
-  return requestJson(`/api/projects/${encodeURIComponent(projectId)}/uploads`, { method: 'DELETE' });
+  return requestJson(`/api/projects/${encodeURIComponent(projectId)}/uploads`, { analytics:{feature:'project_uploads',action:'delete',surface:'sidebar'},method: 'DELETE' });
 }

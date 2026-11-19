@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { tracker } from '../../analytics/tracker';
 import { requestJson } from '../../api/client';
 import { generateUUID } from '../../utils/uuid';
 import { readToolsState, recordToolUse, toggleToolPin, type ToolId, type ToolsState } from './tools-state';
@@ -50,7 +51,7 @@ export function useToolsSettings(storageKey: string, signedIn: boolean) {
       while (queue.current.length && mounted.current) {
         const item = queue.current[0];
         const value = await requestJson<ToolsState>('/api/auth/tools-settings', {
-          method: 'PATCH', headers: { 'content-type': 'application/json', 'x-relay-operation-id': item.id },
+          method: 'PATCH', headers: { 'content-type': 'application/json', 'x-relay-operation-id': item.id,...(item.action.action==='pin'?{'x-relay-analytics-operation':item.id}:{}) },
           body: JSON.stringify(item.action), signal: controller.current?.signal, timeoutMs: 8000,
         });
         if (!mounted.current) return;
@@ -87,9 +88,12 @@ export function useToolsSettings(storageKey: string, signedIn: boolean) {
   function change(action: Action) {
     if (signedIn) {
       if (!ready && action.action === 'pin') return;
-      queue.current.push({ action, id: generateUUID() });
+      const id=generateUUID();
+      if(action.action==='pin')tracker.action({feature:'tools',action:action.pinned?'pin':'unpin',surface:'tools',toolId:action.toolId,operationId:id});
+      queue.current.push({ action, id });
       void flush();
     } else {
+      if(action.action==='pin')tracker.action({feature:'tools',action:action.pinned?'pin':'unpin',surface:'tools',toolId:action.toolId,operationId:generateUUID()});
       let latest = current.current;
       try { const raw = localStorage.getItem(storageKey); if (raw) latest = readToolsState(raw); } catch { /* Use memory. */ }
       const value = action.action === 'use' ? recordToolUse(latest, action.toolId)

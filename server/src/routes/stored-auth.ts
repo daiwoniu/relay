@@ -24,6 +24,7 @@ import { ToolsActionSchema, ToolsStateSchema } from '../storage/tools-contract.j
 import { AccountThemeSettingsResponseDtoSchema,ThemeSettingsInputSchema } from '../contracts/index.js';
 import { StorageContractError } from '../storage/command-boundary.js';
 import { executeStoredCommand } from '../storage/command-outcome.js';
+import { recordCommittedOperation,recordTrustedResult } from '../analytics/command-collector.js';
 import type { CoreCommandInputs, CoreCommandName, CoreStoragePort, StorageCommandEnvelope, StorageRejectionCode } from '../storage/contracts.js';
 import type { CredentialRequest, CredentialResult, CredentialStoragePort } from '../storage/credential-contracts.js';
 
@@ -220,6 +221,7 @@ export function createStoredAuthModule(options: {
       request.operationId = `credential:${id}`;
       const result = await credentials.run(request);
       if (result.state !== 'committed') { if (result.state === 'unknown') await changed(session.user.id); return credentialError(c, result); }
+      recordTrustedResult(options.port,{userId:session.user.id,role:session.user.role},'auth','logout',request.operationId);
       await changed(session.user.id);
     }
     c.header('Set-Cookie', serializeClearSessionCookie(secure(c)), { append: true }); return c.json(OkDtoSchema.parse({ ok: true }));
@@ -234,6 +236,7 @@ export function createStoredAuthModule(options: {
     const request = credentials.prepareCreateMember(principal(c), { ...body.data, projectIds: [...new Set(body.data.projectIds)], workspacePath: options.workspacePath });
     request.operationId = `credential:${id}`;
     const result = await credentials.run(request); if (result.state !== 'committed') return credentialError(c, result);
+    recordCommittedOperation('account_admin','create',request.operationId);
     return currentUser(c, result.value.user.id, 201);
   });
   router.patch('/profile', async (c) => {
@@ -315,6 +318,7 @@ export function createStoredAuthModule(options: {
       return credentialError(c, result);
     }
     credentialClient.clear(clientKey); credentialIp.clear(ipKey);
+    recordCommittedOperation(reset?'account_admin':'auth',reset?'reset_password':rename?'change_username':'change_password',request.operationId);
     if (rename) return currentUser(c, target);
     await changed(target);
     if (!reset) c.header('Set-Cookie', serializeClearSessionCookie(secure(c)), { append: true });

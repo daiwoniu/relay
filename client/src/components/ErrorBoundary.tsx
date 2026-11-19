@@ -1,5 +1,6 @@
 import { Component, type ReactNode } from 'react';
 import FailureNotice from './ui/FailureNotice';
+import {tracker} from '../analytics/tracker';
 
 interface Props {
   children: ReactNode;
@@ -21,7 +22,7 @@ export default class ErrorBoundary extends Component<Props, State> {
     return { hasError: true, error };
   }
 
-  componentDidCatch(error: Error, errorInfo: any) {
+  componentDidCatch(error: Error, errorInfo: any) {tracker.captureResult({feature:'connection',action:'page_error',surface:'system'})('error');
     console.error('[ErrorBoundary] 渲染错误:', error, errorInfo);
   }
 
@@ -40,7 +41,7 @@ export default class ErrorBoundary extends Component<Props, State> {
               <FailureNotice error={this.state.error?.message || '未知错误'} description="页面内容渲染失败。" suggestion="可以尝试重新加载内容；若反复出现，请提供操作步骤及原始异常，排查前端兼容问题。" />
             </p>
             <button
-              onClick={() => this.setState({ hasError: false, error: undefined })}
+              onClick={() => {tracker.action({feature:'connection',action:'retry',surface:'button'});this.setState({ hasError: false, error: undefined });}}
               className="px-4 py-1.5 text-xs rounded-lg bg-[var(--color-bg-secondary)] border border-[var(--color-border)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] transition-colors"
             >
               重试

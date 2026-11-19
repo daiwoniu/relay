@@ -101,11 +101,11 @@ test('禁用采集不发请求，拥塞队列有上限，失败丢弃且可继�
   enabled=false;await t.flush();assert.equal(t.size(),0);
 });
 
-test('异步操作持有的上下文在换页和账号重置后失效',()=>{
+test('异步操作在同身份换页后保留原上下文，账号重置或切换后失效',()=>{
   const t=createTracker({enabled:()=>true,meta,send:async()=>{}});
   t.page('tools','a','guest');const first=t.capture();assert.equal(first(),true);
   t.page('tools','a','guest');assert.equal(first(),true,'ordinary re-render preserves context');
-  t.page('news','b','guest');assert.equal(first(),false);
+  t.page('news','b','guest');assert.equal(first(),true);
   const second=t.capture();t.reset();assert.equal(second(),false);
   t.page('tools','c','user-1');const third=t.capture();t.page('tools','c','user-2');assert.equal(third(),false);
 });

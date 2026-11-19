@@ -2,6 +2,7 @@ import { useState } from 'react';
 import type { LifeToolId } from './tools-state';
 import { UNIT_GROUPS, ageAt, comparePrices, convertUnit, dateDifference, discountPrice, drawOptions, parseOptions, randomGroups, shiftDate, thresholdDeal, type UnitGroupId } from './life-tools-model';
 import { CopyButton, ToolError, toolButton, toolInput } from './tool-ui';
+import {tracker} from '../../analytics/tracker';
 import { trackToolAction } from '../../analytics/tracker';
 
 const numberText = (value: number) => new Intl.NumberFormat('zh-CN', { maximumSignificantDigits: 12 }).format(value);
@@ -35,9 +36,9 @@ function UnitTool() {
     }}>{Object.entries(UNIT_GROUPS).map(([id, item]) => <option key={id} value={id}>{item.label}</option>)}</select></label>
     <label className="block space-y-2 text-sm"><span>数值</span><input className={toolInput} value={value} inputMode={group === 'temperature' ? 'text' : 'decimal'} onChange={(event) => setValue(event.target.value)}  enterKeyHint="done" /></label>
     <div className="grid items-end gap-3 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]">
-      <label className="space-y-2 text-sm"><span>原单位</span><select className={toolInput} value={from} onChange={(event) => setFrom(event.target.value)}>{units.map((unit) => <option key={unit.id} value={unit.id}>{unit.label}</option>)}</select></label>
+      <label className="space-y-2 text-sm"><span>原单位</span><select className={toolInput} value={from} onChange={(event) => {tracker.action({feature:'tools',action:'configure',surface:'tools',toolId:'units'});setFrom(event.target.value);}}>{units.map((unit) => <option key={unit.id} value={unit.id}>{unit.label}</option>)}</select></label>
       <button type="button" className={toolButton} onClick={() => { setFrom(to); setTo(from); }}>交换 ⇄</button>
-      <label className="space-y-2 text-sm"><span>目标单位</span><select className={toolInput} value={to} onChange={(event) => setTo(event.target.value)}>{units.map((unit) => <option key={unit.id} value={unit.id}>{unit.label}</option>)}</select></label>
+      <label className="space-y-2 text-sm"><span>目标单位</span><select className={toolInput} value={to} onChange={(event) => {tracker.action({feature:'tools',action:'configure',surface:'tools',toolId:'units'});setTo(event.target.value);}}>{units.map((unit) => <option key={unit.id} value={unit.id}>{unit.label}</option>)}</select></label>
     </div><ToolError message={error} />
     {result && <><p role="status" className="break-all rounded-xl bg-[var(--color-bg)] p-5 text-2xl font-semibold tabular-nums">{result}</p><CopyButton text={result} /></>}
   </div>;

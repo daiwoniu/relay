@@ -22,7 +22,13 @@ export async function loadSidebarNavigation(
     urlSessionRequest,
   ]);
   return {
-    sessions: mergeUrlSessionIntoNavigationSessions(sessions, urlSession),
+    // 列表可能在删除/撤权前已生成；精确查询的拒绝结果优先于旧列表快照。
+    sessions: mergeUrlSessionIntoNavigationSessions(
+      urlSessionLocation && !urlSession
+        ? sessions.filter((session) => session.id !== urlSessionLocation.sessionId)
+        : sessions,
+      urlSession,
+    ),
     projects,
   };
 }

@@ -1,4 +1,5 @@
 import Tooltip from '../ui/Tooltip';
+import { useFeatureView } from '../../analytics/features';
 import FailureNotice from '../ui/FailureNotice';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { browseHostFiles, type HostFileEntry } from '../../api/filesystem';
@@ -30,6 +31,7 @@ function hostPathKey(filePath: string): string {
 }
 
 export default function HostFilePicker({ initialPath, remainingSlots, existingHostFilePaths, onDirectoryChange, onSelect, onCancel }: Props) {
+  useFeatureView('attachments',true,'host_picker');
   const [currentPath, setCurrentPath] = useState('');
   const [parent, setParent] = useState<string | null>(null);
   const [entries, setEntries] = useState<HostFileEntry[]>([]);

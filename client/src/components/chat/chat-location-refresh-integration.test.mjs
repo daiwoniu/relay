@@ -24,7 +24,10 @@ test('位置恢复请求支持超时、主动取消和错误重试', () => {
   assert.match(sidebar, /setNavigationReloadVersion\(\(version\) => version \+ 1\)/);
   assert.match(sidebar, /currentActiveSessionId === candidateAtStart \? storedLocation : readStoredChatLocation\(\)/);
   assert.match(sidebar, /useRef\(readUrlSessionChatLocation\(\)\)/);
-  assert.match(sidebar, /loadSidebarNavigation\(controller\.signal, urlSessionLocation\)/);
+  assert.match(sidebar, /loadSidebarNavigation\(controller\.signal, restoreSessionLocation\)/);
+  assert.match(sidebar, /pendingRestoreSessionId \?\? candidateAtStart/);
+  assert.match(sidebar, /activeSessionOpenVersion !== openVersionAtStart/);
+  assert.match(sidebar, /currentActiveSessionId\s+\|\| pendingRestoreSessionId/);
   assert.match(navigationLoader, /getSession\(urlSessionLocation\.sessionId/);
   assert.match(navigationLoader, /error\.status === 403 \|\| error\.status === 404/);
   assert.match(sidebar, /resolveInitialChatLocation\(/);

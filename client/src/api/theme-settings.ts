@@ -6,18 +6,18 @@ export function getThemeSettings(signal?: AbortSignal): Promise<AccountThemeSett
 }
 
 export function saveThemeSettings(settings: AccountThemeSettingsDto): Promise<AccountThemeSettingsResponseDto> {
-  return requestJson('/api/auth/theme-settings', { method: 'PUT', ...jsonBody(settings) });
+  return requestJson('/api/auth/theme-settings', { analytics:{feature:'settings',action:'save',surface:'settings',settingKey:'theme'},method: 'PUT', ...jsonBody(settings) });
 }
 
 export function uploadThemeAsset(desktop: Blob, mobile: Blob): Promise<ThemeAssetResponseDto> {
   const body = new FormData();
   body.append('desktop', desktop, 'desktop.webp');
   body.append('mobile', mobile, 'mobile.webp');
-  return requestJson('/api/auth/theme-assets', { method: 'POST', body });
+  return requestJson('/api/auth/theme-assets', { analytics:{feature:'settings',action:'upload_asset',surface:'settings'},method: 'POST', body });
 }
 
 export function deleteThemeAsset(assetId: string): Promise<{ ok: true }> {
-  return requestJson(`/api/auth/theme-assets/${encodeURIComponent(assetId)}`, { method: 'DELETE' });
+  return requestJson(`/api/auth/theme-assets/${encodeURIComponent(assetId)}`, { analytics:{feature:'settings',action:'delete_asset',surface:'settings'},method: 'DELETE' });
 }
 
 export function getThemeAssetUrl(assetId: string, variant: 'desktop' | 'mobile'): string {

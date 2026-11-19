@@ -3,6 +3,24 @@ import test from 'node:test';
 import * as viewModel from './workspace-console-view-model.ts';
 const { buildWorkspaceConsoleView, buildWorkspaceSummary, buildTaskEntries, filterTaskEntries, filterTaskLanesByStatus, groupTaskEntriesByLane, selectFocusTasks, selectTaskAction, runsForTask, projectItemsForTask, formatObservedDuration, projectTaskCardDetails } = viewModel;
 
+test('classification notice distinguishes partial classification from complete and legacy snapshots', () => {
+  assert.equal(viewModel.responsibilityClassificationNotice(null), null);
+  assert.equal(viewModel.responsibilityClassificationNotice({ complete: true, unverifiedCount: 0 }), null);
+  assert.match(viewModel.responsibilityClassificationNotice({ complete: false, unverifiedCount: 2 }), /2 个候选待核实/);
+  const legacy = viewModel.responsibilityClassificationNotice({ complete: false });
+  assert.match(legacy, /当前数据不代表完整责任清单/);
+  assert.doesNotMatch(legacy, /0 个|undefined|查询失败|更新失败/);
+});
+
+test('parent participation labels do not claim ownership or change personal completion', () => {
+  const item = { ...parent('participation', 'creator'), roleOwnerUserKeys: ['u'], myNodes: [] };
+  assert.equal(viewModel.workbenchParticipationLabel(item, 'u'), '本人参与');
+  assert.equal(viewModel.workbenchPersonalState(item), 'completed');
+  assert.equal(viewModel.workbenchParticipationLabel({ ...item, roleOwnerUserKeys: [], myNodes: [{ id: 'n', phase: 'current' }] }, 'u'), '本人参与');
+  assert.equal(viewModel.workbenchParticipationLabel({ ...item, roleOwnerUserKeys: [], myNodes: [], mySubtasks: [child('mine')] }, 'u'), '本人参与');
+  assert.equal(viewModel.workbenchParticipationLabel({ ...item, roleOwnerUserKeys: [] }, 'u'), '待核实');
+});
+
 test('primary item sorts verified links without losing other associations or changing grouping and filters', () => {
   const original = { ...task('multi', 'waiting', ['9001000001', '9001000002']), feishuWorkItemUrls: {
     '9001000001': 'https://project.feishu.cn/demo/story/detail/9001000001',

@@ -2,6 +2,8 @@ import { useEffect, useState, type ReactNode, type Ref } from 'react';
 import Modal from './Modal';
 import IconActionButton from './IconActionButton';
 import MinimizedPanelBar from './MinimizedPanelBar';
+import { featureAction } from '../../analytics/features';
+import type { AnalyticsFeature } from '../../../../server/src/analytics/registry';
 
 export type PanelShellSize = 'settings' | 'content' | 'operations' | 'compact';
 
@@ -40,7 +42,9 @@ export default function PanelShell({
   bodyLabelledBy,
   bodyTabIndex,
   bodyRef,
+  analyticsFeature,
 }: {
+  analyticsFeature?:AnalyticsFeature;
   open: boolean;
   onClose: () => void;
   title: string;
@@ -81,6 +85,7 @@ export default function PanelShell({
     if (minimized && minimizedDescriptionActive) setRetainMinimizedResult(true);
   }, [minimized, minimizedDescriptionActive]);
   const restore = () => {
+    if(minimized&&analyticsFeature)featureAction(analyticsFeature,'restore','unknown');
     setMinimized(false);
     setRetainMinimizedResult(false);
   };
@@ -106,7 +111,7 @@ export default function PanelShell({
         </div>
         <div className="panel-shell__header-actions">
           {headerActions}
-          {minimizable && <IconActionButton label={`最小化${title}`} tooltip={false} variant="neutral" className="h-9 w-9 rounded-xl" onClick={() => { setMinimized(true); setRetainMinimizedResult(minimizedDescriptionActive); }}><svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 11.5h10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg></IconActionButton>}
+          {minimizable && <IconActionButton label={`最小化${title}`} tooltip={false} variant="neutral" className="h-9 w-9 rounded-xl" onClick={() => { if(!minimized&&analyticsFeature)featureAction(analyticsFeature,'minimize','unknown');setMinimized(true); setRetainMinimizedResult(minimizedDescriptionActive); }}><svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 11.5h10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg></IconActionButton>}
           <IconActionButton label={`关闭${title}`} tooltip={false} variant="neutral" className="h-9 w-9 rounded-xl text-lg" disabled={closeDisabled} onClick={onClose}><span aria-hidden="true">×</span></IconActionButton>
         </div>
       </header>

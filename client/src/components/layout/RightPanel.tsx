@@ -1,6 +1,8 @@
 import { usePreviewPreferences, getEffectivePreviewPreferences } from '../../stores/preview-preferences';
 import PreviewSettings from '../settings/PreviewSettings';
 import { useEffect, useRef, useMemo, useCallback, useState } from 'react';
+import { localAction,featureAction } from '../../analytics/features';
+import { tracker } from '../../analytics/tracker';
 import type { RightPanelTab } from '../../stores/chat';
 import { useChatStore } from '../../stores/chat';
 import { authorizeFile, readFile, readImagePreviewSource, revokeFile } from '../../api/filesystem';
@@ -241,6 +243,7 @@ export default function RightPanel({ tabs, activeTabId, panelVisible, width, onC
     const nextWidth = getRightPanelWidthFromKey(width, event.key);
     if (nextWidth === null) return;
     event.preventDefault();
+    if(nextWidth!==width)featureAction('file_preview','resize','keyboard');
     updatePanelWidth(nextWidth, true);
   }, [updatePanelWidth, width]);
 
@@ -251,6 +254,7 @@ export default function RightPanel({ tabs, activeTabId, panelVisible, width, onC
       updatePanelWidth(dragStartWidth.current + delta);
     };
     const handleMouseUp = () => {
+      if(panelWidthRef.current!==dragStartWidth.current)featureAction('file_preview','resize','preview_toolbar');
       storeRightPanelWidth(panelWidthRef.current);
       setIsDragging(false);
       closeOverlay('dragging', 'right-panel-resize');
@@ -278,6 +282,7 @@ export default function RightPanel({ tabs, activeTabId, panelVisible, width, onC
 
   const handlePreviewView = useCallback((mode: FilePreviewView) => {
     if (!activeTab) return;
+    if(activeTab.previewView!==mode)tracker.action({feature:'file_preview',action:'mode',surface:'preview_toolbar',mode:mode==='git-diff'?'git_diff':mode==='preview'?'rendered':'source'});
     updateRightPanelTab(activeTab.id, {
       previewView: mode,
       ...(isHtmlPreview && mode !== 'git-diff' ? { htmlPreviewMode: mode === 'preview' ? 'visualization' as const : 'source' as const } : {}),
@@ -285,6 +290,7 @@ export default function RightPanel({ tabs, activeTabId, panelVisible, width, onC
   }, [activeTab, isHtmlPreview, updateRightPanelTab]);
 
   const handleRefresh = useCallback(async (tab: RightPanelTab, preserve = false) => {
+    const report=preserve?()=>false:tracker.captureResult({feature:'file_preview',action:'refresh',surface:'preview_toolbar'});
     cancelDownload(tab.id);
     const sourcePath = tab.sourcePath || tab.title;
     if (!preserve) setHtmlPreviewSize({ tabId: tab.id, height: 320 });
@@ -303,7 +309,9 @@ export default function RightPanel({ tabs, activeTabId, panelVisible, width, onC
         return;
       }
       filePreviewRequestManager.replaceObjectUrls(tab.id, request.generation, getFilePreviewObjectUrl(update));
+      report(update.previewError?'error':'success');
     } catch (error) {
+      report(request.signal.aborted?'cancelled':'error');
       if (!filePreviewRequestManager.isCurrent(tab.id, request.generation)) return;
       const message = error instanceof ApiError ? error.data?.error || '刷新文件失败' : '刷新文件失败，请重试';
       filePreviewRequestManager.replaceObjectUrls(tab.id, request.generation);
@@ -333,6 +341,7 @@ export default function RightPanel({ tabs, activeTabId, panelVisible, width, onC
 
   const enableHtmlScripts = useCallback(() => {
     if (!activeTab || !isHtmlPreview) return;
+    tracker.action({feature:'file_preview',action:'enable_scripts',surface:'preview_toolbar'});
     updateRightPanelTab(activeTab.id, { htmlPreviewScriptsEnabled: true });
     setHtmlScriptConfirmationOpen(false);
   }, [activeTab, isHtmlPreview, updateRightPanelTab]);
@@ -340,6 +349,7 @@ export default function RightPanel({ tabs, activeTabId, panelVisible, width, onC
   const handleDownload = useCallback(async (tab: RightPanelTab) => {
     if (downloadRequests.current.has(tab.id) || !useChatStore.getState().rightPanelTabs.some(item => item.id === tab.id)) return;
     const request = new AbortController();
+    const reportDownload=localAction('file_preview','download','preview_toolbar');
     downloadRequests.current.set(tab.id, request);
     const previewSignal = filePreviewRequestManager.getSignal(tab.id);
     const onPreviewReplaced = () => cancelDownload(tab.id);
@@ -350,7 +360,9 @@ export default function RightPanel({ tabs, activeTabId, panelVisible, width, onC
     setDownloadStates(state => ({ ...state, [tab.id]: { busy: true } }));
     try {
       await downloadPreviewFile(tab, request.signal, current);
+      reportDownload(true);
     } catch (error) {
+      reportDownload(false);
       if (current()) setDownloadStates(state => ({ ...state, [tab.id]: { busy: false, error } }));
     } finally {
       previewSignal?.removeEventListener('abort', onPreviewReplaced);
@@ -444,11 +456,14 @@ export default function RightPanel({ tabs, activeTabId, panelVisible, width, onC
   }, [updateRightPanelTab]);
 
   const handleCopyPath = useCallback(async (filePath: string) => {
+    const reportCopy=localAction('file_preview','copy_path','preview_toolbar');
     try {
       await copyToClipboard(filePath);
+      reportCopy(true);
       setCopiedPath(true);
       window.setTimeout(() => setCopiedPath(false), 1500);
     } catch {
+      reportCopy(false);
       setCopiedPath(false);
     }
   }, []);
@@ -493,7 +508,7 @@ export default function RightPanel({ tabs, activeTabId, panelVisible, width, onC
           settingsOpen={settingsOpen}
           onOpenSettings={() => setSettingsOpen(true)}
           onCloseSettings={() => setSettingsOpen(false)}
-          settingsPanel={settingsOpen ? <PreviewSettings onClose={() => setSettingsOpen(false)} /> : undefined}
+          settingsPanel={settingsOpen ? <PreviewSettings surface="preview_toolbar" onClose={() => setSettingsOpen(false)} /> : undefined}
           updating={Boolean(activeTab && updatingTabs[activeTab.id])}
           tabs={tabs}
           activeTab={isOpen ? activeTab : undefined}
@@ -524,8 +539,8 @@ export default function RightPanel({ tabs, activeTabId, panelVisible, width, onC
           onCompressedPreview={(tab) => void handleCompressedPreview(tab)}
           onPreviewView={handlePreviewView}
           onRefresh={(tab) => void handleRefresh(tab)}
-          onRequestHtmlScripts={() => setHtmlScriptConfirmationOpen(true)}
-          setMobileInfo={setMobileInfo}
+          onRequestHtmlScripts={() => {featureAction('file_preview','request_scripts','preview_toolbar');setHtmlScriptConfirmationOpen(true);}}
+          setMobileInfo={(info) => {if(info==='file-info'&&mobileInfo!==info)featureAction('file_preview','details','preview_toolbar');setMobileInfo(info);}}
         />
 
       </aside>
@@ -553,7 +568,7 @@ export default function RightPanel({ tabs, activeTabId, panelVisible, width, onC
         notice={{ tone: 'warning', title: '安全提示', description: '来源不明的 HTML 请保持脚本禁用。' }}
         confirmLabel="启用脚本"
         onConfirm={enableHtmlScripts}
-        onCancel={() => setHtmlScriptConfirmationOpen(false)}
+        onCancel={() => {featureAction('file_preview','cancel_scripts','preview_toolbar');setHtmlScriptConfirmationOpen(false);}}
         tone="warning"
       />
     </>

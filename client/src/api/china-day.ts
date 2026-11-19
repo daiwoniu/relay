@@ -55,17 +55,17 @@ export interface ChinaWeatherRangeData {
   source: 'open-meteo';
 }
 
-export function getChinaCalendarMonth(year: number, month: number, signal?: AbortSignal, refresh = false): Promise<ChinaCalendarMonthData> {
+export function getChinaCalendarMonth(year: number, month: number, signal?: AbortSignal, refresh = false,surface:'tools'|'workbench'='tools'): Promise<ChinaCalendarMonthData> {
   const query = new URLSearchParams({ year: String(year), month: String(month) });
   if (refresh) query.set('refresh', '1');
-  return requestJson<ChinaCalendarMonthData>(`/api/public/tools/china-day/calendar?${query}`, { signal, timeoutMs: 30_000, cache: 'no-store', notifyUnauthorized: false });
+  return requestJson<ChinaCalendarMonthData>(`/api/public/tools/china-day/calendar?${query}`, { ...(refresh?{analytics:{feature:'tools',action:'refresh_calendar',surface,toolId:'calendar'} as const}:{}),signal, timeoutMs: 30_000, cache: 'no-store', notifyUnauthorized: false });
 }
 
-export function getChinaWeatherRange(city?: string, signal?: AbortSignal, refresh = false): Promise<ChinaWeatherRangeData> {
+export function getChinaWeatherRange(city?: string, signal?: AbortSignal, refresh = false,surface:'tools'|'workbench'='tools'): Promise<ChinaWeatherRangeData> {
   const query = new URLSearchParams();
   if (city) query.set('city', city);
   if (refresh) query.set('refresh', '1');
-  return requestJson<ChinaWeatherRangeData>(`/api/public/tools/china-day/weather${query.size ? `?${query}` : ''}`, { signal, timeoutMs: 30_000, cache: 'no-store', notifyUnauthorized: false });
+  return requestJson<ChinaWeatherRangeData>(`/api/public/tools/china-day/weather${query.size ? `?${query}` : ''}`, { ...(refresh?{analytics:{feature:'tools',action:'refresh_weather',surface,toolId:'weather'} as const}:{}),signal, timeoutMs: 30_000, cache: 'no-store', notifyUnauthorized: false });
 }
 
 export interface ChinaWeatherHourlyData {

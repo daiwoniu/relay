@@ -26,15 +26,24 @@ export class AnalyticsService {
   private queue:AnalyticsRecord[][]=[];
   private running:Promise<void>|null=null;
   private closed=false;
-  constructor(private port:Pick<CoreStoragePort,'appendAnalytics'|'authenticateSession'>,readonly enabled=true){}
+  private readonly startedAt=Date.now();
+  private counters={received:0,queueDropped:0,writeFailed:0,written:0,observationsDropped:0,validationRejected:0,rateLimited:0};
+  quality(){return{...this.counters,startedAt:this.startedAt,queuedBatches:this.queue.length,inFlight:Boolean(this.running)};}
+  rejectedBatch(reason:'validationRejected'|'rateLimited'){this.counters[reason]=Math.min(Number.MAX_SAFE_INTEGER,this.counters[reason]+1);}
+  observationDropped(){this.counters.observationsDropped=Math.min(Number.MAX_SAFE_INTEGER,this.counters.observationsDropped+1);}
+  constructor(private port:Pick<CoreStoragePort,'appendAnalytics'|'authenticateSession'>,readonly enabled=true,readonly extendedEnabled=process.env.RELAY_ANALYTICS_EXTENDED_ENABLED!=='0'){}
   enqueue(records:AnalyticsRecord[]){
-    if(!this.enabled||this.closed||!records.length||records.length>20||this.queue.length>=20)return false;
+    if(!this.enabled||this.closed)return false;
+    if(!this.extendedEnabled){records=records.filter(record=>!['feature_view','feature_action','operation_result'].includes(record.event.name));if(!records.length)return true;}
+    this.counters.received=Math.min(Number.MAX_SAFE_INTEGER,this.counters.received+records.length);
+    let oversized=true;try{oversized=Buffer.byteLength(JSON.stringify({records}))>32*1024;}catch{/* Invalid telemetry is discarded. */}
+    if(!records.length||records.length>20||this.queue.length>=20||oversized){this.counters.queueDropped=Math.min(Number.MAX_SAFE_INTEGER,this.counters.queueDropped+records.length);return false;}
     this.queue.push(records);this.drain();return true;
   }
   private drain(){
     if(this.running||this.closed||!this.queue.length)return;
     const records=this.queue.shift()!;
-    this.running=Promise.resolve().then(()=>this.port.appendAnalytics({records})).then(()=>undefined,()=>undefined).finally(()=>{this.running=null;this.drain();});
+    this.running=Promise.resolve().then(()=>this.port.appendAnalytics({records})).then(result=>{this.counters.written=Math.min(Number.MAX_SAFE_INTEGER,this.counters.written+result.accepted);},()=>{this.counters.writeFailed=Math.min(Number.MAX_SAFE_INTEGER,this.counters.writeFailed+records.length);}).finally(()=>{this.running=null;this.drain();});
   }
   async identity(c:Context){
     const visitorId=getAnalyticsVisitorId(c.req.header('cookie'));

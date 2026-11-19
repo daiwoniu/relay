@@ -1,4 +1,5 @@
 import Tooltip from '../ui/Tooltip';
+import {featureAction,useSearchCommit} from '../../analytics/features';
 import { useEffect, useRef, useState } from 'react';
 import IconActionButton from '../ui/IconActionButton';
 import FailureNotice from '../ui/FailureNotice';
@@ -39,7 +40,7 @@ const SearchIcon = () => (
 );
 
 export default function CurrentSessionSearch(props: Props) {
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);const commitSearch=useSearchCommit('message','header');
   const [filterAnchor, setFilterAnchor] = useState<DOMRect | null>(null);
 
   useEffect(() => {
@@ -102,13 +103,13 @@ export default function CurrentSessionSearch(props: Props) {
         enterKeyHint="search"
         value={props.query}
         onFocus={() => props.onInputFocusChange(true)}
-        onBlur={() => props.onInputFocusChange(false)}
+        onBlur={() => {commitSearch(props.query);props.onInputFocusChange(false);}}
         onChange={(event) => props.onQueryChange(event.target.value)}
         onKeyDown={(event) => {
           if (event.key === 'Escape') {
             event.preventDefault();
             props.onClose();
-          } else if (event.key === 'Enter') {
+          } else if (event.key === 'Enter') {commitSearch(props.query);featureAction('message','search_result','header');
             event.preventDefault();
             if (event.shiftKey) props.onPrevious(); else props.onNext();
           }
@@ -146,13 +147,13 @@ export default function CurrentSessionSearch(props: Props) {
           <span aria-hidden="true">↻</span>
         </IconActionButton>
       )}
-      <IconActionButton label="上一处匹配" variant="neutral" tooltipPlacement="bottom" disabled={navigationDisabled || props.currentIndex <= 0} onClick={props.onPrevious}>
+      <IconActionButton label="上一处匹配" variant="neutral" tooltipPlacement="bottom" disabled={navigationDisabled || props.currentIndex <= 0} onClick={()=>{featureAction('message','search_result','header');props.onPrevious();}}>
         <span aria-hidden="true">↑</span>
       </IconActionButton>
-      <IconActionButton label="下一处匹配" variant="neutral" tooltipPlacement="bottom" disabled={navigationDisabled || props.currentIndex < 0 || props.currentIndex >= props.loadedMatchCount - 1} onClick={props.onNext}>
+      <IconActionButton label="下一处匹配" variant="neutral" tooltipPlacement="bottom" disabled={navigationDisabled || props.currentIndex < 0 || props.currentIndex >= props.loadedMatchCount - 1} onClick={()=>{featureAction('message','search_result','header');props.onNext();}}>
         <span aria-hidden="true">↓</span>
       </IconActionButton>
-      <IconActionButton label="关闭消息搜索" variant="neutral" tooltipPlacement="bottom" onClick={props.onClose}>
+      <IconActionButton label="关闭消息搜索" variant="neutral" tooltipPlacement="bottom" onClick={()=>{featureAction('message','close','header');props.onClose();}}>
         <span aria-hidden="true">×</span>
       </IconActionButton>
 

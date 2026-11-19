@@ -41,7 +41,7 @@ export class StoredApplicationHost {
     try{
       host.domain=await options.build({port,graph,storeId:options.storage.storeId,generation:options.storage.generation,assertExclusiveWriter:()=>owner.assertCurrent(),writerProof:owner.writerProof,ready:()=>host.state==='ready',
         own:(resource,close)=>{host.disposers.push(()=>close(resource));return resource;}});
-      host.http=createStoredHttpApplication({...host.domain.http,port,storeId:options.storage.storeId,generation:options.storage.generation,graph,ready:()=>host.state==='ready'});
+      host.http=createStoredHttpApplication({...host.domain.http,analyticsFilename:owner.filename,port,storeId:options.storage.storeId,generation:options.storage.generation,graph,ready:()=>host.state==='ready'});
       await owner.assertCurrent();return host;
     }catch(error){
       try{await host.close();}catch{throw new AggregateError([error],'NATIVE_STARTUP_CLEANUP_UNCONFIRMED');}

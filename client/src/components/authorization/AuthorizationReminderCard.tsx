@@ -1,3 +1,4 @@
+import {featureAction} from '../../analytics/features';
 import FailureNotice from '../ui/FailureNotice';
 import { useId, useMemo, useState } from 'react';
 import type { InteractionResponseResultEvent, PendingApprovalDto, RespondInteractionCommand } from '../../generated/relay-contracts';
@@ -139,7 +140,7 @@ export default function AuthorizationReminderCard(props: Props) {
       <div className="flex items-center gap-2.5">
         <div className="authorization-reminder-card__mark" aria-hidden="true">◇</div>
         <div className="min-w-0 flex-1"><div className="text-sm font-semibold text-[var(--color-text)]">待处理请求</div><div className="text-[10px] text-[var(--color-text-tertiary)]">{props.orderedIds.length} 项请求等待处理</div></div>
-        <IconActionButton label="收起请求提醒" variant="neutral" tooltipPlacement="left" onClick={props.onClose} className="h-7 w-7"><svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true"><path d="M3 3l6 6M9 3l-6 6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg></IconActionButton>
+        <IconActionButton label="收起请求提醒" variant="neutral" tooltipPlacement="left" onClick={()=>{featureAction('notifications','dismiss','notification');props.onClose();}} className="h-7 w-7"><svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true"><path d="M3 3l6 6M9 3l-6 6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg></IconActionButton>
       </div>
 
       {!props.connected && <div className="mt-2 rounded-lg border border-[var(--color-border-light)] bg-[var(--color-bg-secondary)] px-2.5 py-1.5 text-[11px] text-[var(--color-text-tertiary)]">连接已断开，可查看详情或前往会话，恢复连接后再处理。</div>}

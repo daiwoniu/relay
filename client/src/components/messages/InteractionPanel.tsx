@@ -1,4 +1,5 @@
 import FailureNotice from '../ui/FailureNotice';
+import { useFeatureView,featureAction } from '../../analytics/features';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import ProcessActionIcon from './ProcessActionIcon';
 import type { InteractionResponseResultEvent, RespondInteractionCommand } from '../../generated/relay-contracts';
@@ -99,6 +100,7 @@ export default function InteractionPanel({ step, onRespond, full }: Props) {
   const pending = step.status === 'in_progress' && !details.resolvedAction;
   const [expanded, setExpanded] = useState(() => getInitialInteractionPanelExpanded(pending));
   const effectiveExpanded = full || expanded;
+  useFeatureView('interaction',Boolean(effectiveExpanded),'message');
   const wasPendingRef = useRef(pending);
   const kind = String(details.interactionKind || 'unsupported_request');
   const approvalPresentation = kind === 'command_approval' || kind === 'file_approval' || kind === 'permissions_approval'
@@ -166,7 +168,7 @@ export default function InteractionPanel({ step, onRespond, full }: Props) {
       <button
         type="button"
         disabled={pending}
-        onClick={() => setExpanded((value) => !value)}
+        onClick={() => {featureAction('interaction',expanded?'collapse':'expand','message');setExpanded((value) => !value);}}
         aria-expanded={pending ? undefined : effectiveExpanded}
         className={`interaction-card__header ${pending
           ? 'flex w-full cursor-default items-start justify-between gap-3 text-left'

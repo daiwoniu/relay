@@ -1,4 +1,6 @@
 import { useEffect, useRef, useCallback } from 'react';
+import { tracker } from '../analytics/tracker';
+import {observeMessageIntent} from '../analytics/message-intent';
 import { useChatStore } from '../stores/chat';
 import { isAssistantTerminalMessage } from '../stores/message-terminal';
 import { hasBlockingFollowups, useSessionFollowupStore } from '../stores/session-followups';
@@ -62,6 +64,7 @@ function sendSubscribeCommand(ws: WebSocket, sessionId: string, active: boolean,
 }
 
 export function useRelayWebSocket() {
+  const analyticsConnection=useRef({account:'',connected:false,outage:false});
   const { user, updateUser } = useAuth();
   const wsRef = useRef<WebSocket | null>(null);
   const localPendingSendSessionsRef = useRef(new Map<string, string>());
@@ -298,6 +301,10 @@ export function useRelayWebSocket() {
         if (rejectProtocol((msg as { protocolVersion?: unknown }).protocolVersion)) return;
       }
       if (msg.type === 'protocol_info') {
+        const state=analyticsConnection.current;
+        if(state.account!==(user?.id??'')){state.account=user?.id??'';state.connected=false;state.outage=false;}
+        if(!state.connected||state.outage)tracker.result({feature:'connection',action:state.outage?'recover':'initialize',surface:'system',operationId:generateUUID(),result:'success',trigger:'automatic'});
+        state.connected=true;state.outage=false;
         if (hasCompletedProtocolHandshakeRef.current) void refreshSessionsAfterReconnect();
         hasCompletedProtocolHandshakeRef.current = true;
         usePendingApprovalStore.getState().setConnectionAvailable(true);
@@ -622,6 +629,12 @@ export function useRelayWebSocket() {
 
     ws.onclose = (event) => {
       if (!isCurrentConnection()) return;
+      const state=analyticsConnection.current;
+      if(state.account!==(user?.id??'')){state.account=user?.id??'';state.connected=false;state.outage=false;}
+      if(!state.outage&&!isAuthenticationClose(event.code)){
+        state.outage=true;
+        tracker.result({feature:'connection',action:state.connected?'disconnect':'initialize',surface:'system',operationId:generateUUID(),result:'error',trigger:'automatic'});
+      }
       usePendingApprovalStore.getState().setConnectionAvailable(false);
       interactionResponseManagerRef.current.rejectAll('连接已断开，授权响应未确认');
       useSessionDeletionProgressStore.getState().clearAll();
@@ -709,6 +722,7 @@ export function useRelayWebSocket() {
           onVerifying: () => onConfirmationState?.('verifying'),
         });
         try {
+          observeMessageIntent(confirmedMessageId,engine);
           sendFrontendCommand(wsRef.current, payload);
         } catch (error) {
           pendingSendManagerRef.current.reject(
@@ -762,6 +776,8 @@ export function useRelayWebSocket() {
     }
     const operationId = generateUUID();
     const resultPromise = interactionResponseManagerRef.current.wait(operationId);
+    if(action==='cancel')tracker.action({feature:'interaction',action:'cancel',surface:'message'});
+    else tracker.action({feature:'interaction',action:action==='accept'?'approve':action==='accept_for_session'?'approve_session':action==='decline'?'reject':options.formData?'submit_mcp':'submit_answer',surface:'message',operationId});
     try {
       sendFrontendCommand(wsRef.current, {
       type: 'respond_interaction',

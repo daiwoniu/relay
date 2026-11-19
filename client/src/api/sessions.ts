@@ -118,6 +118,7 @@ export function getMessageDetails(
 
 export function createSession(projectId: string | null, title?: string, engine: EngineId | null = null): Promise<SessionDto> {
   return requestJson('/api/sessions', {
+    analytics:{feature:'session',action:'create',surface:'sidebar'},
     method: 'POST',
     ...jsonBody({ projectId, engine, ...(title ? { title } : {}) }),
   });
@@ -125,6 +126,7 @@ export function createSession(projectId: string | null, title?: string, engine: 
 
 export function forkSession(id: string, messageId?: string): Promise<SessionUpdateResponseDto> {
   return requestJson(`/api/sessions/${encodeURIComponent(id)}/fork`, {
+    analytics:{feature:'session',action:'fork',surface:'message_menu'},
     method: 'POST',
     ...jsonBody(messageId ? { messageId } : {}),
   });
@@ -134,7 +136,8 @@ export function updateSession(
   id: string,
   updates: { title?: string; pinned?: 0 | 1; archived?: 0 | 1; project_id?: string | null },
 ): Promise<SessionUpdateResponseDto> {
-  return requestJson(`/api/sessions/${id}`, { method: 'PATCH', ...jsonBody(updates) });
+  const action=Object.keys(updates).length>1?'update':updates.title!==undefined?'rename':updates.pinned!==undefined?updates.pinned?'pin':'unpin':'update';
+  return requestJson(`/api/sessions/${id}`, { analytics:{feature:'session',action,surface:'context_menu'},method: 'PATCH', ...jsonBody(updates) });
 }
 
 export function updateSessionEnginePreferences(
@@ -142,16 +145,17 @@ export function updateSessionEnginePreferences(
   preferences: Pick<EnginePreferencesDto, 'modelId' | 'reasoningEffort' | 'serviceTier'> & { expectedRevision: number },
 ): Promise<SessionUpdateResponseDto> {
   return requestJson(`/api/sessions/${encodeURIComponent(id)}/engine-preferences`, {
+    analytics:{feature:'composer',action:'apply_model',surface:'composer'},
     method: 'PATCH', ...jsonBody(preferences),
   });
 }
 
 export async function deleteSession(id: string): Promise<OkDto> {
   markLocalResourceDeletion('session', id);
-  try { return await requestJson(`/api/sessions/${id}`, { method: 'DELETE' }); }
+  try { return await requestJson(`/api/sessions/${id}`, { analytics:{feature:'trash',action:'delete',surface:'sidebar'},method: 'DELETE' }); }
   catch (error) { cancelLocalResourceDeletion('session', id); throw error; }
 }
 
 export function unarchiveSession(id: string): Promise<SessionUpdateResponseDto> {
-  return requestJson(`/api/sessions/${id}/unarchive`, { method: 'POST' });
+  return requestJson(`/api/sessions/${id}/unarchive`, { analytics:{feature:'session',action:'unarchive',surface:'context_menu'},method: 'POST' });
 }

@@ -1,3 +1,4 @@
+import {featureAction} from '../../analytics/features';
 import { useNavigate } from 'react-router-dom';
 import type { WorkspaceConsoleDashboardDto } from '../../generated/relay-contracts';
 import { useChatStore } from '../../stores/chat';
@@ -13,7 +14,7 @@ export function useWorkspaceTaskLauncher() {
 
   const continueSession = (sessionId: string) => {
     useChatStore.getState().setActiveSession(sessionId);
-    navigate('/');
+    featureAction('workbench','open_session','workbench');navigate('/');
   };
 
   const launchTask = (task: Task, dashboard: WorkspaceConsoleDashboardDto, fromSessionId?: string, newTab = false): string | null => {
@@ -36,7 +37,7 @@ export function useWorkspaceTaskLauncher() {
         tab.opener = null;
         const url = new URL('/', window.location.href);
         url.searchParams.set('workspaceProject', project.id);
-        tab.location.replace(url.href);
+        tab.location.replace(url.href);featureAction('workbench','open_session','workbench');
       } catch {
         tab.close();
         return '无法在新标签页准备任务草稿，请重试。';
@@ -46,7 +47,7 @@ export function useWorkspaceTaskLauncher() {
     state.setCurrentProject(project.id);
     state.setActiveSession('', { autoOpenProjectPicker: false, projectSelectionLocked: true });
     prepareWorkspaceTaskLaunch(sessionStorage, draft);
-    navigate('/');
+    featureAction('workbench','open_session','workbench');navigate('/');
     return null;
   };
 
@@ -74,7 +75,7 @@ export function useWorkspaceTaskLauncher() {
       tab.opener = null;
       const url = new URL('/', window.location.href);
       url.searchParams.set('workspaceProject', project.id);
-      tab.location.replace(url.href);
+      tab.location.replace(url.href);featureAction('workbench','open_session','workbench');
       return null;
     } catch {
       tab.close();

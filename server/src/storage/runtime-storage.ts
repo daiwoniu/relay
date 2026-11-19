@@ -1,4 +1,5 @@
 import { randomUUID, createHash } from 'node:crypto';
+import { publishCommandObservation } from './command-observation.js';
 import { buildEngineTurnFact, buildLocalEngineTurnFact } from '../engine/turn-fact-builder.js';
 import type { EngineEventEnvelope } from '../engine/events.js';
 import type { EngineId } from '../engine/types.js';
@@ -90,7 +91,10 @@ export class RuntimeStorage {
       const record = await this.port.lookup({ storeId: this.options.storeId, operationId, principal: this.principal,
         expected: { commandName: name, inputDigest: operationIdentity(request).inputDigest } });
       guard.assertCurrent();
-      if (record.state === 'committed' && record.commandName === name) return { value: record.value as CoreCommandOutputs[K], replayed: true };
+      if (record.state === 'committed' && record.commandName === name) {
+        publishCommandObservation(this.port,request,{state:'committed',operationId,committedAt:record.committedAt,replayed:true,value:record.value as CoreCommandOutputs[K]});
+        return { value: record.value as CoreCommandOutputs[K], replayed: true };
+      }
     }
     throw new RuntimeStorageError(result.state==='rejected'?result.code:'UNCONFIRMED');
   }

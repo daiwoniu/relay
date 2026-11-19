@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import {useFeatureView} from '../../analytics/features';
 import type { Project } from '../../stores/chat';
 import { copyToClipboard } from '../../utils/clipboard';
 import IconActionButton from '../ui/IconActionButton';
@@ -7,6 +8,7 @@ import { getProject } from '../../api/projects';
 import { formatResourcePerson } from '../../utils/resource-person';
 
 export default function ProjectDetailsContent({ project }: { project: Project }) {
+  useFeatureView('project',true,'header');
   const [summary, setSummary] = useState<{ id: string; count?: number; shared?: boolean; failed?: boolean } | null>(null);
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle');
   const feedbackTimer = useRef<ReturnType<typeof setTimeout> | null>(null);

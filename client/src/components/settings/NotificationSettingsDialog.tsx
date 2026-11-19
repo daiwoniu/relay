@@ -1,4 +1,6 @@
 import FailureNotice from '../ui/FailureNotice';
+import { useFeatureView,featureAction,localAction } from '../../analytics/features';
+import { tracker } from '../../analytics/tracker';
 import { useEffect, useRef, useState } from 'react';
 import { useAuth } from '../../auth/AuthContext';
 import type { NotificationPreferencesDto } from '../../generated/relay-contracts';
@@ -64,6 +66,7 @@ function SettingSwitch({ checked, disabled, label, onChange }: { checked: boolea
 }
 
 export default function NotificationSettingsDialog({ open, onClose, mobile, embedded = false }: Props) {
+  useFeatureView('notifications',open&&!embedded,'settings');
   const { user } = useAuth();
   const state = useNotificationPreferences(user?.id || null);
   const [permission, setPermission] = useState<NotificationPermission | 'unsupported'>(readNotificationPermission);
@@ -110,7 +113,7 @@ export default function NotificationSettingsDialog({ open, onClose, mobile, embe
   const previewSound = async (kind: EventKind, volume = draftVolume) => {
     setPreviewKind(kind);
     const sound = kind === 'approval' ? preferences.approvalSound : preferences.sessionEndSound;
-    const played = await playNotificationSound(sound, volume);
+    const report=localAction('settings','sound_preview','settings');const played = await playNotificationSound(sound, volume);report(played);
     showSoundHint(played ? `已试听${kind === 'approval' ? '授权请求' : '会话任务结束'}提示音` : '当前浏览器暂时无法播放提示音');
   };
 
@@ -121,9 +124,12 @@ export default function NotificationSettingsDialog({ open, onClose, mobile, embe
     if (currentPermission === 'unsupported') {
       setPermissionHint('当前浏览器无法申请通知权限，账号偏好仍会保存。');
     } else if (currentPermission === 'default') {
+      featureAction('notifications','request_permission','settings');const reportPermission=tracker.captureResult({feature:'notifications',action:'permission',surface:'settings'});
       try {
-        setPermission(await Notification.requestPermission());
+        const permission=await Notification.requestPermission();setPermission(permission);
+        reportPermission(permission==='granted'?'success':permission==='denied'?'rejected':'cancelled');
       } catch {
+        reportPermission('error');
         setPermission(readNotificationPermission());
         setPermissionHint('当前浏览器无法申请通知权限，账号偏好仍会保存。');
       }

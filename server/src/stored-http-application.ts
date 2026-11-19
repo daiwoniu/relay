@@ -1,6 +1,8 @@
 import { Hono } from 'hono';
 import { AnalyticsService,analyticsLoginId } from './analytics/service.js';
 import { createAnalyticsRouter } from './analytics/routes.js';
+import { AnalyticsReader } from './analytics/reader.js';
+import { analyticsRequest,collectCommittedAnalytics } from './analytics/command-collector.js';
 import { getHttpClientIp,getHttpPeerAddress } from './http-client-ip.js';
 import { normalizeClientIp } from '../../scripts/lib/client-ip.mjs';
 import type { PageHosting } from './page-hosting/service.js';
@@ -44,6 +46,7 @@ import { createStoredNewsRouter } from './routes/stored-news.js';
 
 type Configuration<F extends (...args:any[])=>unknown>=Omit<Parameters<F>[0],'port'|'storeId'|'generation'>;
 export interface StoredHttpApplicationOptions {
+  analyticsFilename?:string;
   hosting?:PageHosting;
   port:CoreStoragePort&CredentialStoragePort;storeId:string;generation:number;graph:StoredRuntimeGraph;ready:()=>boolean;
   auth:Omit<Configuration<typeof createStoredAuthModule>,'recheckUserAccess'|'publishUser'|'notificationPreferencesChanged'|'themeSettingsChanged'>;
@@ -96,6 +99,9 @@ export function createStoredHttpApplication(options:StoredHttpApplicationOptions
     return next();
   });
   const analytics=new AnalyticsService(port,process.env.RELAY_ANALYTICS_ENABLED!=='0');
+  const analyticsReader=options.analyticsFilename?new AnalyticsReader(options.analyticsFilename):undefined;
+  const stopAnalytics=collectCommittedAnalytics(port,analytics,analyticsReader);
+  app.use('*',(c,next)=>analyticsRequest(c,analytics,next));
   const requireUser=createRequireStoredUserSession(port);
   if(options.hosting){
     const hosted=createHostingPublicRouter(options.hosting,(c,siteId)=>{
@@ -106,7 +112,7 @@ export function createStoredHttpApplication(options:StoredHttpApplicationOptions
     app.route('/api/admin/page-hosting',createHostingAdminRouter({port,service:options.hosting}));
   }
   app.use('/api/*',(c,next)=>isUnauthenticatedApiRequest(c.req.method,c.req.path)?next():requireUser(c,next));
-  app.route('/',createAnalyticsRouter({port,service:analytics}));
+  app.route('/',createAnalyticsRouter({port,service:analytics,reader:analyticsReader}));
   const auth=createStoredAuthModule({...options.auth,...base,observeLogin:(c,event)=>analytics.server(c,'login_result',{result:event.result},{id:analyticsLoginId(event.id),userId:event.userId,role:event.role}),getCatalog:options.writes.getCatalog,recheckUserAccess:id=>graph.hub.recheckUserAccess(id),
     publishUser:async user=>{for(const client of graph.hub.clients())if(client.userId===user.id)await graph.hub.send(client,{type:'conversation_defaults_updated',user});},
     notificationPreferencesChanged:id=>graph.hub.broadcastNotificationPreferences(id,principal=>port.readNotificationPreferences({principal})),
@@ -149,5 +155,5 @@ export function createStoredHttpApplication(options:StoredHttpApplicationOptions
   });
   app.onError((_error,c)=>c.json(presentApiError('服务暂不可用，请稍后重试',{code:'STORAGE_UNAVAILABLE'}),503));
   app.notFound(c=>c.json(presentApiError('接口不存在',{code:'ROUTE_NOT_FOUND'}),404));
-  return{app,dispose:async()=>{accepting=false;await Promise.allSettled([...pending]);await analytics.close();auth.dispose();}};
+  return{app,dispose:async()=>{accepting=false;await Promise.allSettled([...pending]);stopAnalytics();await analyticsReader?.close();await analytics.close();auth.dispose();}};
 }

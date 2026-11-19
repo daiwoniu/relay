@@ -1,4 +1,5 @@
 import { createHash,randomUUID } from 'node:crypto';
+import { recordTrustedResult } from '../analytics/command-collector.js';
 import { FrontendCommandSchema,RELAY_PROTOCOL_VERSION,type FrontendCommand } from '../contracts/index.js';
 import type { CoreStoragePort } from '../storage/contracts.js';
 import { StorageContractError } from '../storage/command-boundary.js';
@@ -59,6 +60,7 @@ export class StoredFrontendCommands {
         return result;
       }
       const result=await graph.responses.respond(principal,command);
+      if(result.state==='submitted'&&command.action!=='cancel')recordTrustedResult(port,client.actor,'interaction',command.action==='accept'?'approve':command.action==='accept_for_session'?'approve_session':command.action==='decline'?'reject':command.formData?'submit_mcp':'submit_answer',`interaction:${command.operationId}`,command.operationId);
       await graph.hub.send(client,{type:'interaction_response_result',operationId:command.operationId,sessionId:command.sessionId,interactionId:command.interactionId,
         outcome:result.state==='submitted'?'accepted':result.state==='access-denied'?'skipped':'failed',...(result.state==='unknown'?{message:'答复结果暂时无法确认，请刷新状态核对'}:{})});return result;
     }

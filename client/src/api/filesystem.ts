@@ -76,6 +76,7 @@ export function browseHostFiles(path?: string): Promise<HostFileBrowseResult> {
 
 export function authorizeHostFiles(paths: string[]): Promise<HostFileAuthorizationResponseDto> {
   return requestJson('/api/filesystem/authorize-host-files', {
+    analytics:{feature:'attachments',action:'authorize',surface:'composer'},
     method: 'POST',
     ...jsonBody({ paths }),
   });
@@ -83,6 +84,7 @@ export function authorizeHostFiles(paths: string[]): Promise<HostFileAuthorizati
 
 export function createDirectory(parentPath: string, name: string): Promise<CreateDirectoryResult> {
   return requestJson('/api/filesystem/directories', {
+    analytics:{feature:'attachments',action:'create_directory',surface:'host_picker'},
     method: 'POST',
     ...jsonBody({ parentPath, name }),
   });
@@ -154,6 +156,7 @@ export function readSpreadsheetSheet(path: string, sheet: string, accessToken?: 
 
 export function authorizeFile(path: string, options: FileRequestOptions = {}): Promise<FileAccessResponseDto> {
   return requestJson('/api/filesystem/authorize-file', {
+    analytics:{feature:'file_preview',action:'authorize',surface:'preview_toolbar'},
     method: 'POST',
     signal: options.signal,
     timeoutMs: options.timeoutMs ?? 8_000,

@@ -1,4 +1,5 @@
 import Tooltip from '../ui/Tooltip';
+import {featureAction} from '../../analytics/features';
 import { useRef, useState } from 'react';
 import type { EngineId, EngineModelDto } from '../../generated/relay-contracts';
 import Popover from '../ui/Popover';
@@ -35,7 +36,7 @@ export default function ModelSettingsControl({ models, modelId, reasoningEffort,
   const isFast = Boolean(fastTier && isFastServiceTier(selectedModel, serviceTier ?? selectedModel?.defaultServiceTier ?? null));
 
   const close = () => { if (!submitting) setOpen(false); };
-  const show = () => {
+  const show = () => {featureAction('composer','open_model_settings','composer');
     setDraftModelId(modelId); setDraftReasoning(reasoningEffort); setDraftServiceTier(serviceTier); setNotice(null); setError(null);
     setAnchor(buttonRef.current?.getBoundingClientRect() ?? null); setOpen(true); onOpen();
   };

@@ -1,4 +1,5 @@
 import { formatDateTime } from '../../utils/date-display.ts';
+import { useFeatureView,localAction,featureAction } from '../../analytics/features';
 import FailureNotice from '../ui/FailureNotice';
 import { useEffect, useState } from 'react';
 import type { AuthUser } from '../../api/auth';
@@ -57,6 +58,7 @@ export default function UserMenu({
   onOpenEngineMaintenance: (engine?: EngineId) => void;
   onLogout: () => void;
 }) {
+  useFeatureView('user_menu',anchorRect!==null,mobile?'mobile_sheet':'sidebar');
   const run = (action: () => void) => { onClose(); action(); };
   const canReadCodexQuota = user?.role === 'admin';
   const [quotaState, setQuotaState] = useState<{ userId: string; snapshot: CodexAccountSnapshotDto | null }>(() => ({
@@ -124,14 +126,17 @@ export default function UserMenu({
     : 'Codex 额度暂时无法读取，请稍后重试。';
   const refreshQuota = async () => {
     if (!canReadCodexQuota || !user?.id || quotaRefreshing) return;
+    const report=localAction('user_menu','refresh_quota','user_menu');
     setQuotaRefreshing(true);
     try {
       const next = await loadWorkspaceCodexAccount(user.id, () => getCodexAccount(undefined, true), true);
+      report(next.status==='ready'&&next.sourceMeta?.state!=='failed_snapshot');
       if (next.status === 'ready') setQuotaState({ userId: user.id, snapshot: next });
       setQuotaError(next.sourceMeta?.state === 'failed_snapshot' || next.status !== 'ready'
         ? next.sourceMeta?.error || next.errorMessage || 'Codex 额度更新失败' : null);
       if (next.sourceMeta?.state === 'live') setWarningAnchor(null);
     } catch (cause) {
+      report(false);
       setQuotaError(cause instanceof Error ? cause.message : 'Codex 额度更新失败');
     } finally { setQuotaRefreshing(false); }
   };
@@ -196,7 +201,7 @@ export default function UserMenu({
             </span></Tooltip>)}
           </span> : <svg className={`shrink-0 transition-transform ${anchorRect ? 'rotate-180' : ''}`} width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="m4 6 4 4 4-4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/></svg>}
         </button>
-        {quotaWarning && <Tooltip content={warningText} coexist><button type="button" className="user-menu__quota-warning" aria-label="Codex 额度更新失败，查看提醒" onMouseDown={(event) => event.stopPropagation()} onClick={(event) => { onClose(); setWarningAnchor(warningAnchor ? null : event.currentTarget.getBoundingClientRect()); }}><svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 2.2 14.3 13H1.7L8 2.2Z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round"/><path d="M8 6v3.4M8 11.4h.01" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/></svg></button></Tooltip>}
+        {quotaWarning && <Tooltip content={warningText} coexist><button type="button" className="user-menu__quota-warning" aria-label="Codex 额度更新失败，查看提醒" onMouseDown={(event) => event.stopPropagation()} onClick={(event) => {if(!warningAnchor)featureAction('user_menu','show_quota_warning','user_menu'); onClose(); setWarningAnchor(warningAnchor ? null : event.currentTarget.getBoundingClientRect()); }}><svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 2.2 14.3 13H1.7L8 2.2Z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round"/><path d="M8 6v3.4M8 11.4h.01" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/></svg></button></Tooltip>}
       </div>
       {canReadCodexQuota && <Popover open={warningAnchor !== null} anchorRect={warningAnchor} onClose={() => setWarningAnchor(null)} placement="top" mobile={mobile} label="Codex 额度提醒" className="w-[min(280px,calc(100vw-1rem))]">
         <div className="p-3 text-xs text-[var(--color-text-secondary)]"><p>{warningText}</p>{quotaError && <p className="mt-1 text-[var(--color-text-tertiary)]"><FailureNotice error={quotaError} /></p>}<button type="button" disabled={quotaRefreshing} onClick={() => void refreshQuota()} className="mt-2 rounded-md border border-[var(--color-border)] px-2 py-1 text-[var(--color-text)] disabled:opacity-50">{quotaRefreshing ? '刷新中…' : '重新获取'}</button></div>

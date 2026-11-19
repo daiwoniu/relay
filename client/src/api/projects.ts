@@ -18,13 +18,15 @@ export function getProject(id: string, signal?: AbortSignal): Promise<ProjectDto
 
 export function createProject(path: string, name?: string): Promise<ProjectDto> {
   return requestJson('/api/projects', {
+    analytics:{feature:'project',action:'create',surface:'sidebar'},
     method: 'POST',
     ...jsonBody(name ? { path, name } : { path }),
   });
 }
 
 export function updateProject(id: string, updates: { name?: string; pinned?: 0 | 1; deletion_protected?: 0 | 1 }): Promise<OkDto> {
-  return requestJson(`/api/projects/${id}`, { method: 'PATCH', ...jsonBody(updates) });
+  const action=Object.keys(updates).length>1?'update':updates.name!==undefined?'rename':updates.pinned!==undefined?updates.pinned?'pin':'unpin':updates.deletion_protected?'protect':'unprotect';
+  return requestJson(`/api/projects/${id}`, { analytics:{feature:'project',action,surface:'sidebar'},method: 'PATCH', ...jsonBody(updates) });
 }
 
 export type ProjectMemberRole = 'viewer' | 'collaborator' | 'manager';
@@ -33,17 +35,18 @@ export function listProjectMembers(id: string): Promise<ProjectMemberDto[]> { re
 export function listProjectMemberCandidates(id: string): Promise<UserListResponseDto> { return requestJson(`/api/projects/${encodeURIComponent(id)}/members/candidates`); }
 export function setProjectMember(id: string, userId: string, role: ProjectMemberRole, canViewSessions?: 0 | 1): Promise<{ ok: true }> {
   return requestJson(`/api/projects/${encodeURIComponent(id)}/members/${encodeURIComponent(userId)}`, {
+    analytics:{feature:'project_members',action:'change_role',surface:'sidebar'},
     method: 'PUT',
     ...jsonBody({ role, ...(canViewSessions === undefined ? {} : { can_view_sessions: canViewSessions }) }),
   });
 }
 export function removeProjectMember(id: string, userId: string): Promise<{ ok: true }> {
-  return requestJson(`/api/projects/${encodeURIComponent(id)}/members/${encodeURIComponent(userId)}`, { method: 'DELETE' });
+  return requestJson(`/api/projects/${encodeURIComponent(id)}/members/${encodeURIComponent(userId)}`, { analytics:{feature:'project_members',action:'remove',surface:'sidebar'},method: 'DELETE' });
 }
 
 export async function deleteProject(id: string): Promise<OkDto> {
   markLocalResourceDeletion('project', id);
-  try { return await requestJson(`/api/projects/${id}`, { method: 'DELETE' }); }
+  try { return await requestJson(`/api/projects/${id}`, { analytics:{feature:'trash',action:'delete',surface:'sidebar'},method: 'DELETE' }); }
   catch (error) { cancelLocalResourceDeletion('project', id); throw error; }
 }
 
@@ -52,5 +55,5 @@ export function getProjectDeletionImpact(id: string): Promise<ProjectDeletionImp
 }
 
 export function restoreProjectFromTrash(id: string): Promise<TrashRestoreResponseDto> {
-  return requestJson(`/api/trash/projects/${encodeURIComponent(id)}/restore`, { method: 'POST' });
+  return requestJson(`/api/trash/projects/${encodeURIComponent(id)}/restore`, { analytics:{feature:'trash',action:'restore',surface:'sidebar'},method: 'POST' });
 }

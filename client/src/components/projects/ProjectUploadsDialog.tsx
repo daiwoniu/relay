@@ -1,4 +1,5 @@
 import FailureNotice from '../ui/FailureNotice';
+import { useFeatureView,featureAction } from '../../analytics/features';
 import { useEffect, useMemo, useState } from 'react';
 import type { ProjectDto, ProjectUploadsResponseDto } from '../../generated/relay-contracts';
 import {
@@ -21,6 +22,7 @@ function formatBytes(size: number): string {
 }
 
 export default function ProjectUploadsDialog({ project, onClose }: { project: ProjectDto | null; onClose: () => void }) {
+  useFeatureView('project_uploads',Boolean(project),'sidebar');
   const [data, setData] = useState<ProjectUploadsResponseDto | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [error, setError] = useState('');
@@ -76,11 +78,11 @@ export default function ProjectUploadsDialog({ project, onClose }: { project: Pr
         <div className="max-h-72 space-y-1 overflow-y-auto">
           {data.files.length === 0 ? <div className="py-8 text-center text-sm text-[var(--color-text-tertiary)]">没有已归档的上传文件</div> : data.files.map((file) => (
             <label key={file.id} className="flex items-center gap-2 rounded-lg px-2 py-2 hover:bg-[var(--color-surface-hover)]">
-              <input type="checkbox" checked={selected.has(file.id)} disabled={Boolean(cleanupBlocked) || (!selected.has(file.id) && selected.size >= MAX_SELECTED_UPLOADS)} onChange={(event) => setSelected((current) => {
+              <input type="checkbox" checked={selected.has(file.id)} disabled={Boolean(cleanupBlocked) || (!selected.has(file.id) && selected.size >= MAX_SELECTED_UPLOADS)} onChange={(event) => {featureAction('project_uploads','select','sidebar');setSelected((current) => {
                 const next = new Set(current);
                 if (event.target.checked) next.add(file.id); else next.delete(file.id);
                 return next;
-              })} />
+              });}} />
               <FileTypeIcon filePath={file.name} size={16} className="shrink-0 text-[var(--color-text-tertiary)]" />
               <span className="min-w-0 flex-1"><span className="block truncate text-xs font-medium text-[var(--color-text)]">{file.name}</span><span className="text-[11px] text-[var(--color-text-tertiary)]">{formatBytes(file.size)} · {file.mimeType}</span></span>
               {!file.available && <span className="text-[11px] text-[var(--color-text-tertiary)]">已清理</span>}

@@ -1,5 +1,7 @@
 import type { ApiErrorDto } from '../generated/relay-contracts';
 import { generateUUID } from '../utils/uuid.ts';
+import { tracker } from '../analytics/tracker.ts';
+import { findAnalyticsRegistration,type AnalyticsFeatureProperties } from '../../../server/src/analytics/registry.ts';
 
 export const AUTH_REQUIRED_EVENT = 'relay:auth-required';
 
@@ -18,6 +20,7 @@ export class ApiError extends Error {
 }
 
 interface RequestOptions extends RequestInit {
+  analytics?:Omit<AnalyticsFeatureProperties,'result'|'operationId'|'durationMs'>;
   notifyUnauthorized?: boolean;
   timeoutMs?: number;
   allowNullJson?: boolean;
@@ -102,7 +105,18 @@ export async function parseApiResponse<T>(
 }
 
 export async function requestJson<T>(input: RequestInfo | URL, options: RequestOptions = {}): Promise<T> {
-  const { notifyUnauthorized, timeoutMs, signal, allowNullJson, ...requestOptions } = options;
+  const { notifyUnauthorized, timeoutMs, signal, allowNullJson, analytics, ...requestOptions } = options;
+  let reportLocal:((result:NonNullable<AnalyticsFeatureProperties['result']>)=>void)|undefined;
+  // Opt-in semantic main points only. No URL/body inference and no response-as-success tracking.
+  if(analytics){try{
+    const entry=findAnalyticsRegistration('feature_action',analytics.feature,analytics.action);
+    const headers=new Headers(requestOptions.headers??(input instanceof Request?input.headers:undefined)),operationId=entry?.correlated?generateUUID():undefined;
+    if(operationId)headers.set('x-relay-analytics-operation',operationId);
+    if(entry?.outcome==='required'){
+      const captured=tracker.capture();reportLocal=result=>{captured.track('feature_action',{...analytics,result});};
+    }else tracker.action({...analytics,...(operationId?{operationId}:{})});
+    requestOptions.headers=headers;
+  }catch{/* Telemetry cannot prevent a request. */}}
   const method = (requestOptions.method ?? (input instanceof Request ? input.method : 'GET')).toUpperCase();
   if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) {
     const headers = new Headers(requestOptions.headers ?? (input instanceof Request ? input.headers : undefined));
@@ -117,8 +131,10 @@ export async function requestJson<T>(input: RequestInfo | URL, options: RequestO
       ...requestOptions,
       signal: lifecycle.signal,
     });
-    return await parseApiResponse<T>(response, { notifyUnauthorized, allowNullJson });
+    const value=await parseApiResponse<T>(response, { notifyUnauthorized, allowNullJson });
+    reportLocal?.('success');return value;
   } catch (error) {
+    reportLocal?.(lifecycle.timedOut()?'error':lifecycle.signal?.aborted?'cancelled':error instanceof ApiError&&error.status===403?'rejected':error instanceof ApiError&&error.status===429?'throttled':error instanceof ApiError&&error.status===400?'invalid_input':'error');
     if (lifecycle.timedOut()) throw new ApiError(0, null, '请求超时，请重试');
     if (error instanceof ApiError) throw error;
     if (error instanceof Error && error.name === 'AbortError') throw error;
@@ -129,7 +145,7 @@ export async function requestJson<T>(input: RequestInfo | URL, options: RequestO
 }
 
 export async function requestBlob(input: RequestInfo | URL, options: RequestOptions = {}): Promise<Blob> {
-  const { notifyUnauthorized, timeoutMs, signal, allowNullJson: _allowNullJson, ...requestOptions } = options;
+  const { notifyUnauthorized, timeoutMs, signal, analytics:_analytics, allowNullJson: _allowNullJson, ...requestOptions } = options;
   const lifecycle = createRequestLifecycle(signal, timeoutMs);
   try {
     const response = await fetch(input, {

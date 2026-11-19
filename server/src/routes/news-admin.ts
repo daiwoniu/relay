@@ -1,4 +1,5 @@
 import { Hono, type Context } from 'hono';
+import { observeNews,type NewsAnalyticsObserver } from '../news/analytics-observation.js';
 import { HTTPException } from 'hono/http-exception';
 import { z } from 'zod';
 import { getRequestActor, type Actor, type RelayEnv } from '../auth/authorization.js';
@@ -31,6 +32,7 @@ const socialItemSchema = z.object({
 }).strict();
 
 export function createNewsAdminRouter(options: {
+  observe?:NewsAnalyticsObserver;
   repository: () => Repo | null;
   scheduler?: () => Pick<NewsScheduler, 'replaceSources' | 'refreshSource' | 'status'> | null;
   getActor?: (context: Parameters<typeof getRequestActor>[0]) => Actor | Promise<Actor>;
@@ -63,6 +65,7 @@ export function createNewsAdminRouter(options: {
     try {
       const source = validateSourceConfig(await c.req.json());
       const result = await verifySource(source);
+      observeNews(options.observe,c,'verify_source',result.status==='ok'?'success':'error');
       return c.json({ valid: result.status === 'ok', status: result.status, sampleCount: result.candidates.length, sampleTitles: result.candidates.slice(0, 3).map((item) => item.title), error: result.error ?? null });
     } catch (error) { return c.json({ error: error instanceof Error ? error.message : '来源配置无效' }, 400); }
   });
@@ -78,6 +81,7 @@ export function createNewsAdminRouter(options: {
         if (result.status !== 'ok') return c.json({ error: result.error ?? `来源验证失败：${result.status}` }, 422);
       }
       repo.saveSource(source, (await actor(c)).userId);
+      observeNews(options.observe,c,'save_source');
       options.scheduler?.()?.replaceSources(repo.listSources());
       return c.json({ source });
     } catch (error) { if (error instanceof HTTPException) throw error; return c.json({ error: error instanceof Error ? error.message : '来源配置无效' }, 400); }
@@ -86,7 +90,7 @@ export function createNewsAdminRouter(options: {
   router.put('/sources/:id', (c) => saveSource(c, c.req.param('id')));
   router.post('/sources/:id/refresh', async (c) => {
     const current = await actor(c);
-    const result = options.scheduler?.()?.refreshSource(c.req.param('id'), { id: current.userId, role: current.role }) ?? { accepted: false, reason: 'scheduler_unavailable' };
+    const result = options.scheduler?.()?.refreshSource(c.req.param('id'), { id: current.userId, role: current.role },c.req.header('x-relay-analytics-operation')) ?? { accepted: false, reason: 'scheduler_unavailable' };
     if (result.accepted) options.repository()!.recordAudit(current.userId, 'source.refresh', { id: c.req.param('id') });
     return c.json(result, result.accepted ? 202 : 409);
   });
@@ -114,6 +118,7 @@ export function createNewsAdminRouter(options: {
     const current = await actor(c);
     const result = await repo.upsertBatch({ sourceId: id, fetchedAt: checkedAt, nextFetchAt: checkedAt + 86_400_000, items: [item] });
     if (result.inserted) repo.recordAudit(current.userId, 'social-item.add', { id: item.id, platform: input.platform });
+    if(result.inserted)observeNews(options.observe,c,'add_item');
     return c.json({ itemId: item.id, inserted: result.inserted > 0 }, result.inserted ? 201 : 200);
   });
 
@@ -138,12 +143,14 @@ export function createNewsAdminRouter(options: {
       if (!page.nextCursor) break;
       cursor = page.nextCursor;
     }
+    observeNews(options.observe,c,'preview_policy');
     return c.json({ matches, capped: matches.length >= 100 || hasMore });
   });
   router.put('/policy', async (c) => {
     const parsed = GlobalNewsPolicySchema.safeParse(await c.req.json().catch(() => null));
     if (!parsed.success) return c.json({ error: '规则无效' }, 400);
     options.repository()!.saveGlobalPolicy(parsed.data, (await actor(c)).userId);
+    observeNews(options.observe,c,'save_policy');
     return c.json({ policy: parsed.data });
   });
 
@@ -151,6 +158,7 @@ export function createNewsAdminRouter(options: {
     const parsed = correctionSchema.safeParse(await c.req.json().catch(() => null));
     if (!parsed.success || !/^[a-f0-9]{32}$/.test(c.req.param('id'))) return c.json({ error: '纠错内容无效' }, 400);
     options.repository()!.saveCorrection(c.req.param('id'), parsed.data, (await actor(c)).userId);
+    observeNews(options.observe,c,'correct_item');
     return c.json({ correction: parsed.data });
   });
   router.get('/items', async (c) => {
@@ -165,6 +173,7 @@ export function createNewsAdminRouter(options: {
     const parsed = z.object({ label: z.string().trim().min(1).max(80) }).strict().safeParse(await c.req.json().catch(() => null));
     if (!/^[a-z0-9_]{2,64}$/.test(id) || !parsed.success) return c.json({ error: '分类无效' }, 400);
     options.repository()!.saveCategory(id, parsed.data.label, (await actor(c)).userId);
+    observeNews(options.observe,c,'save_category');
     return c.json({ id, label: parsed.data.label });
   });
   router.get('/stats', (c) => {

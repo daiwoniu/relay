@@ -16,7 +16,7 @@ interface State {
   revision: number;
   configure: (userId: string | null, admin?: boolean) => void;
   load: () => Promise<void>;
-  save: (changes: Partial<PreviewPreferences>) => Promise<void>;
+  save: (changes: Partial<PreviewPreferences>, surface?: 'settings' | 'preview_toolbar') => Promise<void>;
 }
 let epoch = 0;
 export const usePreviewPreferences = create<State>((set, get) => ({
@@ -37,13 +37,13 @@ export const usePreviewPreferences = create<State>((set, get) => ({
       if (generation === epoch) set({ loading: false, error: error instanceof Error ? error.message : '读取预览设置失败' });
     }
   },
-  async save(changes) {
+  async save(changes, surface = 'settings') {
     if (!get().userId || !get().loaded || get().saving || get().loading) return;
     if (Object.entries(changes).every(([key, value]) => JSON.stringify(get().preferences[key as keyof PreviewPreferences]) === JSON.stringify(value))) return;
     const generation = epoch;
     set({ saving: true, error: '' });
     try {
-      const preferences = await requestJson<PreviewPreferences>('/api/auth/preview-preferences', { method: 'PATCH', ...jsonBody(changes) });
+      const preferences = await requestJson<PreviewPreferences>('/api/auth/preview-preferences', { analytics: { feature: 'settings', action: 'save', surface, settingKey: 'preview_capacity' }, method: 'PATCH', ...jsonBody(changes) });
       if (generation === epoch) set(state => ({ preferences, saving: false, revision: state.revision + 1 }));
     } catch (error) {
       if (generation === epoch) set({ saving: false, error: error instanceof Error ? error.message : '保存失败，请重试' });

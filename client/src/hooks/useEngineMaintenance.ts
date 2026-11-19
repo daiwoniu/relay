@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useAuth } from '../auth/AuthContext';
+import {tracker} from '../analytics/tracker';
+import {featureAction} from '../analytics/features';
 import type { EngineId, EngineMaintenanceAction, EngineMaintenanceOperationDto, EngineMaintenanceResponseDto, EngineMaintenanceStatusDto } from '../generated/relay-contracts';
 import { checkEngineMaintenanceLatest, abortEngineMaintenanceOperation, confirmEngineMaintenance, getEngineMaintenance, getEngineMaintenanceOperation, reserveEngineMaintenance } from '../api/engine-maintenance';
 import { pollEngineMaintenanceOperation, recoverRememberedEngineMaintenanceOperation, rememberEngineMaintenanceOperation } from '../recovery/engine-maintenance-operation';
@@ -107,10 +109,12 @@ export function useEngineMaintenance(enabled: boolean, engineId: EngineId) {
   }, [enabled, engineId, user?.id, trackOperation]);
   const confirm = useCallback(async () => {
     if (!pending) return;
+    featureAction('maintenance','confirm','admin');
     setSubmitting(true); setError(null);
     try {
       const capability = pending.engine.actions.find((item) => item.action === pending.action);
       const operation = await reserveEngineMaintenance(pending.engine.engineId, pending.action, capability?.interruptsActiveTasks === true);
+      tracker.action({feature:'maintenance',action:pending.action,surface:'admin',engine:pending.engine.engineId,operationId:operation.operationId});
       if (user?.id) rememberEngineMaintenanceOperation(typeof sessionStorage === 'undefined' ? undefined : sessionStorage, user.id, operation);
       await confirmEngineMaintenance(operation.operationId, operation.engineId, operation.action);
       setPending(null);
@@ -120,12 +124,12 @@ export function useEngineMaintenance(enabled: boolean, engineId: EngineId) {
   }, [pending, trackOperation, user?.id]);
   const abort = useCallback(async () => {
     if (!operation || operation.status !== 'processing') return;
-    setAborting(true); setError(null);
+    tracker.action({feature:'maintenance',action:'abort',surface:'admin',engine:operation.engineId});setAborting(true); setError(null);
     try {
       await abortEngineMaintenanceOperation(operation.operationId);
       // 中止请求已被启动器接受；终态由既有轮询继续接收（杀进程后会走失败回退并回报 failed）。
     } catch (next) { setError(next instanceof Error ? next.message : '中止维护操作失败'); }
     finally { setAborting(false); }
   }, [operation]);
-  return { snapshot, loading, checking, pending, submitting, tracking, aborting, operation, operationOutput: operationOutput.snapshot, operationOutputDisconnected: operationOutput.disconnected, error, refresh, checkLatest, request: (engine: EngineMaintenanceStatusDto, action: EngineMaintenanceAction) => { setOperation(null); setOperationOutput(emptyMaintenanceOutputState()); setPending({ engine, action }); }, cancel: () => setPending(null), confirm, abort };
+  return { snapshot, loading, checking, pending, submitting, tracking, aborting, operation, operationOutput: operationOutput.snapshot, operationOutputDisconnected: operationOutput.disconnected, error, refresh, checkLatest, request: (engine: EngineMaintenanceStatusDto, action: EngineMaintenanceAction) => {featureAction('maintenance','select_action','admin'); setOperation(null); setOperationOutput(emptyMaintenanceOutputState()); setPending({ engine, action }); }, cancel: () => {featureAction('maintenance','cancel','admin');setPending(null);}, confirm, abort };
 }

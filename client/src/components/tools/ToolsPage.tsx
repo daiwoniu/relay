@@ -1,4 +1,5 @@
 import Tooltip from '../ui/Tooltip';
+import {featureAction,useSearchCommit} from '../../analytics/features';
 import FailureNotice from '../ui/FailureNotice';
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
@@ -57,9 +58,10 @@ function ToolsContent({ storageKey, signedIn, checking }: { storageKey: string; 
     const previous = document.title; document.title = '工具集 · Relay';
     return () => { document.title = previous; };
   }, []);
-  const toggleWide = () => setWide((value) => { try { localStorage.setItem('relay:tools:wide', String(!value)); } catch { /* Use current page preference. */ } return !value; });
+  const toggleWide = () => {featureAction('layout','toggle_wide','header');setWide((value) => { try { localStorage.setItem('relay:tools:wide', String(!value)); } catch { /* Use current page preference. */ } return !value; });};
   const [filter, setFilter] = useState<'all' | 'frequent'>('frequent');
   const [query, setQuery] = useState('');
+  const commitSearch=useSearchCommit('tools','tools');
   const [inlineTool, setInlineTool] = useState<ToolId | null>(null);
   const calendarRef = useRef<HTMLButtonElement>(null);
   const weatherRef = useRef<HTMLButtonElement>(null);
@@ -76,13 +78,14 @@ function ToolsContent({ storageKey, signedIn, checking }: { storageKey: string; 
 
   function open(id: ToolId) {
     const inline = id !== 'news';
-    if (inline && inlineTool === id) { setInlineTool(null); return; }
+    if (inline && inlineTool === id) {tracker.action({feature:'tools',action:'close',surface:'tools',toolId:id}); setInlineTool(null); return; }
     tracker.track('tool_open',{toolId:id});
     if (id === 'news') change({ action: 'use', toolId: id });
     if (inline) setInlineTool(id);
   }
 
   function closeInline() {
+    if(inlineTool)tracker.action({feature:'tools',action:'close',surface:'tools',toolId:inlineTool});
     if (inlineTool) document.querySelector<HTMLButtonElement>(`[data-tool-id="${inlineTool}"]`)?.focus({ preventScroll: true });
     setInlineTool(null);
   }
@@ -107,7 +110,7 @@ function ToolsContent({ storageKey, signedIn, checking }: { storageKey: string; 
     <div className="mb-5 flex items-center justify-between gap-3"><h2 id="tools-inline-title" className="font-semibold">{tools[inlineTool].title}</h2><button type="button" className={control} onClick={closeInline}>收起</button></div>
     {inlineTool === 'calendar' || inlineTool === 'weather' ? <Suspense fallback={<p role="status">正在打开工具…</p>}>
       {inlineTool === 'calendar' ? <CalendarPanel placement="inline" today={today} anchorRef={calendarRef} onClose={closeInline} /> : <WeatherPanel placement="inline" today={today} anchorRef={weatherRef} onClose={closeInline} />}
-    </Suspense> : inlineTool === 'greeting' ? <><p aria-live="polite" className="my-7 text-lg leading-8">{greeting}</p><button type="button" className={control} onClick={rotateGreeting}>换一句 ↻</button></> : <>
+    </Suspense> : inlineTool === 'greeting' ? <><p aria-live="polite" className="my-7 text-lg leading-8">{greeting}</p><button type="button" className={control} onClick={()=>{tracker.action({feature:'tools',action:'rotate_greeting',surface:'tools',toolId:'greeting'});rotateGreeting();}}>换一句 ↻</button></> : <>
       <p className="mb-4 text-xs text-[var(--color-text-secondary)]">内容仅在当前浏览器本地处理。</p>
       <Suspense fallback={<p role="status">正在打开工具…</p>}><LocalTools key={inlineTool} id={inlineTool as LocalToolId} storageKey={storageKey} /></Suspense>
     </>}
@@ -130,10 +133,10 @@ function ToolsContent({ storageKey, signedIn, checking }: { storageKey: string; 
       <p className="mt-3 text-sm leading-6 text-[var(--color-text-secondary)]">资讯、日历、天气，还有日常效率小工具。</p>
       <p className="mt-2 text-xs text-[var(--color-text-secondary)]">{checking ? '正在确认登录状态…' : signedIn ? saving ? '正在同步到账号…' : ready ? '账号常用和置顶 · 多设备同步' : '正在读取账号工具配置…' : '无需登录 · 按当前客户端保存常用和置顶'}</p>
       {error && <p role="status" className="mt-3 text-sm text-amber-600"><FailureNotice error={error} />{signedIn && <button type="button" onClick={retry} className="ml-2 underline">重试同步</button>}</p>}
-      <div className="mb-6 mt-6 flex flex-wrap items-center gap-3"><div className="flex gap-2" role="group" aria-label="工具筛选">{(['all', 'frequent'] as const).map((value) => <button type="button" key={value} aria-pressed={filter === value} onClick={() => setFilter(value)} className={`${control} ${filter === value ? 'bg-[var(--color-bg-tertiary)] font-medium' : ''}`}>{value === 'all' ? '全部工具' : '常用工具'}</button>)}</div><input aria-label="搜索工具" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索工具…" className="w-full min-w-0 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-base sm:ml-auto sm:w-auto sm:max-w-64 sm:flex-1 sm:text-sm"  enterKeyHint="done" /></div>
+      <div className="mb-6 mt-6 flex flex-wrap items-center gap-3"><div className="flex gap-2" role="group" aria-label="工具筛选">{(['all', 'frequent'] as const).map((value) => <button type="button" key={value} aria-pressed={filter === value} onClick={() => {if(filter!==value)featureAction('tools','filter','tools');setFilter(value);}} className={`${control} ${filter === value ? 'bg-[var(--color-bg-tertiary)] font-medium' : ''}`}>{value === 'all' ? '全部工具' : '常用工具'}</button>)}</div><input aria-label="搜索工具" onBlur={()=>commitSearch(query)} onKeyDown={event=>{if(event.key==='Enter')commitSearch(query);}} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索工具…" className="w-full min-w-0 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-base sm:ml-auto sm:w-auto sm:max-w-64 sm:flex-1 sm:text-sm"  enterKeyHint="done" /></div>
       {pinned.length > 0 && <section aria-label="置顶工具" className="mb-8"><h2 className="mb-3 text-sm font-semibold">置顶工具</h2><ToolsGrid ids={pinned} active={inlineTool} card={card} panel={inlinePanel} /></section>}
       <section aria-label={filter === 'frequent' ? '常用工具' : '全部工具'}><h2 className="mb-3 text-sm font-semibold">{filter === 'frequent' ? '常用工具' : '全部工具'}{filter === 'frequent' && <span className="ml-2 font-normal text-[var(--color-text-secondary)]">刷新页面时更新排序</span>}</h2><ToolsGrid ids={remaining} active={inlineTool} card={card} panel={inlinePanel} />
-        {remaining.length === 0 && <p className="rounded-2xl border border-dashed border-[var(--color-border)] p-6 text-sm text-[var(--color-text-secondary)]">{query ? '没有匹配的其他工具。' : filter === 'frequent' ? <>还没有其他常用工具，<button type="button" className="underline" onClick={() => setFilter('all')}>查看全部工具</button>。展开或弹窗停留满 5 秒计入使用次数，刷新页面时更新排序；已置顶的工具在上方。</> : '工具已全部置顶，可从上方打开。'}</p>}
+        {remaining.length === 0 && <p className="rounded-2xl border border-dashed border-[var(--color-border)] p-6 text-sm text-[var(--color-text-secondary)]">{query ? '没有匹配的其他工具。' : filter === 'frequent' ? <>还没有其他常用工具，<button type="button" className="underline" onClick={() => {featureAction('tools','filter','tools');setFilter('all');}}>查看全部工具</button>。展开或弹窗停留满 5 秒计入使用次数，刷新页面时更新排序；已置顶的工具在上方。</> : '工具已全部置顶，可从上方打开。'}</p>}
       </section>
     </main>
   </div>;

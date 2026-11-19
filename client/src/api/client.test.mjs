@@ -1,6 +1,39 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { ApiError, AUTH_REQUIRED_EVENT, parseApiErrorDto, parseApiResponse, requestJson } from './client.ts';
+import { tracker } from '../analytics/tracker.ts';
+
+test('本地只读操作区分权限拒绝、限流与主动取消，错误信息不进入统计',async()=>{
+  const fetchBefore=globalThis.fetch,captureBefore=tracker.capture,events=[];
+  tracker.capture=()=>({track:(_name,properties)=>{events.push(properties);return true;}});
+  const analytics={feature:'user_menu',action:'refresh_quota',surface:'user_menu'};
+  try{
+    for(const [status,result] of [[403,'rejected'],[429,'throttled']]){
+      globalThis.fetch=async()=>Response.json({error:'SECRET_PATH_OR_ERROR'},{status});
+      await assert.rejects(()=>requestJson('/read',{analytics}));assert.equal(events.at(-1).result,result);
+    }
+    globalThis.fetch=(_input,init)=>new Promise((_resolve,reject)=>init.signal.addEventListener('abort',()=>reject(new DOMException('secret','AbortError')),{once:true}));
+    const controller=new AbortController(),pending=requestJson('/read',{analytics,signal:controller.signal});controller.abort();
+    await assert.rejects(()=>pending);assert.equal(events.at(-1).result,'cancelled');assert.doesNotMatch(JSON.stringify(events),/SECRET_PATH_OR_ERROR|secret/);
+  }finally{globalThis.fetch=fetchBefore;tracker.capture=captureBefore;}
+});
+
+test('显式语义调用携带同一匿名关联ID且不传送请求正文，普通请求不增加采集',async()=>{
+  const fetchBefore=globalThis.fetch,actionBefore=tracker.action,seen=[],events=[];
+  globalThis.fetch=async(_input,init)=>{seen.push(init);return Response.json({ok:true});};
+  tracker.action=properties=>{events.push(properties);return true;};
+  try{
+    const request=new Request('http://localhost/api/projects',{method:'POST',headers:{'content-type':'application/json','x-retained':'yes'}});
+    await requestJson(request,{body:JSON.stringify({name:'PRIVATE_SENTINEL'}),analytics:{feature:'project',action:'create',surface:'sidebar'}});
+    assert.equal(events.length,1);
+    assert.equal(new Headers(seen[0].headers).get('x-relay-analytics-operation'),events[0].operationId);
+    assert.equal(new Headers(seen[0].headers).get('x-retained'),'yes');
+    assert.equal(seen[0].analytics,undefined);assert.doesNotMatch(JSON.stringify(events),/PRIVATE_SENTINEL/);
+    await requestJson('/api/projects');assert.equal(events.length,1);
+    tracker.action=()=>{throw Error('synthetic-telemetry-failure');};
+    assert.deepEqual(await requestJson('/api/projects',{method:'POST',analytics:{feature:'project',action:'create',surface:'sidebar'}}),{ok:true});
+  }finally{globalThis.fetch=fetchBefore;tracker.action=actionBefore;}
+});
 
 test('写操作自动携带操作标识并保留原请求头和显式重试标识', async () => {
   const originalFetch = globalThis.fetch;

@@ -5,6 +5,7 @@ import { formatResourcePerson } from '../../utils/resource-person';
 import Tooltip from '../ui/Tooltip';
 import FailureNotice from '../ui/FailureNotice';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useFeatureView,featureAction } from '../../analytics/features';
 import type { TrashImpactDto, TrashProjectDto, TrashSessionDto } from '../../generated/relay-contracts';
 import {
   TRASH_PAGE_SIZE,
@@ -66,6 +67,7 @@ export default function TrashDialog({ open, admin, onClose, onChanged }: {
   onClose(): void;
   onChanged(): void;
 }) {
+  useFeatureView('trash',open,'user_menu');
   const [tab, setTab] = useState<Tab>('sessions');
   const [projects, setProjects] = useState<TrashProjectDto[]>([]);
   const [sessions, setSessions] = useState<TrashSessionDto[]>([]);
@@ -216,7 +218,7 @@ export default function TrashDialog({ open, admin, onClose, onChanged }: {
 
   const submitSearch = () => {
     projectPages.reset();
-    const query = draftQuery[tab].trim();
+    const query = draftQuery[tab].trim();if(query!==appliedQuery[tab])featureAction('trash','search','user_menu');
     searchGeneration.current += 1;
     setMatchViews({}); setViewMode({});
     if (bodyRef.current) bodyRef.current.scrollTop = 0;
@@ -232,7 +234,7 @@ export default function TrashDialog({ open, admin, onClose, onChanged }: {
     else setAppliedQuery((value) => ({ ...value, [tab]: query }));
   };
   const changeProject = (value: string) => {
-    if (value === projectId) return;
+    if (value === projectId) return;featureAction('trash','filter','user_menu');
     searchGeneration.current += 1;
     requestSeq.current += 1;
     setLoading(true);
@@ -265,7 +267,7 @@ export default function TrashDialog({ open, admin, onClose, onChanged }: {
     if (creatorId) changeCreator('');
   };
   const changeCreator = (value: string) => {
-    if (creatorId === value) return;
+    if (creatorId === value) return;featureAction('trash','filter','user_menu');
     requestSeq.current += 1; searchGeneration.current += 1;
     setCreatorId(value); setOffset({ projects: 0, sessions: 0 });
     setLoading(true); setProjects([]); setSessions([]);
@@ -284,7 +286,7 @@ export default function TrashDialog({ open, admin, onClose, onChanged }: {
     } catch (cause) { setError(cause instanceof Error ? cause.message : '读取删除影响失败'); }
     finally { setImpactLoadingId(null); }
   };
-  const togglePreview = async (sessionId: string) => {
+  const togglePreview = async (sessionId: string) => {featureAction('trash','preview','user_menu');
     if (viewMode[sessionId] === 'preview') { setViewMode((v) => { const n = { ...v }; delete n[sessionId]; return n; }); return; }
     setViewMode((v) => ({ ...v, [sessionId]: 'preview' }));
     if (sessionId in previews) return;
@@ -402,7 +404,7 @@ export default function TrashDialog({ open, admin, onClose, onChanged }: {
   return <>
     <PanelShell open={open} onClose={() => { if (!batchRunning) onClose(); }} title="回收站" description={admin ? '全部账号的已删除内容 · 可恢复或彻底删除' : '我的已删除内容 · 可恢复误删内容'} titleId="trash-dialog-title" size="content" navigation={<>
       <div className="trash-dialog__tabs" role="tablist" aria-label="回收站类型">
-        {(['sessions', 'projects'] as const).map((value) => <button key={value} type="button" role="tab" aria-selected={tab === value} onClick={() => selectTab(value)} className={`trash-dialog__tab${tab === value ? ' trash-dialog__tab--active' : ''}`}>{value === 'projects' ? `项目 ${total.projects}` : `会话 ${total.sessions}`}</button>)}
+        {(['sessions', 'projects'] as const).map((value) => <button key={value} type="button" role="tab" aria-selected={tab === value} onClick={() => {if(tab!==value)featureAction('trash','mode','user_menu');selectTab(value);}} className={`trash-dialog__tab${tab === value ? ' trash-dialog__tab--active' : ''}`}>{value === 'projects' ? `项目 ${total.projects}` : `会话 ${total.sessions}`}</button>)}
       </div>
       <form className="trash-dialog__filters" onSubmit={(event) => { event.preventDefault(); submitSearch(); }} role="search">
         {admin && <label className="trash-dialog__creator-filter"><span className="sr-only">按创建人筛选</span><select aria-label="按创建人筛选" disabled={creatorsLoading} value={creatorId} onChange={event => changeCreator(event.target.value)}><option value="">{creatorsLoading ? '读取创建人中…' : '全部创建人'}</option>{creatorId && !creators.some(person => person.id === creatorId) && <option value={creatorId}>当前创建人（账号信息不可用）</option>}{creators.map(person => <option key={person.id} value={person.id}>{formatResourcePerson(person)}</option>)}</select></label>}
@@ -474,7 +476,7 @@ export default function TrashDialog({ open, admin, onClose, onChanged }: {
               {expanded[project.id] !== undefined && <div className="trash-dialog__project-page">
                 {projectPages.pages[project.id]?.error && <span role="alert">{projectPages.pages[project.id].error}</span>}
                 {!projectPages.pages[project.id]?.error && <span>已加载 {expanded[project.id]?.length ?? 0} / {projectPages.pages[project.id]?.total ?? project.sessionCount} 个会话</span>}
-                {(projectPages.pages[project.id]?.error || projectPages.pages[project.id]?.loading || (projectPages.pages[project.id]?.nextOffset ?? 0) < (projectPages.pages[project.id]?.total ?? project.sessionCount)) && <button type="button" disabled={projectPages.pages[project.id]?.loading} onClick={() => void projectPages.loadMore(project.id)}>{projectPages.pages[project.id]?.loading ? '加载中…' : projectPages.pages[project.id]?.error ? '重试' : '加载更多（10条）'}</button>}
+                {(projectPages.pages[project.id]?.error || projectPages.pages[project.id]?.loading || (projectPages.pages[project.id]?.nextOffset ?? 0) < (projectPages.pages[project.id]?.total ?? project.sessionCount)) && <button type="button" disabled={projectPages.pages[project.id]?.loading} onClick={() => {featureAction('trash','load_more','user_menu');void projectPages.loadMore(project.id);}}>{projectPages.pages[project.id]?.loading ? '加载中…' : projectPages.pages[project.id]?.error ? '重试' : '加载更多（10条）'}</button>}
               </div>}
             </div>}
           </article>) : sessions.map((session) => <article key={session.id} className="trash-dialog__card">
@@ -492,6 +494,6 @@ export default function TrashDialog({ open, admin, onClose, onChanged }: {
           </article>)}
         </div>}
     </PanelShell>
-    <ConfirmDialog open={action !== null || batchAction !== null} eyebrow={danger ? '不可撤销' : '恢复确认'} title={batchAction ? `${danger ? '彻底删除' : '恢复'}所选 ${batchAction.items.length} 个会话？` : danger ? `彻底删除${action?.kind === 'delete-project' ? '项目' : '会话'}？` : `恢复${action?.kind === 'restore-project' ? '项目' : '会话'}？`} tone={danger ? 'danger' : 'neutral'} description={confirmationDescription} subject={batchAction ? { label: '所选会话', value: <ul className="trash-dialog__batch-subjects">{batchAction.items.map((item) => <li key={item.id}>{item.title}<TrashPeople creator={item.creator} deletedBy={item.deletedBy} /></li>)}</ul> } : action ? { label: action.kind.endsWith('project') ? '项目' : '会话', value: actionName } : undefined} impacts={actionImpact ? [`删除 ${actionImpact.messageCount} 条消息（助手 ${actionImpact.assistantMessageCount ?? '—'} 条）与 ${actionImpact.shareCount} 条分享`, `删除 ${actionImpact.attachmentCount} 个 Relay 托管附件，预计释放 ${formatBytes(actionImpact.releasableBytes)}`, '用户源文件、项目目录和 Codex JSONL 不会删除'] : []} notice={danger ? { tone: 'danger', title: '恢复会话可能受影响', description: '相关分享与 Relay 托管附件也会删除，后续无法依靠这些数据完整恢复。' } : undefined} confirmLabel={danger ? '彻底删除' : '恢复'} confirmDisabled={action?.kind === 'delete-project' && confirmationName !== action.item.name} onCancel={() => { setAction(null); setBatchAction(null); setConfirmationName(''); setError(''); }} onConfirm={batchAction ? confirmBatch : confirmAction} />
+    <ConfirmDialog open={action !== null || batchAction !== null} eyebrow={danger ? '不可撤销' : '恢复确认'} title={batchAction ? `${danger ? '彻底删除' : '恢复'}所选 ${batchAction.items.length} 个会话？` : danger ? `彻底删除${action?.kind === 'delete-project' ? '项目' : '会话'}？` : `恢复${action?.kind === 'restore-project' ? '项目' : '会话'}？`} tone={danger ? 'danger' : 'neutral'} description={confirmationDescription} subject={batchAction ? { label: '所选会话', value: <ul className="trash-dialog__batch-subjects">{batchAction.items.map((item) => <li key={item.id}>{item.title}<TrashPeople creator={item.creator} deletedBy={item.deletedBy} /></li>)}</ul> } : action ? { label: action.kind.endsWith('project') ? '项目' : '会话', value: actionName } : undefined} impacts={actionImpact ? [`删除 ${actionImpact.messageCount} 条消息（助手 ${actionImpact.assistantMessageCount ?? '—'} 条）与 ${actionImpact.shareCount} 条分享`, `删除 ${actionImpact.attachmentCount} 个 Relay 托管附件，预计释放 ${formatBytes(actionImpact.releasableBytes)}`, '用户源文件、项目目录和 Codex JSONL 不会删除'] : []} notice={danger ? { tone: 'danger', title: '恢复会话可能受影响', description: '相关分享与 Relay 托管附件也会删除，后续无法依靠这些数据完整恢复。' } : undefined} confirmLabel={danger ? '彻底删除' : '恢复'} confirmDisabled={action?.kind === 'delete-project' && confirmationName !== action.item.name} onCancel={() => {featureAction('trash','cancel','user_menu'); setAction(null); setBatchAction(null); setConfirmationName(''); setError(''); }} onConfirm={batchAction ? confirmBatch : confirmAction} />
   </>;
 }

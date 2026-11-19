@@ -1,4 +1,6 @@
 import { effectivePreviewPreferences } from '../contracts/preview-preferences.js';
+import {randomUUID} from 'node:crypto';
+import {recordCommittedOperation} from '../analytics/command-collector.js';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { Worker } from 'node:worker_threads';
@@ -70,8 +72,11 @@ export class StoredFilesystem{
       if(parsed.accessToken)parsed.accessToken=replacements.get(parsed.accessToken);
       for(const file of parsed.attachments??[])file.accessToken=replacements.get(file.accessToken);
       output=JSON.stringify(parsed);
+      recordCommittedOperation(url.pathname==='/authorize-file'?'file_preview':'attachments','authorize',randomUUID());
     }
     if(result.revoked?.length){if(result.revoked.length!==1||url.pathname!=='/revoke-file')throw new StorageContractError('CONFLICT');this.options.grants.revoke(result.revoked[0],principal.userId);}
+    // This route returns 200 only after the filesystem worker's mkdir has completed.
+    if(url.pathname==='/directories'&&result.status===200)recordCommittedOperation('attachments','create_directory',randomUUID());
     return new Response(output,{status:result.status,headers:result.headers});
   }
   async close(){this.closed=true;await Promise.allSettled([...this.active]);}

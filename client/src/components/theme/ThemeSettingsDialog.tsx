@@ -1,6 +1,7 @@
 import { forwardRef, useCallback, useEffect, useId, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import type { AccountThemeSettingsDto, ThemePreference, ThemeProfileDto } from '../../generated/relay-contracts';
 import { deleteThemeAsset, uploadThemeAsset } from '../../api/theme-settings';
+import {featureAction} from '../../analytics/features';
 import { useTheme } from '../../hooks/useTheme';
 import { copyThemeProfile, createDefaultThemeSettings, getUnusedPendingThemeAssetIds, setLinkedThemeProfiles, setThemeProfile, type ThemeDevice } from '../../theme/theme-model';
 import { createThemeImageVariants } from '../../theme/theme-image';
@@ -129,7 +130,7 @@ const ThemeSettingsDialog = forwardRef<ThemeSettingsDialogHandle, ThemeSettingsD
     setRemoteConflict(true);
   }, [open, theme.settings]);
 
-  const updateDraft = (updater: (current: AccountThemeSettingsDto) => AccountThemeSettingsDto) => {
+  const updateDraft = (updater: (current: AccountThemeSettingsDto) => AccountThemeSettingsDto) => {if(!dirtyRef.current)featureAction('settings','preview_theme','settings');
     setDirty(true);
     setDraft(updater);
   };

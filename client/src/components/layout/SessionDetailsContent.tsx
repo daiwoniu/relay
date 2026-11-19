@@ -1,4 +1,5 @@
 import type { Project, Session } from '../../stores/chat';
+import {useFeatureView} from '../../analytics/features';
 import { engineLabel } from '../../engine/catalog';
 import { getSessionStatusPresentation, getSessionDisplayStage, type DisplayedSessionStatus } from './session-status';
 import { useAuth } from '../../auth/AuthContext';
@@ -11,6 +12,7 @@ export default function SessionDetailsContent({ session, project, status, engine
   engineSessionLoadFailed?: boolean;
 }) {
   const { user } = useAuth();
+  useFeatureView('session',true,'header','details');
   const presentation = getSessionStatusPresentation(status, session.pending_action_kind, session.owner?.id === user?.id, getSessionDisplayStage(session));
   const engineSessionId = engineSessionLoadFailed
     ? '读取失败'

@@ -50,6 +50,18 @@ test('fresh parsed responsibility items with absent optional fields replace the 
     const cached=await p.make().responsibility(actor);assert.equal(cached.fetchedAt,3000);assert.equal(cached.items[0]!.workItemId,'7113099246');
   }finally{await p.cleanup();}
 });
+test('partial responsibility classification keeps diagnostics through Native snapshot hydration',async()=>{
+  const p=await prepared();try{
+    const source={...report(),complete:false,unverifiedCount:2};
+    const service=p.make({loadResponsibility:async()=>source});
+    const fresh=await service.responsibility(actor,true);
+    assert.equal(fresh.unverifiedCount,2);assert.equal(fresh.complete,false);
+    assert.equal(fresh.stale,false);assert.equal(fresh.error,null);assert.equal(fresh.sourceMeta!.state,'live');
+    const cached=await p.make().responsibility(actor);
+    assert.equal(cached.unverifiedCount,2);assert.equal(cached.complete,false);assert.equal(cached.servedFromCache,true);
+  }finally{await p.cleanup();}
+});
+
 test('responsibility failure preserves same-identity data and redacts provider exceptions',async()=>{
   const p=await prepared();try{const s=p.make();await s.responsibility(actor);p.state.fail=true;const result=await s.responsibility(actor,true);assert.equal(result.stale,true);assert.equal(result.sourceMeta!.state,'failed_snapshot');assert.equal(JSON.stringify(result).includes('secret-provider-detail'),false);
     p.state.identity.userKey='different';await assert.rejects(s.responsibility(actor,true),{code:'STORAGE_UNAVAILABLE'});

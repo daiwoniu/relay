@@ -1,9 +1,11 @@
 import { Worker } from 'node:worker_threads';
+import {recordTrustedResult} from '../analytics/command-collector.js';
 import type { Actor } from '../auth/authorization.js';
 import type { CoreStoragePort,StoragePrincipal } from '../storage/contracts.js';
 import type { StoreWriterProof } from '../storage/store-owner.js';
 import type { NewsSource } from './sources/source-types.js';
 import { StorageContractError } from '../storage/command-boundary.js';
+import type { NewsAnalyticsFact } from './analytics-observation.js';
 type Principal=Extract<StoragePrincipal,{kind:'user'}>;
 type Pending={resolve:(value:any)=>void;reject:(error:Error)=>void;principal:Principal|null;admin:boolean};
 export class StoredNews{
@@ -21,6 +23,11 @@ export class StoredNews{
     let readyResolve!:()=>void,readyReject!:(error:Error)=>void;
     this.ready=new Promise<void>((resolve,reject)=>{readyResolve=resolve;readyReject=reject;});void this.ready.catch(()=>undefined);
     this.worker.on('message',message=>{
+      if(message.type==='analyticsManualRefresh'){
+        if(typeof message.userId==='string'&&message.userId.length<=128&&[message.operationId,message.factId].every(value=>typeof value==='string'&&/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i.test(value))&&['success','error'].includes(message.result))
+          recordTrustedResult(this.options.port,{userId:message.userId,role:'admin'},'news_admin','refresh_source',`news-refresh:${message.factId}`,message.operationId,message.result);
+        return;
+      }
       if(message.type==='ready'){readyResolve();return;}
       if(message.type==='authorize'){void this.authorize(message);return;}
       if(message.type==='result'){const request=this.pending.get(message.id);if(!request)return;this.pending.delete(message.id);if(message.ok)request.resolve(message.value);else request.reject(new StorageContractError('STORAGE_UNAVAILABLE'));}
@@ -53,7 +60,7 @@ export class StoredNews{
   }
   initialize(){return this.control('initialize');}
   resume(){return this.control('resume');}
-  async request(principal:Principal|null,request:Request,clientId:string){
+  async request(principal:Principal|null,request:Request,clientId:string,observe?:(fact:NewsAnalyticsFact&{id:string})=>void){
     if(this.closing||this.activeHttp>=8||this.pending.size>=8)throw new StorageContractError(this.closing?'NOT_SUBMITTED':'OVERLOADED');
     this.activeHttp++;
     const work=(async()=>{
@@ -67,7 +74,8 @@ export class StoredNews{
         try{for(;;){const value=await reader.read();if(timedOut)throw new StorageContractError('NOT_SUBMITTED');if(value.done)break;size+=value.value.byteLength;if(size>2*1024*1024){await reader.cancel();throw new StorageContractError('PAYLOAD_TOO_LARGE');}parts.push(value.value);}const joined=new Uint8Array(size);let offset=0;for(const part of parts){joined.set(part,offset);offset+=part.byteLength;}body=joined.buffer;}
         finally{clearTimeout(timer);reader.releaseLock();}
       }
-      const result=await this.rpc<{status:number;headers:Array<[string,string]>;body:ArrayBuffer}>({type:'http',url:url.pathname+url.search,method:request.method,origin:request.headers.get('origin'),contentType:request.headers.get('content-type'),body,clientId:clientId.slice(0,128)},principal,admin);
+      const result=await this.rpc<{status:number;headers:Array<[string,string]>;body:ArrayBuffer;facts?:Array<NewsAnalyticsFact&{id:string}>}>({type:'http',url:url.pathname+url.search,method:request.method,origin:request.headers.get('origin'),contentType:request.headers.get('content-type'),analyticsOperationId:request.headers.get('x-relay-analytics-operation'),body,clientId:clientId.slice(0,128)},principal,admin);
+      for(const fact of result.facts??[]){try{observe?.(fact);}catch{/* Best effort observation. */}}
       if(!isPublic)await this.actor(principal,admin);await this.options.assertExclusiveWriter();return new Response(result.body,{status:result.status,headers:result.headers});
     })();
     this.physical.add(work);try{return await work;}finally{this.physical.delete(work);this.activeHttp--;}

@@ -1,8 +1,30 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { loadTsxForTest } from '../components/ui/tsx-test-helper.mjs';
+import {tracker} from '../analytics/tracker.ts';
 const { usePreviewPreferences, defaultPreviewPreferences } = await loadTsxForTest(new URL('./preview-preferences.ts', import.meta.url).href);
 const settle = () => new Promise(resolve => setImmediate(resolve));
+
+test('预览设置只在实际保存时产生一个关联意图，后台读取/未修改/连点不重复', async t => {
+  const actions=[],requests=[];let release;
+  t.mock.method(tracker,'action',properties=>{actions.push(properties);return true;});
+  t.mock.method(globalThis,'fetch',async(_url,options)=>{
+    requests.push(options);
+    if(options.method==='PATCH')return new Promise(resolve=>{release=()=>resolve(Response.json({...defaultPreviewPreferences(),capacityPreset:'higher'}));});
+    return Response.json(defaultPreviewPreferences());
+  });
+  const state=()=>usePreviewPreferences.getState();state().configure('analytics-check');
+  await state().save({capacityPreset:'higher'});assert.equal(requests.length,0);
+  await state().load();assert.equal(actions.length,0);
+  await state().save({capacityPreset:'default'});assert.equal(actions.length,0);
+  const saving=state().save({capacityPreset:'higher'},'preview_toolbar');
+  await state().save({capacityPreset:'enhanced'});
+  assert.equal(actions.length,1);assert.equal(requests.length,2);
+  assert.deepEqual({...actions[0],operationId:undefined},{feature:'settings',action:'save',surface:'preview_toolbar',settingKey:'preview_capacity',operationId:undefined});
+  assert.equal(new Headers(requests[1].headers).get('x-relay-analytics-operation'),actions[0].operationId);
+  assert.match(actions[0].operationId,/^[0-9a-f-]{36}$/i);
+  release();await saving;state().configure(null);
+});
 
 test('initial non-default settings advance the revision so an already opened preview is rebuilt', async t => {
   t.mock.method(globalThis, 'fetch', async () => Response.json({ ...defaultPreviewPreferences(), imagePreset: 'enhanced' }));

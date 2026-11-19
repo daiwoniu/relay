@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { useFeatureView,featureAction } from '../../analytics/features';
 import { useAuth } from '../../auth/AuthContext';
 import { useServiceMaintenance, type ServiceMaintenanceController } from '../../hooks/useServiceMaintenance';
 import { formatServiceStartedAt } from '../../recovery/manual-service-restart';
@@ -195,6 +196,7 @@ function confirmationPresentation(controller: ServiceMaintenanceController, acti
 }
 
 export function ServiceMaintenanceDialog({ open, onClose, controller, admin = false, accountId }: ServiceMaintenanceDialogViewProps) {
+  useFeatureView('maintenance',open,'user_menu');
   const capabilities = controller.capabilities;
   const recommendedAction = controller.policy.recommendedAction;
   const recommendedState = recommendedAction ? controller.policy.actions[recommendedAction] : null;
@@ -315,7 +317,7 @@ export function ServiceMaintenanceDialog({ open, onClose, controller, admin = fa
               <button
                 type="button"
                 disabled={!recommendedState.enabled}
-                onClick={() => controller.requestAction(recommendedAction)}
+                onClick={() => {featureAction('maintenance','select_action','admin');controller.requestAction(recommendedAction);}}
                 className="mt-2 min-h-11 w-full rounded-lg bg-[var(--color-text)] px-3 py-2 text-sm font-medium text-[var(--color-bg)] transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
               >
                 推荐操作：{recommendedState.label}
@@ -359,7 +361,7 @@ export function ServiceMaintenanceDialog({ open, onClose, controller, admin = fa
                 {otherActions.map((action) => {
                   const state = controller.policy.actions[action];
                   return (
-                    <button key={action} type="button" disabled={!state.enabled} onClick={() => controller.requestAction(action)} className="min-h-11 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3 text-left transition-colors hover:border-[var(--color-notice-attention-border)] hover:bg-[var(--color-notice-attention-bg)] disabled:cursor-not-allowed disabled:opacity-50">
+                    <button key={action} type="button" disabled={!state.enabled} onClick={() => {featureAction('maintenance','select_action','admin');controller.requestAction(action);}} className="min-h-11 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3 text-left transition-colors hover:border-[var(--color-notice-attention-border)] hover:bg-[var(--color-notice-attention-bg)] disabled:cursor-not-allowed disabled:opacity-50">
                       <span className="block text-sm font-medium text-[var(--color-text)]">{state.label}</span>
                       <span className="mt-0.5 block text-xs leading-5 text-[var(--color-text-secondary)]">{state.reason || actionDescription(action, controller)}</span>
                     </button>
@@ -382,7 +384,7 @@ export function ServiceMaintenanceDialog({ open, onClose, controller, admin = fa
                 {showAdvancedAction && <button
                   type="button"
                   disabled={!advancedState.enabled}
-                  onClick={() => controller.requestAction(advancedAction)}
+                  onClick={() => {featureAction('maintenance','select_action','admin');controller.requestAction(advancedAction);}}
                   className="min-h-11 w-full rounded-lg border border-[var(--color-status-danger)]/30 bg-[var(--color-danger-hover)] px-3 py-2 text-left transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   <span className="block text-sm font-medium text-[var(--color-status-danger)]">{advancedState.label}</span>
@@ -403,8 +405,8 @@ export function ServiceMaintenanceDialog({ open, onClose, controller, admin = fa
         impacts={pendingPresentation?.impacts}
         notice={pendingPresentation?.notice}
         confirmLabel={pendingState ? pendingPresentation?.tone === 'danger' ? `仍要${pendingState.label}` : pendingState.label : '确认'}
-        onCancel={controller.cancelPendingAction}
-        onConfirm={controller.confirmPendingAction}
+        onCancel={()=>{featureAction('maintenance','cancel','admin');controller.cancelPendingAction();}}
+        onConfirm={()=>{featureAction('maintenance',pendingAction==='repair_environment'?'service_repair':'service_restart','admin');return controller.confirmPendingAction();}}
       />
     </>
   );

@@ -24,5 +24,5 @@ export interface CodexLocalUsageSnapshot {
 export const getCodexLocalUsage = (signal?: AbortSignal) => requestJson<CodexLocalUsageSnapshot>('/api/system/codex-account/local-usage', { signal, timeoutMs: 45_000 });
 
 export const consumeCodexResetCredit = (idempotencyKey: string, creditId?: string) => requestJson<CodexResetCreditResultDto>(
-  '/api/system/codex-account/reset-credit', { method: 'POST', ...jsonBody({ idempotencyKey, ...(creditId ? { creditId } : {}) }) },
+  '/api/system/codex-account/reset-credit', { analytics:{feature:'workbench',action:'reset_quota',surface:'workbench'},method: 'POST', ...jsonBody({ idempotencyKey, ...(creditId ? { creditId } : {}) }) },
 );

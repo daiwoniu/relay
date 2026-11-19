@@ -25,6 +25,7 @@ import ContextMenuPopup, { type ContextMenuItem } from '../ui/ContextMenu';
 import type { ServiceStatus } from '../ui/ServiceStatusIndicator';
 import { useOverlay } from '../ui/OverlayProvider';
 import { resolveDefaultProjectId, resolveSessionProjectId, hideEmptyProjectsInAllScope, readShowAllProjectsPreference, storeShowAllProjectsPreference } from './session-project';
+import {featureAction,localAction} from '../../analytics/features';
 import { copyToClipboard } from '../../utils/clipboard';
 import type { EngineId, EngineMaintenanceResponseDto, EngineStatusDto, ProjectDeletionImpactDto, PublicUserDto, SessionDeletionImpactDto, SessionSearchResultDto } from '../../generated/relay-contracts';
 import { getEngineStatuses } from '../../api/system';
@@ -269,7 +270,7 @@ export default function Sidebar({
     if (event.key === 'ArrowRight') nextWidth = sidebarWidth + 10;
     if (event.key === 'Home') nextWidth = SIDEBAR_MIN_WIDTH;
     if (event.key === 'End') nextWidth = SIDEBAR_MAX_WIDTH;
-    if (nextWidth === null) return;
+    if (nextWidth === null) return;if(nextWidth!==sidebarWidth)featureAction('layout','resize','keyboard');
     event.preventDefault();
     updateSidebarWidth(nextWidth, true);
   }, [sidebarWidth, updateSidebarWidth]);
@@ -280,7 +281,7 @@ export default function Sidebar({
       updateSidebarWidth(resizeStartWidth.current + event.clientX - resizeStartX.current);
     };
     const handleMouseUp = () => {
-      storeSidebarWidth(sidebarWidthRef.current);
+      if(sidebarWidthRef.current!==resizeStartWidth.current)featureAction('layout','resize','sidebar');storeSidebarWidth(sidebarWidthRef.current);
       setIsResizing(false);
       closeOverlay('dragging', 'sidebar-resize');
     };
@@ -303,9 +304,14 @@ export default function Sidebar({
     const controller = new AbortController();
     const generation = beginNavigationLoad();
     const candidateAtStart = useChatStore.getState().activeSessionId;
+    const openVersionAtStart = useChatStore.getState().activeSessionOpenVersion;
+    const pendingRestoreSessionId = useChatStore.getState().pendingRestoreSessionId;
     const storedLocation = readUrlWorkspaceTaskProjectLocation() ?? readStoredChatLocation();
-    const urlSessionLocation = retainPendingUrlSessionLocation(urlSessionLocationRef.current, candidateAtStart);
+    const urlSessionLocation = retainPendingUrlSessionLocation(urlSessionLocationRef.current, pendingRestoreSessionId ?? candidateAtStart);
     urlSessionLocationRef.current = urlSessionLocation;
+    const restoreSessionLocation = urlSessionLocation ?? (pendingRestoreSessionId
+      ? { version: 1 as const, kind: 'session' as const, sessionId: pendingRestoreSessionId }
+      : null);
     void listSidebarOrders(controller.signal)
       .then((response) => {
         if (!cancelled && useChatStore.getState().navigationLoadState.generation === generation) {
@@ -316,13 +322,18 @@ export default function Sidebar({
         if (error?.name !== 'AbortError') console.warn('[Relay] 侧栏排序加载失败，使用默认顺序:', error);
       });
 
-    loadSidebarNavigation(controller.signal, urlSessionLocation)
+    loadSidebarNavigation(controller.signal, restoreSessionLocation)
       .then(({ sessions: navigationSessions, projects: projectList }) => {
         if (cancelled || useChatStore.getState().navigationLoadState.generation !== generation) return;
         setSessions(navigationSessions);
         setProjects(projectList);
         urlSessionLocationRef.current = null;
         const currentActiveSessionId = useChatStore.getState().activeSessionId;
+        // 加载期间用户已主动打开会话（包括新建空会话），不得用启动位置覆盖。
+        if (useChatStore.getState().activeSessionOpenVersion !== openVersionAtStart) {
+          completeNavigationLoad(generation);
+          return;
+        }
         if (currentActiveSessionId !== candidateAtStart) {
           if (currentActiveSessionId) {
             completeNavigationLoad(generation);
@@ -349,6 +360,7 @@ export default function Sidebar({
         if (restored.currentProjectId) setCurrentProject(restored.currentProjectId);
         if (
           currentActiveSessionId
+          || pendingRestoreSessionId
           || useChatStore.getState().autoOpenProjectPicker !== restored.autoOpenProjectPicker
           || useChatStore.getState().projectSelectionLocked !== (restored.projectSelectionLocked === true)
         ) {
@@ -479,7 +491,7 @@ export default function Sidebar({
 
   const handleSelectSession = (id: string) => {
     const normalizedQuery = searchQuery.trim();
-    const searchResult = searchResultsForDisplay.find((result) => result.session.id === id);
+    const searchResult = searchResultsForDisplay.find((result) => result.session.id === id);if(normalizedQuery&&searchResult)featureAction('session','search_result','sidebar');
     if (searchResult) ensureSession(searchResult.session);
     setActiveSession(id);
     navigate('/');
@@ -502,7 +514,7 @@ export default function Sidebar({
     closeAllOverlays();
     if (isMobile) closeMobileSidebar();
   };
-  const toggleGroup = (key: string) => setExpandedGroups((current) => toggleSidebarGroup(current, key));
+  const toggleGroup = (key: string) => {featureAction(key.startsWith('p-')?'project':'layout',isSidebarGroupExpanded(expandedGroups,key)?'collapse':'expand','sidebar');setExpandedGroups((current) => toggleSidebarGroup(current, key));};
 
   // ---- 项目操作 ----
   const openProjectMenu = (e: React.MouseEvent, project: Project) => {
@@ -519,7 +531,7 @@ export default function Sidebar({
   };
 
   const handleProjectNewChat = (projectId: string, projectSelectionLocked: boolean) => {
-    if (accountScope === 'all') return;
+    if (accountScope === 'all') return;featureAction('project','select','sidebar');
     clearSearch();
     flushSync(() => {
       setCurrentProject(projectId);
@@ -976,11 +988,11 @@ export default function Sidebar({
           onDetails: () => openSessionDetails(menuSession),
           onRename: () => handleSessionRenameStart(menuSession.id),
           renameLabel: menuInteractionPolicy.renameLabel,
-          onCopyId: async () => {
+          onCopyId: async () => {const report=localAction('session','copy_id','sidebar');
             try {
-              await copyToClipboard(menuSession.id);
+              await copyToClipboard(menuSession.id);report(true);
             } catch {
-              useChatStore.getState().setError('复制会话 ID 失败');
+              report(false);useChatStore.getState().setError('复制会话 ID 失败');
             }
           },
           onFork: menuSession.can_fork ? () => requestSessionFork(menuSession) : undefined,

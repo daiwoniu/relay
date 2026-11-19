@@ -49,6 +49,7 @@ export class EngineMaintenanceServiceError extends Error {
 }
 
 export interface EngineMaintenanceServiceDependencies {
+  observeOperation?:(input:{user:Pick<EngineMaintenanceUser,'id'|'role'>;operationId:string;engineId:EngineId;action:EngineMaintenanceAction;status:'completed'|'failed'})=>void;
   prepareOperation?:(operationId:string,engineId:EngineId)=>Promise<void>;
   settleOperation?:(operationId:string,safeToRelease:boolean)=>void;
   isOtherOperationInProgress?:()=>boolean;
@@ -66,7 +67,7 @@ export interface EngineMaintenanceServiceDependencies {
 }
 
 export function createEngineMaintenanceService(dependencies: EngineMaintenanceServiceDependencies) {
-  let active: { operationId: string; engineId: EngineId; action: EngineMaintenanceAction; startedAt: number; confirmInterrupt?:boolean; confirming?:boolean; committed?:boolean;commitAttempted?:boolean } | null = null;
+  let active: { user:Pick<EngineMaintenanceUser,'id'|'role'>;operationId: string; engineId: EngineId; action: EngineMaintenanceAction; startedAt: number; confirmInterrupt?:boolean; confirming?:boolean; committed?:boolean;commitAttempted?:boolean } | null = null;
   let cancelExpiry: (() => void) | null = null;
   const operations = new Map<string, EngineMaintenanceOperationDto>();
   const processingStartedAt = new Map<string, number>();
@@ -131,7 +132,7 @@ export function createEngineMaintenanceService(dependencies: EngineMaintenanceSe
     const operationId = createOperationId();
     const operation = { operationId, engineId: input.engineId, action: input.action };
     // 在第一次异步状态读取前先占用目标引擎闸门，避免零活动快照与新任务进入之间出现竞态。
-    active = { ...operation, startedAt: now(),confirmInterrupt:input.confirmInterrupt };
+    active = { ...operation,user:{id:input.user.id,role:input.user.role}, startedAt: now(),confirmInterrupt:input.confirmInterrupt };
     try {
       const environment = await Promise.resolve(inspectEnvironment());
       if (environment.blockedByConflicts) throw new EngineMaintenanceServiceError('setup_blocked');
@@ -227,6 +228,7 @@ export function createEngineMaintenanceService(dependencies: EngineMaintenanceSe
     if (!active || active.operationId !== operationId || active.engineId !== engineId || active.action !== action) return false;
     const current = operations.get(operationId);
     if (!current) return false;
+    try{dependencies.observeOperation?.({user:active.user,operationId,engineId,action,status});}catch{/* Observation cannot change maintenance state. */}
     const failureMessages: Record<Exclude<EngineTerminalReason, null>, string> = {
       upgrade_failed: '引擎升级失败，已尝试恢复可用版本',
       install_failed: '引擎安装失败，可稍后重试',
@@ -283,6 +285,7 @@ export function createProcessEngineMaintenanceService(
   registry: EngineMaintenanceRegistry,
   processLike: Pick<NodeJS.Process, 'env' | 'send' | 'on'> = process,
   callbacks: {
+    observeOperation?:EngineMaintenanceServiceDependencies['observeOperation'];
     prepareOperation?:EngineMaintenanceServiceDependencies['prepareOperation'];
     settleOperation?:EngineMaintenanceServiceDependencies['settleOperation'];
     isOtherOperationInProgress?:EngineMaintenanceServiceDependencies['isOtherOperationInProgress'];
@@ -345,6 +348,7 @@ export function createProcessEngineMaintenanceService(
         });
       } catch { finish(null); }
     }),
+    observeOperation:callbacks.observeOperation,
     isLauncherManaged: () => Number(processLike.env.RELAY_LAUNCHER_CONTROL_VERSION || 0) >= 6 && typeof processLike.send === 'function',
     send: sendAndWait,
     abort: sendAndWait,

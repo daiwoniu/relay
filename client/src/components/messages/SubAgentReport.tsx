@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { getSubAgentReport } from '../../api/sessions';
+import {localAction} from '../../analytics/features';
 
 interface Props {
   sessionId: string;
@@ -26,14 +27,17 @@ function ReportBody({ sessionId, messageId, itemId, renderContent, renderTrigger
   const [loading, setLoading] = useState(autoLoad);
   const [open, setOpen] = useState(autoLoad);
   const request = useRef<AbortController | null>(null);
-  const read = async () => {
+  const read = async (manual=false) => {
     if (request.current) return;
+    const report=manual?localAction('message','refresh','message'):()=>false;
     const controller = new AbortController(); request.current = controller;
     setOpen(true); setLoading(true); setError('');
     try {
       const result = await getSubAgentReport(sessionId, messageId, itemId, controller.signal);
+      report(controller.signal.aborted?'cancelled':'success');
       if (!controller.signal.aborted) setContent(result.content);
     } catch (error) {
+      report(controller.signal.aborted?'cancelled':'error');
       if (!controller.signal.aborted) setError(error instanceof Error ? error.message : '子任务回报加载失败');
     } finally {
       if (request.current === controller) { request.current = null; setLoading(false); }
@@ -54,7 +58,7 @@ function ReportBody({ sessionId, messageId, itemId, renderContent, renderTrigger
     {renderTrigger?.({ expanded: open, loading, onToggle: toggle })}
     {open && <div className="process-step__details text-xs text-[var(--color-text-secondary)]">
       {loading && <p role="status">正在读取子任务回报…</p>}
-      {error && <div role="status"><p>{error}</p><button type="button" className="min-h-8 underline" onClick={() => void read()}>重试读取回报</button></div>}
+      {error && <div role="status"><p>{error}</p><button type="button" className="min-h-8 underline" onClick={() => void read(true)}>重试读取回报</button></div>}
       {content && <><div className="mb-1 text-[var(--color-text-tertiary)]">子任务回报</div>
         {renderContent ? renderContent(content) : <div className="whitespace-pre-wrap break-words">{content}</div>}</>}
     </div>}

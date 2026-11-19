@@ -1,8 +1,10 @@
 import { z } from 'zod';
+import { validateAnalyticsRegistration } from './registry.js';
+import { AnalyticsFeaturePropertiesSchema, AnalyticsToolIdSchema } from './feature-schema.js';
 
 export const ANALYTICS_DAY = 86_400_000;
 export const AnalyticsPageSchema = z.enum(['login','password_change','tools','news','public_share','chat','task_workbench','news_admin','page_hosting_admin','analytics_admin','hosting','unknown']);
-export const AnalyticsToolSchema = z.enum(['news','calendar','weather','greeting','timestamp','json','qr','diff','pomodoro','units','dates','shopping','random']);
+export const AnalyticsToolSchema = AnalyticsToolIdSchema;
 export const AnalyticsActionSchema = z.enum(['format','minify','validate','copy','export_png','export_svg','compare','start','complete','cancel','calculate','randomize']);
 export const AnalyticsResultSchema = z.enum(['success','invalid_input','error','cancelled','rejected','throttled']);
 export const AnalyticsRangeSchema = z.enum(['today','7d','30d','all']);
@@ -27,12 +29,19 @@ const newsClick = z.object({ ...context, name:z.literal('news_click'), propertie
   newsId:z.string().max(128).regex(/^[a-zA-Z0-9:._-]+$/),
 }).strict() }).strict();
 const validSource=(e:{sourceType?:string;referrerHost:string|null})=>!e.sourceType||(e.sourceType==='external'?e.referrerHost!==null:e.referrerHost===null);
-export const AnalyticsClientEventSchema = z.discriminatedUnion('name',[pageView,toolOpen,toolAction,newsClick]).refine(validSource,{message:'来源状态与主机不一致',path:['referrerHost']});
+const featureView = z.object({ ...context, name:z.literal('feature_view'), properties:AnalyticsFeaturePropertiesSchema }).strict();
+const featureAction = z.object({ ...context, name:z.literal('feature_action'), properties:AnalyticsFeaturePropertiesSchema }).strict();
+const operationResult = z.object({ ...context, name:z.literal('operation_result'), properties:AnalyticsFeaturePropertiesSchema }).strict();
+export const AnalyticsClientEventSchema = z.discriminatedUnion('name',[pageView,toolOpen,toolAction,newsClick,featureView,featureAction,operationResult])
+  .superRefine((event,ctx)=>validateAnalyticsRegistration(event,'client',ctx))
+  .refine(validSource,{message:'来源状态与主机不一致',path:['referrerHost']});
 export const AnalyticsBatchSchema = z.object({ events:z.array(AnalyticsClientEventSchema).min(1).max(20) }).strict();
 const serverEvent = z.object({ ...context, clientSource:z.enum(['web','pwa','gateway']).optional(), name:z.enum(['login_result','hosting_document']), properties:z.object({
   result:AnalyticsResultSchema.optional(), siteId:z.string().max(128).regex(/^[a-zA-Z0-9_-]+$/).optional(),
 }).strict() }).strict();
-export const AnalyticsEventSchema = z.union([AnalyticsClientEventSchema,serverEvent]).refine(validSource,{message:'来源状态与主机不一致',path:['referrerHost']});
+const serverOperationResult = operationResult.extend({clientSource:z.enum(['web','pwa','gateway']).optional()})
+  .superRefine((event,ctx)=>validateAnalyticsRegistration(event,'server',ctx));
+export const AnalyticsEventSchema = z.union([AnalyticsClientEventSchema,serverEvent,serverOperationResult]).refine(validSource,{message:'来源状态与主机不一致',path:['referrerHost']});
 export const AnalyticsRecordSchema = z.object({
   event:AnalyticsEventSchema, receivedAt:z.number().int().positive(), visitorId:z.string().uuid().nullable(),
   userId:z.string().max(128).nullable(), role:z.enum(['guest','member','admin']), ip:z.string().max(45).ip().nullable(),
@@ -40,7 +49,11 @@ export const AnalyticsRecordSchema = z.object({
   accessHost:z.string().min(1).max(253).regex(/^[a-z0-9_:.-]+$/).optional(),
   networkType:z.enum(['internal','public','unknown']).optional(),
 }).strict();
-export const AnalyticsQuerySchema = z.object({range:AnalyticsRangeSchema.default('7d'),excludeAdmin:z.boolean().default(false),excludeInternal:z.boolean().optional()}).strict();
+export const AnalyticsQuerySchema = z.object({range:AnalyticsRangeSchema.default('7d'),excludeAdmin:z.boolean().default(false),excludeInternal:z.boolean().optional(),
+  feature:z.string().max(50).regex(/^(?:[a-z][a-z0-9_]*|tool\.[a-z][a-z0-9_]*)$/).optional(),
+  action:z.string().max(40).regex(/^[a-z][a-z0-9_]*$/).optional(),result:z.enum(['success','error','invalid_input','cancelled','rejected','throttled','unknown']).optional(),
+  metric:z.enum(['view','action','result','system']).optional(),includeSystem:z.boolean().optional(),operationId:z.string().uuid().optional(),
+}).strict();
 export type AnalyticsClientEvent = z.infer<typeof AnalyticsClientEventSchema>;
 export type AnalyticsEvent = z.infer<typeof AnalyticsEventSchema>;
 export type AnalyticsRecord = z.infer<typeof AnalyticsRecordSchema>;

@@ -1,4 +1,5 @@
 import { useCallback } from 'react';
+import {tracker} from '../../analytics/tracker';
 import { ApiError } from '../../api/client';
 import { readFile } from '../../api/filesystem';
 import { useChatStore } from '../../stores/chat';
@@ -41,6 +42,7 @@ export function useFilePreview() {
       ...EMPTY_FILE_PREVIEW_MODES,
     });
     const request = filePreviewRequestManager.begin(tabId);
+    const report=tracker.captureResult({feature:'file_preview',action:'load',surface:'message_file'});
     void buildFileMetadataUpdate(filePath, undefined, request.signal).then((metadataUpdate) => {
       if (filePreviewRequestManager.isCurrent(tabId, request.generation)) {
         updateRightPanelTab(tabId, metadataUpdate);
@@ -52,14 +54,17 @@ export function useFilePreview() {
       if (!filePreviewRequestManager.isCurrent(tabId, request.generation)
         || !updateRightPanelTab(tabId, update)) {
         disposeFilePreviewUpdate(update);
+        report('cancelled');
         return;
       }
       const objectUrl = getFilePreviewObjectUrl(update);
+      report(update.previewError?'error':'success');
       if (objectUrl) {
         filePreviewRequestManager.trackObjectUrl(tabId, request.generation, objectUrl);
       }
     } catch (error) {
-      if (request.signal.aborted || !filePreviewRequestManager.isCurrent(tabId, request.generation)) return;
+      if (request.signal.aborted || !filePreviewRequestManager.isCurrent(tabId, request.generation)){report('cancelled');return;}
+      report('error',{reasonCode:'LOAD_FAILED'});
       if (error instanceof ApiError) {
         const errorMessage = error.data?.error || '读取文件失败';
         updateRightPanelTab(tabId, {

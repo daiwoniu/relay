@@ -10,6 +10,7 @@ import { getSessionInputState, isSessionRunning } from '../../hooks/session-stre
 import { generateUUID } from '../../utils/uuid';
 import { createSession, deleteSession, forkSession, getMessageDetails, getMessagePage, getSession, getSessionDeletionImpact, MESSAGE_PAGE_SIZE, searchSessionMessages, unarchiveSession, updateSession as updateSessionRequest } from '../../api/sessions';
 import { ApiError } from '../../api/client';
+import {featureAction,localAction} from '../../analytics/features';
 import { copyToClipboard } from '../../utils/clipboard';
 import { createSessionMenuItems } from './session-menu-items';
 import { isSessionActionInProgress } from './session-action-state';
@@ -1005,11 +1006,11 @@ export default function ChatView() {
   };
 
   const handleTitleCopyId = async () => {
-    if (!currentSession) return;
+    if (!currentSession) return;const report=localAction('session','copy_id','header');
     try {
-      await copyToClipboard(currentSession.id);
+      await copyToClipboard(currentSession.id);report(true);
     } catch {
-      setError('复制会话 ID 失败');
+      report(false);setError('复制会话 ID 失败');
     }
   };
 
@@ -1064,7 +1065,7 @@ export default function ChatView() {
   };
 
   const toggleShareSelection = (messageId: string) => {
-    if (!selectableShareMessageIds.has(messageId)) return;
+    if (!selectableShareMessageIds.has(messageId)) return;featureAction('message','select','message_menu');
     setSelectedShareMessageIds((current) => {
       const next = new Set(current);
       if (next.has(messageId)) next.delete(messageId); else next.add(messageId);

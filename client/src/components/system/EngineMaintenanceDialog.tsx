@@ -1,4 +1,5 @@
 import Tooltip from '../ui/Tooltip';
+import { useFeatureView } from '../../analytics/features';
 import FailureNotice from '../ui/FailureNotice';
 import { useEffect, useState } from 'react';
 import { useAuth } from '../../auth/AuthContext';
@@ -131,6 +132,7 @@ function EngineMaintenanceDialogContent({ engineId: initialEngineId, onClose }: 
 }
 
 export default function EngineMaintenanceDialog({ engineId, open, onClose }: { engineId: EngineMaintenanceStatusDto['engineId']; open: boolean; onClose(): void }) {
+  useFeatureView('maintenance',open,'user_menu');
   if (!open) return null;
   return <EngineMaintenanceDialogContent key={engineId} engineId={engineId} onClose={onClose} />;
 }

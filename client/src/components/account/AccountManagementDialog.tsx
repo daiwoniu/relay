@@ -1,4 +1,5 @@
 import FailureNotice from '../ui/FailureNotice';
+import { useFeatureView,featureAction } from '../../analytics/features';
 import { useEffect, useState, type FormEvent } from 'react';
 import type { PublicUserDto } from '../../generated/relay-contracts';
 import { createMember, listUsers, resetUserPassword, setUserCanCreateProject, setUserDisabled } from '../../api/auth';
@@ -15,6 +16,7 @@ function errorMessage(cause: unknown, fallback: string): string {
 }
 
 export default function AccountManagementDialog({ open, onClose, mobile }: { open: boolean; onClose: () => void; mobile: boolean }) {
+  useFeatureView('account_admin',open,'user_menu');
   const { user } = useAuth();
   const [users, setUsers] = useState<PublicUserDto[]>([]);
   const [usersLoading, setUsersLoading] = useState(false);
@@ -201,7 +203,7 @@ export default function AccountManagementDialog({ open, onClose, mobile }: { ope
       ]}
       notice={{ tone: 'info', title: '可以重新启用', description: '重新启用后，该账号可继续使用原登录信息。' }}
       confirmLabel="停用账号"
-      onCancel={() => setDisableTarget(null)}
+      onCancel={() => {featureAction('account_admin','cancel','admin');setDisableTarget(null);}}
       onConfirm={confirmDisableUser}
     />
   </PanelShell>;

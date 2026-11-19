@@ -1589,6 +1589,7 @@ export const WorkspaceConsoleResponsibilityDtoSchema = z.object({
   generatedAt: z.string().min(1), fetchedAt: z.number().int().nonnegative(),
   servedFromCache: z.boolean().optional(),
   complete: z.boolean(), stale: z.boolean(), error: z.string().nullable(),
+  unverifiedCount: z.number().int().nonnegative().optional(),
   sourceMeta: WorkspaceSourceMetaDtoSchema.optional(),
   items: z.array(z.object({
     workItemId: z.string().regex(/^[1-9]\d*$/), title: z.string().min(1), typeName: z.string().nullable(),

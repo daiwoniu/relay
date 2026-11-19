@@ -1,5 +1,6 @@
 import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type Dispatch, type RefObject, type SetStateAction } from 'react';
 import ReactMarkdown from 'react-markdown';
+import { featureAction } from '../../analytics/features';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
 import type { RightPanelTab } from '../../stores/chat';
@@ -344,7 +345,7 @@ export default function RightPanelContent({
               tooltip
               tooltipPlacement="bottom"
               aria-pressed={isMaximized}
-              onClick={() => setIsMaximized((maximized) => !maximized)}
+              onClick={() => {featureAction('file_preview',isMaximized?'restore':'maximize','preview_toolbar');setIsMaximized((maximized) => !maximized);}}
               className={`workspace-preview-panel-action${isMaximized ? ' is-pressed' : ''}`}
             >
               {isMaximized ? (

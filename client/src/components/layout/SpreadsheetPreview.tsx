@@ -1,4 +1,5 @@
 import Tooltip from '../ui/Tooltip';
+import { featureAction } from '../../analytics/features';
 import { useEffect, useMemo, useState } from 'react';
 import type { SpreadsheetDocumentPreviewDto, SpreadsheetSheetPreviewDto } from '../../generated/relay-contracts';
 import { readSpreadsheetSheet } from '../../api/filesystem';
@@ -74,7 +75,7 @@ export default function SpreadsheetPreview({
             role="tab"
             aria-selected={selectedName === item.name}
             className={selectedName === item.name ? 'is-active' : ''}
-            onClick={() => setSelectedName(item.name)}
+            onClick={() => {if(selectedName!==item.name)featureAction('file_preview','select_sheet','preview_content');setSelectedName(item.name);}}
           >
             {item.name}{item.state !== 'visible' ? '（隐藏）' : ''}
           </button>

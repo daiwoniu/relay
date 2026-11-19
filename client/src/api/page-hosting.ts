@@ -5,9 +5,9 @@ const base='/api/admin/page-hosting';
 export const listHostedSites=(signal?:AbortSignal)=>requestJson<{sites:HostedSite[]}>(base,{signal});
 export const importHostedFiles=(path:string,signal?:AbortSignal)=>requestJson<HostingInspection>(`${base}/imports`,{method:'POST',...jsonBody({path}),signal,timeoutMs:180_000});
 export const cancelHostedUpload=(id:string)=>requestJson(`${base}/uploads/${id}`,{method:'DELETE'});
-export const publishHostedSite=(input:{uploadId:string;name:string;entry:string;siteId?:string;expectedToken?:string})=>requestJson<{site:HostedSite}>(`${base}/publish`,{method:'POST',...jsonBody(input),timeoutMs:60_000});
-export const patchHostedSite=(site:HostedSite,changes:{name?:string;enabled?:boolean})=>requestJson<{site:HostedSite}>(`${base}/${site.id}`,{method:'PATCH',...jsonBody(changes),headers:{'Content-Type':'application/json','If-Match':site.contentToken}});
-export const deleteHostedSite=(site:HostedSite)=>requestJson(`${base}/${site.id}`,{method:'DELETE',headers:{'If-Match':site.contentToken}});
+export const publishHostedSite=(input:{uploadId:string;name:string;entry:string;siteId?:string;expectedToken?:string})=>requestJson<{site:HostedSite}>(`${base}/publish`,{analytics:{feature:'hosting',action:input.siteId?'update':'publish',surface:'admin'},method:'POST',...jsonBody(input),timeoutMs:60_000});
+export const patchHostedSite=(site:HostedSite,changes:{name?:string;enabled?:boolean})=>requestJson<{site:HostedSite}>(`${base}/${site.id}`,{analytics:{feature:'hosting',action:'update',surface:'admin'},method:'PATCH',...jsonBody(changes),headers:{'Content-Type':'application/json','If-Match':site.contentToken}});
+export const deleteHostedSite=(site:HostedSite)=>requestJson(`${base}/${site.id}`,{analytics:{feature:'hosting',action:'delete',surface:'admin'},method:'DELETE',headers:{'If-Match':site.contentToken}});
 export const hostedUrl=(id:string)=>`/p/${id}/`;
 export const hostedPreviewUrl=(stage:HostingInspection,entry:string)=>`/p-preview/${stage.uploadId}/${stage.previewToken}/${entry.split('/').map(encodeURIComponent).join('/')}`;
 

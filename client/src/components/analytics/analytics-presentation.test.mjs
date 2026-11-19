@@ -50,6 +50,14 @@ test('图表日期可聚焦操作，未知日期不伪称零，原始标签转�
   const ranking=render(Ranking,{title:'来源',rows:[{label:'<script>bad()</script>',count:1}],raw:true});
   assert.doesNotMatch(ranking,/<script>/);assert.match(ranking,/&lt;script&gt;/);
 });
+
+test('趋势区分零访问与无保留记录，提供每日表格及今日未结束说明',()=>{
+ const html=render(DailyVisitsChart,{daily:[],since,earliest:since,now});
+ assert.match(html,/data-available="true" style="height:0%"/);
+ assert.match(html,/查看每日数据表/);assert.match(html,/今日未结束/);
+ const unknown=render(DailyVisitsChart,{daily:[],since,earliest:null,now});
+ assert.match(unknown,/data-available="false" style="height:2px"/);
+});
 test('最近访问只显示日期范围，时间值仍按北京时间，双端保留结果和IP',()=>{
   const html=render(RecentVisits,{rows:[{id:'1',at:now,name:'login_result',page:'login',role:'guest',ip:'203.0.113.1',device:'mobile',browser:'Safari',os:'iOS',source:null,result:'rejected',siteId:null,clientSource:'pwa',clientVersion:'0.54.1',serverVersion:'0.54.2'}],range:'7d',loading:false,error:null,retry:()=>{}});
   assert.match(html,/近 7 天/);assert.doesNotMatch(html,/北京时间/);assert.match(html,/analytics-visits-table/);assert.match(html,/analytics-visit-cards/);assert.match(html,/00:01:00/);assert.match(html,/登录被拒绝/);assert.match(html,/203.0.113.1/);

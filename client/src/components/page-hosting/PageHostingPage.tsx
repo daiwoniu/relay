@@ -1,3 +1,4 @@
+import {featureAction,localAction,useFeatureView} from '../../analytics/features';
 import { formatDateTime } from '../../utils/date-display.ts';
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import type { HostedSite, HostingInspection } from '../../generated/relay-contracts';
@@ -38,13 +39,15 @@ export function UploadDialog({site,onClose,onPublished}:{site:HostedSite|null;on
   const check=async()=>{
     if(busy)return;if(source==='upload'&&(!file||file.size>32*1024*1024)){setError(new Error('请选择不超过 32 MB 的 HTML 文件或 ZIP 包'));return;}
     if(source==='local'&&!localPath.trim()){setError(new Error('请选择服务器上的文件或目录'));return;}
+    const report=localAction('hosting',source==='upload'?'upload':'import','admin');
     const abort=new AbortController();controller.current=abort;setBusy(true);setError(null);setProgress(0);
     try{
       const result=source==='upload'?await api.uploadHostedFile(file!,abort.signal,setProgress):await api.importHostedFiles(localPath.trim(),abort.signal);
+      report(true);
       if(!mounted.current){void api.cancelHostedUpload(result.uploadId).catch(()=>undefined);return;}
       currentStage.current=result;setStage(result);setEntry(site&&result.entries.includes(site.entry)?site.entry:result.suggestedEntry??'');
       if(!name.trim())setName(nameFromPath(source==='upload'?file!.name:localPath));
-    }catch(failure){if(mounted.current)setError(failure);}finally{if(mounted.current)setBusy(false);}
+    }catch(failure){report(abort.signal.aborted?'cancelled':'error');if(mounted.current)setError(failure);}finally{if(mounted.current)setBusy(false);}
   };
   const publish=async()=>{
     if(!stage||busy)return;setBusy(true);setError(null);
@@ -71,20 +74,20 @@ export function UploadDialog({site,onClose,onPublished}:{site:HostedSite|null;on
         <label className="hosting-field">页面名称<input value={name} maxLength={80} disabled={busy} onChange={event=>setName(event.target.value)} placeholder="例如：产品介绍" /></label>
         {stage&&<>
           <div className="hosting-summary" role="status">共 {stage.fileCount} 个文件 · {size(stage.totalBytes)} · 已修正 {stage.rewritten} 处路径{stage.warningCount>0&&` · ${stage.warningCount} 项提示`}</div>
-          <label className="hosting-field">首页<select value={entry} disabled={busy} onChange={event=>setEntry(event.target.value)}><option value="" disabled>请选择 HTML 首页</option>{stage.entries.map(path=><option key={path} value={path}>{path}</option>)}</select></label>
+          <label className="hosting-field">首页<select value={entry} disabled={busy} onChange={event=>{featureAction('hosting','select_entry','admin');setEntry(event.target.value);}}><option value="" disabled>请选择 HTML 首页</option>{stage.entries.map(path=><option key={path} value={path}>{path}</option>)}</select></label>
           {stage.warningCount>0&&<details className="hosting-checks"><summary>查看检查提示</summary><ul>{stage.warnings.map((warning,index)=><li key={index}>{warning}</li>)}</ul>{stage.warningCount>stage.warnings.length&&<p>仅展示前 {stage.warnings.length} 项，请预览确认页面效果。</p>}<p>无法定位的引用保持原样，动态脚本路径不会自动修改。</p></details>}
           <p className="hosting-muted">临时内容保留 1 小时。{site?'替换后访问链接不变，只保留最新内容。':'发布后可随时更新、停用或删除。'}</p>
         </>}
         {busy&&<div role="status" className="hosting-muted">{stage?'正在发布…':source==='local'?'正在复制并检查…':progress===100?'上传完成，正在解压检查…':`正在上传 ${progress}%`}{!stage&&source==='upload'&&<progress max={100} value={progress} />}</div>}
         {error!==null&&<FailureNotice error={error} />}
       </div>
-      <footer className="hosting-dialog-footer"><button type="button" disabled={busy} onClick={onClose}>取消</button>{stage?<><button type="button" disabled={busy} onClick={()=>void reset()}>重新选择</button>{entry&&<a className="hosting-button" href={api.hostedPreviewUrl(stage,entry)} target="_blank" rel="noopener noreferrer">预览</a>}<button type="button" className="hosting-primary" disabled={busy||!entry||!name.trim()} onClick={()=>void publish()}>{site?'替换并发布':'发布'}</button></>:<button type="button" className="hosting-primary" disabled={busy||(source==='upload'?!file:!localPath.trim())} onClick={()=>void check()}>{source==='upload'?'上传并检查':'导入并检查'}</button>}</footer>
+      <footer className="hosting-dialog-footer"><button type="button" disabled={busy} onClick={onClose}>取消</button>{stage?<><button type="button" disabled={busy} onClick={()=>void reset()}>重新选择</button>{entry&&<a className="hosting-button" href={api.hostedPreviewUrl(stage,entry)} target="_blank" rel="noopener noreferrer" onClick={()=>featureAction('hosting','preview','admin')}>预览</a>}<button type="button" className="hosting-primary" disabled={busy||!entry||!name.trim()} onClick={()=>void publish()}>{site?'替换并发布':'发布'}</button></>:<button type="button" className="hosting-primary" disabled={busy||(source==='upload'?!file:!localPath.trim())} onClick={()=>void check()}>{source==='upload'?'上传并检查':'导入并检查'}</button>}</footer>
     </Modal>
     {picker&&<Suspense fallback={<span role="status">正在加载文件选择器…</span>}>{picker==='directory'?<DirectoryPicker initialPath={pickerPath} onCancel={()=>setPicker(null)} onSelect={path=>{rememberDirectory(path);setLocalPath(path);if(!name)setName(nameFromPath(path));setPicker(null);}}/>:<HostFilePicker initialPath={pickerPath} remainingSlots={1} existingHostFilePaths={[]} onCancel={()=>setPicker(null)} onSelect={files=>{const path=files[0]?.path;if(path){rememberDirectory(getHostParentPath(path)??'');setLocalPath(path);if(!name)setName(nameFromPath(path));}setPicker(null);}}/>}</Suspense>}
   </>;
 }
 
-export default function PageHostingPage({onClose,mobile=false}:{onClose?:()=>void;mobile?:boolean}={}){
+export default function PageHostingPage({onClose,mobile=false}:{onClose?:()=>void;mobile?:boolean}={}){useFeatureView('hosting',true,'user_menu');
   const {user}=useAuth(),toggleSidebar=useChatStore(state=>state.toggleSidebar);
   const [sites,setSites]=useState<HostedSite[]>([]),[loading,setLoading]=useState(true),[error,setError]=useState<unknown>(null),[message,setMessage]=useState('');
   const [upload,setUpload]=useState<{site:HostedSite|null}|null>(null),[remove,setRemove]=useState<HostedSite|null>(null),[rename,setRename]=useState<HostedSite|null>(null),[newName,setNewName]=useState(''),[busy,setBusy]=useState(false);
@@ -94,7 +97,7 @@ export default function PageHostingPage({onClose,mobile=false}:{onClose?:()=>voi
   useEffect(()=>{if(user?.role!=='admin')return;const abort=new AbortController();setLoading(true);setError(null);void api.listHostedSites(abort.signal).then(result=>{if(!abort.signal.aborted)setSites(result.sites);}).catch(failure=>{if(!abort.signal.aborted)setError(failure);}).finally(()=>{if(!abort.signal.aborted)setLoading(false);});return()=>abort.abort();},[reload,user?.id,user?.role]);
   const upsert=(site:HostedSite)=>setSites(current=>[site,...current.filter(item=>item.id!==site.id)].sort((a,b)=>b.updatedAt-a.updatedAt));
   const patch=async(site:HostedSite,changes:{name?:string;enabled?:boolean})=>{setBusy(true);setError(null);setMessage('');try{const result=await api.patchHostedSite(site,changes);upsert(result.site);setRename(null);}catch(failure){setError(failure);}finally{setBusy(false);}};
-  const copy=async(site:HostedSite)=>{try{await copyToClipboard(new URL(api.hostedUrl(site.publicId??site.id),window.location.origin).href);setMessage('访问链接已复制');}catch(failure){setError(failure);}};
+  const copy=async(site:HostedSite)=>{const report=localAction('hosting','copy_link','admin');try{await copyToClipboard(new URL(api.hostedUrl(site.publicId??site.id),window.location.origin).href);report(true);setMessage('访问链接已复制');}catch(failure){report(false);setError(failure);}};
   const copyRules=async()=>{setMessage('');setRulesError(null);try{await copyToClipboard(generationRules);setMessage('AI 生成规则已复制，可直接粘贴给其他 AI 或会话。');}catch(failure){setRulesError(failure);}};
   if(user?.role!=='admin')return <div className="hosting-page"><p>仅管理员可管理页面托管。</p></div>;
   const content=<section className="hosting-page">
@@ -104,13 +107,13 @@ export default function PageHostingPage({onClose,mobile=false}:{onClose?:()=>voi
       {message&&<p role="status" className="hosting-summary">{message}</p>}{error!==null&&<div className="hosting-summary"><FailureNotice error={error} /><button type="button" onClick={()=>setReload(value=>value+1)}>刷新列表</button></div>}
       {loading?<p role="status">正在加载托管页面…</p>:!sites.length?<div className="hosting-empty"><h2>还没有托管页面</h2><p className="hosting-muted">支持单个 HTML、ZIP 包，或直接复制服务器上的静态目录。</p><button className="hosting-primary" type="button" onClick={()=>setUpload({site:null})}>添加第一个页面</button></div>:<ul className="hosting-sites">{sites.map(site=><li key={site.id} className="hosting-site">
         <div className="hosting-site-info"><h2>{site.name}<span className={site.enabled?'hosting-status':'hosting-status is-disabled'}>{site.enabled?'已发布':'已停用'}</span></h2><p className="hosting-muted">{site.entry} · {size(site.totalBytes)} · {site.fileCount} 个文件</p><p className="hosting-muted">更新于 {formatDateTime(site.updatedAt, { seconds: true })}</p></div>
-        <div className="hosting-actions"><a className="hosting-button" href={api.hostedUrl(site.publicId??site.id)} target="_blank" rel="noopener noreferrer">打开</a><button type="button" onClick={()=>void copy(site)}>复制链接</button><button type="button" disabled={busy} aria-haspopup="menu" aria-expanded={more?.site.id===site.id} aria-label={`${site.name}的更多操作`} onClick={event=>setMore(more?.site.id===site.id?null:{site,anchor:event.currentTarget})}>更多</button></div>
+        <div className="hosting-actions"><a className="hosting-button" href={api.hostedUrl(site.publicId??site.id)} target="_blank" rel="noopener noreferrer" onClick={()=>{const report=localAction('hosting','open_external','admin');report(true);}}>打开</a><button type="button" onClick={()=>void copy(site)}>复制链接</button><button type="button" disabled={busy} aria-haspopup="menu" aria-expanded={more?.site.id===site.id} aria-label={`${site.name}的更多操作`} onClick={event=>setMore(more?.site.id===site.id?null:{site,anchor:event.currentTarget})}>更多</button></div>
       </li>)}</ul>}
     </div>
     {more&&<HostingMoreMenu site={more.site} anchor={more.anchor} onClose={()=>setMore(null)} onAction={action=>{const site=more.site;setMore(null);if(action==='update')setUpload({site});else if(action==='rename'){setRename(site);setNewName(site.name);}else if(action==='toggle')void patch(site,{enabled:!site.enabled});else setRemove(site);}}/>}
     {upload&&<UploadDialog site={upload.site} onClose={()=>setUpload(null)} onPublished={site=>{upsert(site);setUpload(null);setMessage(site.enabled?'页面已发布，可打开或复制访问链接。':'内容已更新，站点仍为停用状态。');}}/>}
     <Modal open={rename!==null} onClose={()=>{if(!busy)setRename(null);}} labelledBy="hosting-rename-title" contentClassName="hosting-dialog"><form onSubmit={event=>{event.preventDefault();if(rename&&newName.trim()&&!busy)void patch(rename,{name:newName.trim()});}}><header className="hosting-dialog-header"><h2 id="hosting-rename-title">重命名页面</h2></header><div className="hosting-dialog-body"><label className="hosting-field">页面名称<input data-autofocus value={newName} maxLength={80} disabled={busy} onChange={event=>setNewName(event.target.value)} /></label><p className="hosting-muted">访问链接保持不变。</p>{error!==null&&<FailureNotice error={error}/>}</div><footer className="hosting-dialog-footer"><button type="button" disabled={busy} onClick={()=>setRename(null)}>取消</button><button className="hosting-primary" disabled={busy||!newName.trim()} type="submit">保存</button></footer></form></Modal>
-    <ConfirmDialog open={remove!==null} title="删除托管页面" description="删除后托管文件会被移除，现有访问链接立即失效，无法恢复。" subject={remove?{label:'页面',value:remove.name}:undefined} tone="danger" confirmLabel="删除" onCancel={()=>setRemove(null)} onConfirm={async()=>{if(!remove)return;await api.deleteHostedSite(remove);setSites(current=>current.filter(site=>site.id!==remove.id));setRemove(null);}} />
+    <ConfirmDialog open={remove!==null} title="删除托管页面" description="删除后托管文件会被移除，现有访问链接立即失效，无法恢复。" subject={remove?{label:'页面',value:remove.name}:undefined} tone="danger" confirmLabel="删除" onCancel={()=>{featureAction('hosting','cancel','admin');setRemove(null);}} onConfirm={async()=>{if(!remove)return;await api.deleteHostedSite(remove);setSites(current=>current.filter(site=>site.id!==remove.id));setRemove(null);}} />
   </section>;
   return onClose?<PanelShell open onClose={onClose} title="页面托管" description="上传或从服务器本机导入，生成公开访问链接" titleId="page-hosting-title" size="content" mobile={mobile} closeOnEscape={more===null} suspended={upload!==null||rename!==null||remove!==null}>{content}</PanelShell>:content;
 }

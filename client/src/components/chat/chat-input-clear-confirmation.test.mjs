@@ -15,8 +15,11 @@ test('桌面和移动端点击多行输入框清空按钮时先确认', () => {
 });
 
 test('取消保留草稿，确认后才清空，切换草稿时关闭旧确认', () => {
-  assert.match(input, /const handleClearInput = \(\) => \{\s*setInput\(''\);\s*setClearConfirmOpen\(false\);\s*textareaRef\.current\?\.focus\(\);\s*\}/);
-  assert.match(input, /onCancelClear=\{\(\) => setClearConfirmOpen\(false\)\}/);
+  const clearHandler=input.match(/const handleClearInput = \(\) => \{([^]*?)\};/)?.[1];
+  assert.ok(clearHandler,'确认清空主点存在');
+  assert.match(clearHandler, /setInput\(''\);\s*setClearConfirmOpen\(false\);\s*textareaRef\.current\?\.focus\(\);/);
+  const cancelHandler=input.match(/onCancelClear=\{\(\) => \{([^]*?)\}\}/)?.[1];
+  assert.ok(cancelHandler);assert.match(cancelHandler,/setClearConfirmOpen\(false\)/);assert.doesNotMatch(cancelHandler,/setInput\(/);
   assert.match(input, /onConfirmClear=\{handleClearInput\}/);
   assert.match(input, /useEffect\(\(\) => \{\s*setClearConfirmOpen\(false\);\s*\}, \[draftKey\]\);/);
 });
