@@ -6,6 +6,7 @@ import { finalizeRunState } from './run-state.mjs';
 
 export async function runReadOnlyAcceptance({
   config, cookieValue,
+  workbench = false,
   launchRuntime = (options) => launchEdge(options),
   connectPage = (runtime) => connectPageRuntime(runtime),
   cleanupRuntime = (options) => cleanupEdgeRuntime(options),
@@ -26,10 +27,13 @@ export async function runReadOnlyAcceptance({
     await page.enableMonitoring();
     await page.injectRelaySession({ origin: config.origin, cookieValue });
     await page.navigate(config.origin);
+    // The admin shell does not open the chat WebSocket. Read its protocol
+    // handshake on the initial chat page before navigating to the workbench.
+    if (workbench) await page.waitForStable({ timeoutMs: config.timeouts?.navigationMs, requireMetadata: true });
     for (const item of [
       { id: 'desktop', viewport: config.desktopViewport, mobile: false },
       { id: 'mobile', viewport: config.mobileViewport, mobile: true },
-    ]) scenarios.push(await runViewportScenario({ page, runtime, config, ...item }));
+    ]) scenarios.push(await (workbench ? runWorkbenchScenario : runViewportScenario)({ page, runtime, config, ...item }));
     if (runAdditionalScenarios) {
       // The last read-only viewport is mobile, whose sidebar is closed by default.
       await page.setViewport(config.desktopViewport, { mobile: false });
@@ -94,4 +98,29 @@ function summariesEqual(left, right) {
   return left?.authenticated === true && right?.authenticated === true
     && JSON.stringify([...(left.sessions || [])].sort()) === JSON.stringify([...(right.sessions || [])].sort())
     && left.currentSession === right.currentSession;
+}
+
+async function runWorkbenchScenario({id,viewport,mobile,page,runtime,config}) {
+  await page.setViewport(viewport,{mobile});
+  await page.navigate(`${config.origin}/admin/task-workbench`);
+  const stable=await page.waitForStable({timeoutMs:config.timeouts?.navigationMs,requireMetadata:true});
+  await page.waitForWorkbench();
+  const screenshots=[],snapshots=[];
+  const capture=async(name)=>{const filename=`screenshots/workbench-${id}-${name}.png`;await page.captureScreenshot(path.join(runtime.runDir,filename));screenshots.push(filename);snapshots.push(await page.readWorkbenchLayout());};
+  await capture('header');
+  for(const lane of mobile?['unstarted','doing','completed']:['unstarted']){
+    await page.showWorkbenchLane(lane);await capture(lane);
+  }
+  if(await page.openWorkbenchDetail()){await capture('detail');await page.closeWorkbenchDetail();}
+  await page.showWorkbenchRecords();await capture('records');
+  const detailSamples=[];
+  if(!mobile)for(const kind of ['group','project','tracking','run']){
+    const opened=await page.openWorkbenchDetail(kind);
+    detailSamples.push({kind,status:opened?'checked':'not_available'});
+    if(opened){await capture(`detail-${kind}`);await page.closeWorkbenchDetail();}
+  }
+  const overflow=snapshots.some(snapshot=>snapshot.overflow||snapshot.drawerOverflow||snapshot.cardOverflow>0);
+  const evidence=page.getEvidence(),errors=evidence.exceptions.length>0||evidence.httpErrors.length>0||evidence.logErrors.some(item=>item.level==='error');
+  return createScenarioResult({id:`workbench-${id}`,status:overflow||errors?'failed':'passed',detail:overflow?'工作台检测到横向溢出，需核对截图':errors?'工作台存在页面异常或接口失败':'当前正式工作台只读列表/详情布局检查通过；不代表未切换源码已生效',viewport,
+    snapshot:{buildId:stable.buildId,protocolVersion:stable.protocolVersion,layouts:snapshots,detailSamples},evidence,screenshots});
 }

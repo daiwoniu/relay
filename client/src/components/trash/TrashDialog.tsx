@@ -24,6 +24,7 @@ import {
   type TrashSessionProject,
 } from '../../api/trash';
 import PanelShell from '../ui/PanelShell';
+import UserMenuIcon from '../icons/UserMenuIcon';
 import ConfirmDialog from '../ui/ConfirmDialog';
 import { ListPagination, ListState } from '../ui/ListControls';
 import { getValidTrashOffset } from './trash-pagination';
@@ -402,7 +403,7 @@ export default function TrashDialog({ open, admin, onClose, onChanged }: {
   </>;
 
   return <>
-    <PanelShell open={open} onClose={() => { if (!batchRunning) onClose(); }} title="回收站" description={admin ? '全部账号的已删除内容 · 可恢复或彻底删除' : '我的已删除内容 · 可恢复误删内容'} titleId="trash-dialog-title" size="content" navigation={<>
+    <PanelShell open={open} onClose={() => { if (!batchRunning) onClose(); }} title="回收站" icon={<UserMenuIcon type="trash" />} description={admin ? '全部账号的已删除内容 · 可恢复或彻底删除' : '我的已删除内容 · 可恢复误删内容'} titleId="trash-dialog-title" size="content" navigation={<>
       <div className="trash-dialog__tabs" role="tablist" aria-label="回收站类型">
         {(['sessions', 'projects'] as const).map((value) => <button key={value} type="button" role="tab" aria-selected={tab === value} onClick={() => {if(tab!==value)featureAction('trash','mode','user_menu');selectTab(value);}} className={`trash-dialog__tab${tab === value ? ' trash-dialog__tab--active' : ''}`}>{value === 'projects' ? `项目 ${total.projects}` : `会话 ${total.sessions}`}</button>)}
       </div>

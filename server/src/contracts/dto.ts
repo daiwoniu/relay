@@ -1569,13 +1569,27 @@ export function presentPublicUser<T extends PublicUserSource>(user: T): PublicUs
 
 export const WorkspaceConsoleDeliveryMatrixItemDtoSchema = z.object({ project: z.string().min(1), baseBranch: z.string().nullable(), featureBranch: z.string().nullable(), targetBranch: z.string().nullable(), revision: z.string().nullable(), source: z.string().min(1), verifiedAt: z.string().min(1) }).strict();
 export const WorkspaceConsoleTaskDtoSchema = z.object({
+  kind: z.enum(['task', 'item']).nullable().optional(), diagnostics: z.array(z.string()).optional(),
   id: z.string().min(1), title: z.string().nullable(), taskPath: z.string().nullable(), taskDocumentPath: z.string().nullable(), status: z.string().nullable(),
   description: z.string().max(240).nullable().optional(),
+  taskPlanPath: z.string().nullable().optional(),
+  taskDirectoryUpdatedAt:z.string().datetime({offset:true}).nullable().optional(),
   feishuPrimaryWorkItemId: z.string().regex(/^[1-9]\d*$/).nullable().optional(),
+  canaryApplicationIds: z.array(z.string().regex(/^[1-9]\d*$/)).optional(),
   horizon: z.string().nullable(), nextAction: z.string().nullable(), waitingOn: z.string().nullable(), statusBasis: z.string().nullable(),
   verification: z.string().nullable(), lastVerifiedAt: z.string().nullable(), startedAt: z.string().nullable(), completedAt: z.string().nullable(), deliveryMatrix: z.array(WorkspaceConsoleDeliveryMatrixItemDtoSchema).default([]), feishuWorkItemIds: z.array(z.string()), feishuWorkItemUrls: z.record(z.string(), z.string().url()).optional(),
 }).strict();
 export const WorkspaceConsoleRunDtoSchema = z.object({
+  taskContext:z.object({directory:z.string(),title:z.string().max(240).nullable(),association:z.enum(['registered','unregistered','ambiguous'])}).strict().optional(),
+  testResult:z.object({framework:z.literal('junit'),total:z.number().int().nonnegative(),failures:z.number().int().nonnegative(),errorTypes:z.array(z.string().max(80)).max(8)}).strict().nullable().optional(),
+  operation: z.object({ title: z.string().max(240), objects: z.array(z.string().max(240)).max(50), scope: z.array(z.string().max(240)).max(50), source: z.enum(['descriptor', 'plan', 'intent']), plannedBusinessWrite: z.boolean().nullable() }).strict().nullable().optional(),
+  displayName: z.string().max(240).nullable().optional(), failureReason: z.string().max(500).nullable().optional(), collectedAt: z.string().nullable().optional(),
+  businessResult: z.object({
+    source: z.enum(['progress', 'summary', 'status']), status: z.string().nullable(), complete: z.boolean().nullable(), businessWrite: z.boolean().nullable(),
+    stopReason: z.string().nullable(), object: z.string().nullable(), rowsPerSecond: z.number().nonnegative().nullable(), rowLimit: z.number().nonnegative().nullable(),
+    limitPercent: z.number().nonnegative().nullable(), etaSeconds: z.number().nonnegative().nullable(),
+    verified: z.boolean().nullable().optional(), preflightPassed: z.boolean().nullable().optional(), businessWrites: z.number().nonnegative().nullable().optional(), formalSpWrites: z.number().nonnegative().nullable().optional(), phase: z.string().nullable().optional(),
+  }).strict().nullable().optional(),
   runId: z.string(), status: z.string(), taskId: z.string().nullable(), source: z.string(), mode: z.string().nullable(), target: z.string().nullable(),
   startedAt: z.string().nullable(), finishedAt: z.string().nullable(), durationSeconds: z.number().nonnegative().nullable(), exitCode: z.number().int().nullable(),
   committed: z.boolean().nullable(), insertedRows: z.number().int().nonnegative().nullable(), updatedRows: z.number().int().nonnegative().nullable(), summary: z.string(), evidenceFiles: z.array(z.string()),
@@ -1584,6 +1598,17 @@ export const WorkspaceConsoleRunDtoSchema = z.object({
   serverName: z.string().nullable().optional(), observedAt: z.string().nullable().optional(), detailFilePath: z.string().nullable().optional(),
   resultMetrics: z.object({ source: z.enum(['progress', 'summary', 'status']), items: z.array(z.object({ label: z.string(), value: z.number().int().nonnegative(), kind: z.enum(['total', 'change', 'condition']) }).strict()) }).strict().nullable().optional(),
 }).strict();
+export const WorkspaceFeishuContextDtoSchema = z.object({
+  responsibleNames:z.array(z.string().min(1)).optional(),
+  creatorNames:z.array(z.string().min(1)).optional(),
+  createdAt:z.string().datetime({offset:true}).nullable().optional(),
+  typeKey:z.string().optional(), reasons:z.array(z.string()).optional(), localTaskIds:z.array(z.string()).optional(),
+  linkedStoryIds:z.array(z.string().regex(/^[1-9]\d*$/)).optional(),
+  release:z.object({mode:z.enum(['normal','canary']),conflict:z.boolean(),versionId:z.string().nullable(),version:z.string().nullable(),source:z.enum(['item','linked_story']),error:z.string().nullable()}).strict().optional(),
+  applicationCoverage:z.enum(['not_configured','not_queried','complete','partial']).optional(),
+  applications:z.array(z.object({workItemId:z.string(),typeKey:z.string(),title:z.string(),url:z.string().url().nullable(),status:z.string(),completed:z.boolean().nullable(),finishedAt:z.string().nullable(),
+    unfinishedSubtasks:z.array(z.object({id:z.string(),name:z.string()}).strict()),reconciliationRequired:z.boolean(),source:z.enum(['native_relation','local_binding'])}).strict()).optional(),
+});
 export const WorkspaceConsoleResponsibilityDtoSchema = z.object({
   reportKind: z.literal('project_responsibility'), sourceUserKey: z.string().min(1), todoEquivalent: z.literal(false),
   generatedAt: z.string().min(1), fetchedAt: z.number().int().nonnegative(),
@@ -1591,18 +1616,22 @@ export const WorkspaceConsoleResponsibilityDtoSchema = z.object({
   complete: z.boolean(), stale: z.boolean(), error: z.string().nullable(),
   unverifiedCount: z.number().int().nonnegative().optional(),
   sourceMeta: WorkspaceSourceMetaDtoSchema.optional(),
-  items: z.array(z.object({
+  sourceProjectKey:z.string().optional(),relationCoverage:z.enum(['not_queried','complete','partial']).optional(),
+  associationMeta:z.object({state:z.enum(['unbound','complete','partial','unavailable']),error:z.string().nullable(),checkedAt:z.number().nullable()}).strict().optional(),
+  items: z.array(WorkspaceFeishuContextDtoSchema.extend({
     workItemId: z.string().regex(/^[1-9]\d*$/), title: z.string().min(1), typeName: z.string().nullable(),
+    nativeCompleted:z.boolean().nullable().optional(),
     actionability: z.enum(['current', 'state_responsibility', 'upcoming']),
     statusName: z.string().min(1).nullable().optional(),
     myRoleKeys: z.array(z.string().min(1)).optional(), baseOwnerIsMe: z.boolean().optional(),
     fallbackContact: z.object({ role: z.enum(['reporter', 'creator']), names: z.array(z.string().min(1)).min(1) }).strict().optional(),
     updatedAt: z.string().datetime({ offset: true }).nullable().optional(),
     personalSubtasks: z.array(z.object({ id: z.string(), name: z.string(), passed: z.boolean() }).strict()),
-    currentNodes: z.array(z.string()), version: z.string().nullable(), url: z.string().url().nullable(),
+    currentNodes: z.array(z.string()), version: z.string().nullable(), url: z.string().url().nullable(), finishedAt:z.string().datetime({offset:true}).nullable().optional(),
     localTaskIds: z.array(z.string()), linkedStoryIds: z.array(z.string().regex(/^[1-9]\d*$/)).optional(),
   }).strict()),
-  workbenchItems: z.array(z.object({
+  workbenchItems: z.array(WorkspaceFeishuContextDtoSchema.extend({
+    participated:z.boolean().optional(),
     workItemId: z.string().regex(/^[1-9]\d*$/), title: z.string().min(1), typeName: z.string().nullable(),
     url: z.string().url().nullable(), ownerUserKey: z.string().min(1).nullable(),
     roleOwnerUserKeys: z.array(z.string().min(1)).optional(),
@@ -1614,14 +1643,19 @@ export const WorkspaceConsoleResponsibilityDtoSchema = z.object({
     updatedAt: z.string().datetime({ offset: true }).nullable().optional(),
     finishedAt: z.string().datetime({ offset: true }).nullable().optional(),
     mySubtasks: z.array(z.object({
+      ownerNames:z.array(z.string().min(1)).optional(),
+      createdAt:z.string().datetime({offset:true}).nullable().optional(), updatedAt:z.string().datetime({offset:true}).nullable().optional(),
       id: z.string().regex(/^[1-9]\d*$/), title: z.string().min(1), owners: z.array(z.string().min(1)),
       passed: z.boolean(), nodeId: z.string().min(1), nodeName: z.string().min(1).nullable(), phase: z.enum(['current', 'upcoming', 'completed', 'unknown']),
+      localTaskIds:z.array(z.string()).optional(),
       finishedAt: z.string().datetime({ offset: true }).nullable().optional(),
     }).strict()),
   }).strict()),
-  localAssociated: z.array(z.object({
+  localAssociated: z.array(WorkspaceFeishuContextDtoSchema.extend({
+    verified: z.boolean().optional(), error: z.string().nullable().optional(),
     associationKey: z.string().min(1), workItemId: z.string().regex(/^[1-9]\d*$/), title: z.string().min(1),
     url: z.string().url().nullable(), localTaskIds: z.array(z.string()),
+    kind:z.enum(['work_item','subtask','unresolved']).optional(),parentId:z.string().nullable().optional(),
   }).strict()),
   counts: z.object({ current: z.number().int().nonnegative(), stateResponsibility: z.number().int().nonnegative(), upcoming: z.number().int().nonnegative() }).strict(),
 }).strict();
@@ -1633,14 +1667,16 @@ export const WorkspaceOperationRecordsDtoSchema = z.object({
     childId: z.string().regex(/^[1-9]\d*$/).nullable(), label: z.string().min(1).max(80) }).strict()).max(1000),
 }).strict();
 export const WorkspaceConsoleSessionCandidateDtoSchema = z.object({
+  workspaceTargets:z.array(z.object({taskId:z.string(),targetRef:z.string()}).strict()).optional(),
   sessionId: z.string(), title: z.string(), projectPath: z.string(), updatedAt: z.number(), status: z.string(), url: z.string(),
   engine: z.string().nullable(), modelId: z.string().nullable(), latestMessage: z.string().nullable(),
   feishuWorkItemIds: z.array(z.string().regex(/^[1-9]\d*$/)).optional(),
 }).strict();
 export const WorkspaceConsoleDashboardDtoSchema = z.object({
+  workspaceId: z.string().min(1).max(128).optional(),
   workspacePath: z.string(), capturedAt: z.number().int().nonnegative(), registryGeneratedAt: z.string().nullable(),
   counts: z.object({ total: z.number().int().nonnegative(), completed: z.number().int().nonnegative(), active: z.number().int().nonnegative(), runs: z.number().int().nonnegative(), sessions: z.number().int().nonnegative() }).strict(),
-  tasks: z.array(WorkspaceConsoleTaskDtoSchema.extend({ runIds: z.array(z.string()), sessionIds: z.array(z.string()), observedDurationSeconds: z.number().int().nonnegative().nullable() }).strict()),
+  tasks: z.array(WorkspaceConsoleTaskDtoSchema.extend({ runIds: z.array(z.string()), sessionIds: z.array(z.string()), observedDurationSeconds: z.number().int().nonnegative().nullable(), activityEvidence: z.object({state:z.enum(['complete','active','uncertain','stale','unavailable']),incomplete:z.boolean()}).strict().optional() }).strict()),
   runs: z.array(WorkspaceConsoleRunDtoSchema), unmatchedRuns: z.array(WorkspaceConsoleRunDtoSchema),
   sessions: z.array(WorkspaceConsoleSessionCandidateDtoSchema), unlinkedSessions: z.array(WorkspaceConsoleSessionCandidateDtoSchema),
   errors: z.array(z.string()),

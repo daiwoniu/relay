@@ -7,9 +7,10 @@ export function getWorkspaceConsoleDashboard(signal?: AbortSignal, force = false
 
 export type ResponsibilityRefreshTrigger = 'open' | 'auto' | 'retry' | 'manual' | 'detail';
 export function getWorkspaceConsoleResponsibility(signal?: AbortSignal, force = false,
-  trigger: ResponsibilityRefreshTrigger = 'open'): Promise<WorkspaceConsoleResponsibilityDto> {
+  trigger: ResponsibilityRefreshTrigger = 'open', taskId?:string): Promise<WorkspaceConsoleResponsibilityDto> {
   const query = new URLSearchParams({ trigger });
   if (force) query.set('refresh', '1');
+  if(taskId)query.set('taskId',taskId);
   return requestJson<WorkspaceConsoleResponsibilityDto>(`/api/admin/workspace-console/responsibility?${query}`, { ...(trigger==='manual'||trigger==='retry'?{analytics:{feature:'workbench' as const,action:'refresh',surface:'workbench' as const}}:{}),signal, timeoutMs: 100_000, cache: 'no-store' });
 }
 
@@ -22,15 +23,15 @@ export function getWorkspaceOperationRecords(parentId: string, anchor: string, c
     { signal, timeoutMs: 25_000, cache: 'no-store' });
 }
 
-export function linkWorkspaceTaskSession(taskId: string, sessionId: string): Promise<WorkspaceTaskSessionLinkResponseDto> {
+export function linkWorkspaceTaskSession(taskId: string, sessionId: string,targetRef?:string): Promise<WorkspaceTaskSessionLinkResponseDto> {
   return requestJson(`/api/admin/workspace-console/tasks/${encodeURIComponent(taskId)}/sessions`, {
     analytics:{feature:'workbench',action:'link_session',surface:'workbench'},
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sessionId }), timeoutMs: 12_000,
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sessionId,...(targetRef?{targetRef}:{}) }), timeoutMs: 12_000,
   });
 }
 
-export function unlinkWorkspaceTaskSession(taskId: string, sessionId: string): Promise<WorkspaceTaskSessionLinkResponseDto> {
-  return requestJson(`/api/admin/workspace-console/tasks/${encodeURIComponent(taskId)}/sessions/${encodeURIComponent(sessionId)}`, {
+export function unlinkWorkspaceTaskSession(taskId: string, sessionId: string,targetRef?:string): Promise<WorkspaceTaskSessionLinkResponseDto> {
+  return requestJson(`/api/admin/workspace-console/tasks/${encodeURIComponent(taskId)}/sessions/${encodeURIComponent(sessionId)}${targetRef?`?targetRef=${encodeURIComponent(targetRef)}`:''}`, {
     analytics:{feature:'workbench',action:'unlink_session',surface:'workbench'},
     method: 'DELETE', timeoutMs: 12_000,
   });

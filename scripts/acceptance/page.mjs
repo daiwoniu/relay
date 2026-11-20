@@ -34,6 +34,7 @@ async function main(rawArgs) {
     const report = await runReadOnlyAcceptance({
       config,
       cookieValue: session.cookieValue,
+      workbench: options.workbench === true,
       runAdditionalScenarios: options.mode === 'engine'
         ? ({ page }) => runEngineScenarios({ page, engine: options.engine, scenario: options.scenario })
         : undefined,
@@ -52,5 +53,5 @@ async function relayAvailable(origin) {
 }
 
 function printHelp() {
-  console.log(`Relay Headless 页面验收\n\n用法：\n  npm run acceptance:page\n  npm run acceptance:page -- --allow-engine-run --engine <codex|codebuddy|all> --scenario <complete|stop|refresh>\n\n说明：\n  默认只读；不会创建会话、发送消息、停止任务或重启 Relay。\n  真实引擎必须同时显式提供 allow、engine、scenario，且不会自动重启服务或注入 Provider 故障。\n  使用独立 Edge profile，完成报告、截图和精确清理。`);
+  console.log(`Relay Headless 页面验收\n\n用法：\n  npm run acceptance:page\n  npm run acceptance:page -- --workbench\n  npm run acceptance:page -- --allow-engine-run --engine <codex|codebuddy|all> --scenario <complete|stop|refresh>\n\n说明：\n  默认只读；不会创建会话、发送消息、停止任务或重启 Relay。\n  --workbench 检查当前正式工作台的桌面/窄屏列表、详情和横向溢出，不切换前端构建。\n  真实引擎必须同时显式提供 allow、engine、scenario，且不会自动重启服务或注入 Provider 故障。\n  使用独立 Edge profile，完成报告、截图和精确清理。`);
 }

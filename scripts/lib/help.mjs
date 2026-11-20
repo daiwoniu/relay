@@ -35,7 +35,7 @@ const COMMANDS = {
     context: [
       '启动前检查未解决的 Git 冲突、依赖指纹和关键运行文件；异常时不会启动服务。',
       '依赖清单变化时先运行 npm run setup；已有服务时先运行 npm run stop。',
-      '公网地址在 config/relay.conf 的 PUBLIC_ALLOWED_ADDRESSES 中配置。',
+      '公网地址在 config/relay.conf 的 PUBLIC_ALLOWED_ADDRESSES 中配置；config/relay.local.conf 按键优先覆盖。',
       '留空表示不允许公网地址；0.0.0.0 表示不限制公网地址（高风险）。',
     ],
   },
@@ -138,12 +138,14 @@ const COMMANDS = {
     usage: 'npm run acceptance:page [-- help] | npm run acceptance:page -- --allow-engine-run --engine <codex|codebuddy|all> --scenario <complete|stop|refresh>',
     options: [
       ['help', '查看页面验收命令帮助'],
+      ['--workbench', '只读检查工作台桌面和移动列表、详情及布局，不调用引擎'],
       ['--allow-engine-run', '显式允许本次真实引擎请求'],
       ['--engine <值>', '明确 codex、codebuddy 或 all'],
       ['--scenario <值>', '明确 complete、stop 或 refresh'],
     ],
     examples: [
       ['npm run acceptance:page', '执行默认只读桌面/移动视口验收'],
+      ['npm run acceptance:page -- --workbench', '检查当前正式工作台的列表和详情布局'],
       ['npm run acceptance:page -- --allow-engine-run --engine codex --scenario complete', '执行一次明确授权的 Codex 完成场景'],
     ],
     context: [

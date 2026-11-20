@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { readObservedTaskDurations } from './activity-duration.js';
+import { readObservedTaskDurations, readObservedTaskActivity } from './activity-duration.js';
 
 test('merges overlapping task activity intervals without counting gaps', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'relay-activity-duration-'));
@@ -12,10 +12,22 @@ test('merges overlapping task activity intervals without counting gaps', async (
     await fs.mkdir(dir, { recursive: true });
     await fs.writeFile(path.join(dir, 'first.json'), JSON.stringify({ task_id: 'task-a', started_at: '2026-09-26T09:00:00+08:00', ended_at: '2026-09-26T10:00:00+08:00' }));
     await fs.writeFile(path.join(dir, 'second.json'), JSON.stringify({ task_id: 'task-a', started_at: '2026-09-26T09:30:00+08:00', ended_at: '2026-09-26T10:30:00+08:00' }));
-    await fs.writeFile(path.join(dir, 'third.json'), JSON.stringify({ task_id: 'task-a', started_at: '2026-09-26T11:00:00+08:00', ended_at: null }));
+    await fs.writeFile(path.join(dir, 'third.json'), JSON.stringify({ schema_version: 1, task_id: 'task-a', activity_id: 'third', state: 'working', heartbeat_at: '2026-09-26T11:09:00+08:00', started_at: '2026-09-26T11:00:00+08:00', ended_at: null }));
     await fs.writeFile(path.join(dir, 'invalid.json'), '{');
     const durations = await readObservedTaskDurations(root, ['task-a', 'task-b'], Date.parse('2026-09-26T11:10:00+08:00'));
     assert.equal(durations.get('task-a'), 6000);
     assert.equal(durations.get('task-b'), undefined);
+  } finally { await fs.rm(root, { recursive: true, force: true }); }
+});
+
+test('expired/uncertain leases stop at heartbeat and invalid open records do not accrue forever', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'relay-activity-stale-'));
+  try {
+    const dir = path.join(root, '.tmp', 'task-activity', 'task-a'); await fs.mkdir(dir, { recursive: true });
+    await fs.writeFile(path.join(dir, 'lease.json'), JSON.stringify({ schema_version: 1, task_id: 'task-a', activity_id: 'lease', state: 'working', started_at: '2026-09-26T09:00:00+08:00', heartbeat_at: '2026-09-26T09:10:00+08:00' }));
+    await fs.writeFile(path.join(dir, 'legacy.json'), JSON.stringify({ task_id: 'task-a', started_at: '2026-09-26T01:00:00+08:00' }));
+    const result = await readObservedTaskActivity(root, ['task-a'], Date.parse('2026-09-26T15:00:00+08:00'));
+    assert.equal(result.durations.get('task-a'), 600);
+    assert.deepEqual(result.evidence.get('task-a'),{state:'stale',incomplete:true});
   } finally { await fs.rm(root, { recursive: true, force: true }); }
 });

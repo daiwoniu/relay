@@ -48,8 +48,11 @@ button.archive-preview-name { min-height: 1.5rem; color: var(--color-primary); }
 .workspace-preview-tab { max-width: 12rem; }
 .workspace-preview-tab-label { flex: 1; min-width: 0; align-self: stretch; }
 .workspace-preview-tab__close { opacity: 1; width: 1.5rem; height: 1.5rem; }
-.workspace-preview-context { flex-wrap: wrap; gap: 0.25rem; min-height: 2.5rem; padding: 0.25rem 0.625rem; }
-.workspace-preview-identity { flex: 1 1 5rem; min-width: 0; }
+.workspace-preview-context { flex-wrap: nowrap; gap: 0.25rem; min-height: 2.5rem; padding: 0.25rem 0.625rem; }
+.workspace-preview-identity { flex: 1 1 0; min-width: 0; }
+.workspace-preview-path-measure { position: fixed; left: 0; top: 0; width: max-content; white-space: pre; visibility: hidden; pointer-events: none; transform: translateX(-100%); }
+.workspace-preview-extra-actions { display: flex; flex: none; align-items: center; gap: 0.125rem; width: max-content; }
+.workspace-preview-extra-actions.is-measuring { position: fixed; left: 0; top: 0; visibility: hidden; pointer-events: none; transform: translateX(-100%); }
 .workspace-preview-path-hint { width: 100%; min-width: 0; }
 .workspace-preview-mode-hint { flex: 1 0 auto; min-width: 0; }
 .workspace-preview-path { display: block; width: 100%; min-width: 0; margin-top: 0; border-radius: 0.25rem; background: transparent; color: var(--color-text-secondary); font-size: 0.75rem; line-height: 1.5; text-overflow: clip; outline: none; }

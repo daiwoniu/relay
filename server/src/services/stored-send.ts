@@ -23,7 +23,7 @@ export class StoredSend {
     getCatalog:(engine:EngineId,options?:{preferCached?:boolean})=>Promise<EngineModelCatalog>;assertExclusiveWriter:()=>Promise<void>;attachmentAvailability:AttachmentAvailability;
     assertAdmission:(engine:EngineId)=>Promise<void>;
     validateAsyncQuestion?:(actor:Actor,command:SendCommand,engine:EngineId)=>Promise<void>;
-    workspaceTaskLink:(actor:Actor,command:SendCommand)=>Promise<{taskId:string;workspacePath:string}|undefined>;
+    workspaceTaskLink:(actor:Actor,command:SendCommand)=>Promise<{taskId:string;workspacePath:string;workspaceId?:string;connectionScope?:string;targetRef?:string}|undefined>;
   }){}
   send(actor:Actor,raw:SendCommand,origin:MessageOriginDto){
     let command:SendCommand;try{command=SendCommandSchema.parse(JSON.parse(canonicalJson(raw,512*1024)));}catch{return Promise.reject(new StorageContractError('INVALID_ARGUMENT'));}

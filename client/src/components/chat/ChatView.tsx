@@ -689,6 +689,7 @@ export default function ChatView() {
     let targetSessionId = activeSessionId;
     let targetProjectId: string | null = null;
     let workspaceTaskId: string | undefined;
+    let workspaceId: string | undefined;
     let workspaceTaskTitle: string | undefined;
     let hasWorkspaceTaskLaunch = false;
     const creatingSession = !targetSessionId;
@@ -699,6 +700,7 @@ export default function ChatView() {
         const taskLaunch = readWorkspaceTaskLaunch(sessionStorage, targetProjectId, Date.now());
         hasWorkspaceTaskLaunch = Boolean(taskLaunch);
         workspaceTaskId = taskLaunch?.taskId;
+        workspaceId = taskLaunch?.workspaceId;
         workspaceTaskTitle = taskLaunch?.title;
       }
       if (!targetSessionId) {
@@ -720,7 +722,7 @@ export default function ChatView() {
       const selectedEngine = currentSession?.engine ?? newSessionEngine;
       const sendMessage = async () => {
         if (!selectedEngine) throw new Error('请选择一个可用的 AI 引擎');
-        await send(targetSessionId, content, messageId, attachments, onConfirmationState, selectedEngine, enginePreferences, workspaceTaskId, replyToAsyncQuestionId);
+        await send(targetSessionId, content, messageId, attachments, onConfirmationState, selectedEngine, enginePreferences, workspaceTaskId, replyToAsyncQuestionId, workspaceId);
       };
       if (creatingSession) {
         await settleCreatedSessionFirstSend({

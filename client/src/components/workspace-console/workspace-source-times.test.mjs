@@ -6,6 +6,7 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import ts from 'typescript';
 import { formatDateTime } from '../../utils/date-display.ts';
+import {latestFeishuTaskUpdatedAt,readWorkspaceRefreshTimes,rememberWorkspaceRefreshTime,trackSuccessfulWorkspaceRefresh} from './workspace-source-times.ts';
 
 const componentUrl = new URL('./WorkspaceSourceTimes.tsx', import.meta.url).href;
 const hooks = registerHooks({
@@ -85,4 +86,33 @@ test('本地部分来源首次不可用也标记失败，不被台账主体可�
     sourceMeta: { state: 'unavailable', lastSuccessAt: null, lastAttemptAt: attempt } } });
   assert.match(html, /尚未成功刷新/);
   assert.match(html, new RegExp(`${time(attempt)} · 失败`));
+});
+
+test('飞书数据时间取完整报表中任务和子任务的最新更新时间，不取采集时间',()=>{
+ const older='2026-11-19T12:00:00+08:00',latest='2026-11-20T20:00:00+08:00';
+ const responsibility={generatedAt:'2026-11-20T21:00:00+08:00',fetchedAt:Date.parse('2026-11-20T21:00:00+08:00'),items:[{workItemId:'1',updatedAt:older}],workbenchItems:[{workItemId:'1',updatedAt:'2026-11-20T11:00:00+08:00',mySubtasks:[]},{workItemId:'hidden',participated:false,updatedAt:older,mySubtasks:[{updatedAt:latest}]}]};
+ assert.equal(latestFeishuTaskUpdatedAt(responsibility),Date.parse(latest));
+ const html=render({responsibility});assert.match(html,new RegExp(`<dt>数据时间</dt><dd>${time(latest)}</dd>`));
+ assert.match(html,new RegExp(`<dt>最后刷新</dt><dd>${time(responsibility.fetchedAt)}</dd>`));
+ assert.equal(latestFeishuTaskUpdatedAt({...responsibility,items:[...responsibility.items].reverse(),workbenchItems:[...responsibility.workbenchItems].reverse()}),Date.parse(latest));
+ const empty=render({responsibility:{generatedAt,fetchedAt:success,items:[{updatedAt:'bad',createdAt:latest}],workbenchItems:[]}});
+ assert.match(empty,/<dt>数据时间<\/dt><dd>未提供<\/dd>/);
+});
+
+test('成功刷新记录发起时间，失败和缓存读取均不推进，乱序成功不回退时间',async()=>{
+ const values=new Map(),storage={getItem:key=>values.get(key)??null,setItem:(key,value)=>values.set(key,value)};
+ const record=at=>rememberWorkspaceRefreshTime(storage,'user','project',at);
+ await trackSuccessfulWorkspaceRefresh(async()=>({ok:true}),value=>value.ok,record,()=>success);
+ assert.equal(readWorkspaceRefreshTimes(storage,'user').project,success);
+ await trackSuccessfulWorkspaceRefresh(async()=>({ok:false}),value=>value.ok,record,()=>attempt);
+ await assert.rejects(trackSuccessfulWorkspaceRefresh(async()=>{throw Error('network');},()=>true,record,()=>attempt));
+ await trackSuccessfulWorkspaceRefresh(async()=>({cached:true}),value=>!value.cached,record,()=>attempt);
+ assert.equal(readWorkspaceRefreshTimes(storage,'user').project,success);
+ record(attempt);record(success);assert.equal(readWorkspaceRefreshTimes(storage,'user').project,attempt);
+ assert.equal(readWorkspaceRefreshTimes(storage,'other-user').project,null);
+ const html=render({responsibility:{generatedAt,fetchedAt:attempt,items:[],workbenchItems:[],sourceMeta:{state:'failed_snapshot',lastSuccessAt:success,lastAttemptAt:attempt}},projectRefreshAt:success-60_000,projectFailed:true});
+ assert.match(html,new RegExp(`<dt>最后刷新</dt><dd>${time(success-60_000)}</dd>`));
+ assert.match(html,new RegExp(`${time(attempt)} · 失败`));
+ const unavailable={getItem(){throw Error('blocked');},setItem(){throw Error('blocked');}};
+ assert.equal(rememberWorkspaceRefreshTime(unavailable,'user','local',success).local,success);
 });

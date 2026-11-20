@@ -8,6 +8,7 @@ import { formatDateTime } from '../../utils/date-display.ts';
 const generationRules=fs.readFileSync(new URL('./generation-rules.md',import.meta.url),'utf8');
 
 const code=ts.transpileModule(fs.readFileSync(new URL('./PageHostingPage.tsx',import.meta.url),'utf8'),{compilerOptions:{jsx:ts.JsxEmit.ReactJSX,module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
+const previewCode=ts.transpileModule(fs.readFileSync(new URL('./PreviewHostingDialog.tsx',import.meta.url),'utf8'),{compilerOptions:{jsx:ts.JsxEmit.ReactJSX,module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
 const settle=()=>new Promise(resolve=>setImmediate(resolve));
 const stage={uploadId:'upload',previewToken:'token',expiresAt:Date.now()+3600000,entries:['index.html','pages/about.html'],suggestedEntry:'index.html',fileCount:3,totalBytes:1234,rewritten:2,warnings:[],warningCount:0};
 function nodes(tree,predicate){if(Array.isArray(tree))return tree.flatMap(node=>nodes(node,predicate));if(!tree||typeof tree!=='object')return [];return [...(predicate(tree)?[tree]:[]),...nodes(tree.props?.children,predicate)];}
@@ -29,8 +30,10 @@ function harness(t,overrides={},given={}){
     hostedUrl:id=>`/p/${id}/`,
     ...overrides,
   };
-  const module={exports:{}};
-  new Function('require','module','exports',code)(name=>{
+  const module={exports:{}},previewModule={exports:{}};
+  const resolve=name=>{
+    if(name==='./PreviewHostingDialog')return previewModule.exports;
+    if(name==='../../analytics/features')return {featureAction(){},localAction:()=>()=>{},useFeatureView(){}};
     if(name==='react')return hooks;if(name==='react/jsx-runtime')return jsx;if(name==='../../api/page-hosting')return api;
     if(name==='../../auth/AuthContext')return {useAuth:()=>({user:given.authUser??{role:'member'}})};
     if(name==='../../stores/chat')return {useChatStore:selector=>selector({toggleSidebar(){}})};
@@ -39,15 +42,134 @@ function harness(t,overrides={},given={}){
     if(name==='./generation-rules.md?raw')return {default:generationRules};
     if(name==='../../utils/clipboard')return {copyToClipboard:async text=>{calls.push(['copy',text]);if(given.copyError)throw given.copyError;}};
     return {default:()=>null};
-  },module,module.exports);
+  };
+  new Function('require','module','exports',previewCode)(resolve,previewModule,previewModule.exports);
+  new Function('require','module','exports',code)(resolve,module,module.exports);
   const props={site:null,onClose(){calls.push(['close']);},onPublished(site){calls.push(['published',site]);},...given};
-  const render=()=>{cursor=0;return module.exports.UploadDialog(props);};
+  const render=()=>{cursor=0;const tree=module.exports.UploadDialog(props);return tree.type===previewModule.exports.default?tree.type(tree.props):tree;};
   const flush=()=>{for(const effect of effects.splice(0))effect();};
   const cleanup=()=>{for(const slot of slots)slot?.cleanup?.();};t.after(cleanup);
-  return {render,flush,cleanup,calls,page:()=>{cursor=0;return module.exports.default(given.pageProps);}};
+  return {render,flush,cleanup,calls,props,page:()=>{cursor=0;return module.exports.default(given.pageProps);}};
 }
 const button=(tree,label)=>nodes(tree,node=>node.type==='button'&&content(node)===label)[0];
 const input=(tree,placeholder)=>nodes(tree,node=>node.type==='input'&&node.props.placeholder===placeholder)[0];
+const choice=(tree,label)=>nodes(tree,node=>node.props?.label===label&&Array.isArray(node.props?.options))[0];
+
+test('preview form imports the current file or directory without irrelevant source controls',async t=>{
+  const h=harness(t,{importHostedFiles:async(...args)=>{h.calls.push(['import',...args]);return {...stage,entries:['index.html','about.html']};}}, {initialLocalPath:'D:/site/pages/about.html'});
+  let tree=h.render();h.flush();
+  assert.match(content(tree),/D:\/site\/pages\/about.html/);
+  assert.equal(button(tree,'上传文件'),undefined);
+  assert.equal(button(tree,'选择文件 / ZIP'),undefined);
+  assert.equal(nodes(tree,node=>node.type==='input'&&node.props.type==='file').length,0);
+  assert.equal(h.calls.length,0);
+  nodes(tree,node=>node.type==='input'&&node.props.type==='checkbox')[0].props.onChange({target:{checked:true}});tree=h.render();
+  button(tree,'检查页面').props.onClick();await settle();tree=h.render();
+  assert.equal(h.calls.find(call=>call[0]==='import')[1],'D:/site/pages');
+  assert.equal(nodes(tree,node=>node.type==='a'&&content(node)==='预览')[0].props.href,'/preview/about.html');
+  assert.ok(choice(tree,'发布到'));assert.equal(choice(tree,'打开的页面'),undefined);
+  assert.equal(h.calls.some(call=>call[0]==='publish'),false);
+});
+
+test('preview updates a selected hosted page using its name and concurrency token',async t=>{
+  const site={id:'existing',name:'已有页面',entry:'index.html',contentToken:'old-token',enabled:false};
+  const h=harness(t,{}, {initialLocalPath:'D:/site/index.html',sites:[site]});
+  let tree=h.render();h.flush();
+  choice(tree,'发布到').props.onChange(site.id);
+  tree=h.render();assert.match(content(tree),/更新后仍保持停用/);
+  button(tree,'检查页面').props.onClick();await settle();tree=h.render();
+  button(tree,'更新托管').props.onClick();await settle();
+  assert.deepEqual(h.calls.find(call=>call[0]==='publish')[1],{uploadId:'upload',name:'已有页面',entry:'index.html',siteId:'existing',expectedToken:'old-token'});
+});
+
+test('changing preview resource scope discards the prior inspection before importing again',async t=>{
+  const h=harness(t,{}, {initialLocalPath:'D:/site/about.html'});
+  let tree=h.render();h.flush();button(tree,'检查页面').props.onClick();await settle();tree=h.render();
+  nodes(tree,node=>node.type==='input'&&node.props.type==='checkbox')[0].props.onChange({target:{checked:true}});await settle();tree=h.render();
+  assert.ok(h.calls.find(call=>call[0]==='cancel'));
+  assert.equal(button(tree,'发布'),undefined);
+  button(tree,'检查页面').props.onClick();await settle();
+  assert.equal(h.calls.filter(call=>call[0]==='import').at(-1)[1],'D:/site');
+});
+
+test('failed scope cleanup preserves the inspected source and can be retried',async t=>{
+  const failure=new Error('清理失败');
+  const h=harness(t,{cancelHostedUpload:async()=>{throw failure;}},{initialLocalPath:'D:/site/index.html'});
+  let tree=h.render();h.flush();button(tree,'检查页面').props.onClick();await settle();tree=h.render();
+  nodes(tree,node=>node.type==='input'&&node.props.type==='checkbox')[0].props.onChange({target:{checked:true}});await settle();tree=h.render();
+  assert.equal(nodes(tree,node=>node.type==='input'&&node.props.type==='checkbox')[0].props.checked,false);
+  assert.ok(button(tree,'发布'));
+  assert.ok(nodes(tree,node=>node.props?.error===failure).length);
+});
+
+test('failed preview update retains its selected target and does not report success',async t=>{
+  const failure=new Error('页面已被更新，请重新选择');
+  const site={id:'existing',name:'已有页面',entry:'index.html',contentToken:'selected-token',enabled:true};
+  const h=harness(t,{publishHostedSite:async()=>{throw failure;}},{initialLocalPath:'D:/site/index.html',sites:[site]});
+  let tree=h.render();h.flush();choice(tree,'发布到').props.onChange(site.id);
+  tree=h.render();button(tree,'检查页面').props.onClick();await settle();tree=h.render();
+  button(tree,'更新托管').props.onClick();await settle();tree=h.render();
+  assert.equal(choice(tree,'发布到').props.value,'existing');
+  assert.ok(nodes(tree,node=>node.props?.error===failure).length);
+  assert.equal(h.calls.some(call=>call[0]==='published'),false);
+});
+
+test('update retries wait for refreshed targets and use a newly selected version',async t=>{
+  const site={id:'existing',name:'已有页面',entry:'index.html',contentToken:'old',enabled:true};
+  const submitted=[];let reloads=0;
+  const h=harness(t,{publishHostedSite:async input=>{submitted.push(input);if(submitted.length===1)throw new Error('版本冲突');return {site};}},{initialLocalPath:'D:/site/index.html',sites:[site],onReloadSites:()=>reloads++});
+  let tree=h.render();h.flush();choice(tree,'发布到').props.onChange(site.id);tree=h.render();button(tree,'检查页面').props.onClick();await settle();tree=h.render();
+  button(tree,'更新托管').props.onClick();await settle();assert.equal(reloads,1);
+  h.props.sitesLoading=true;tree=h.render();assert.equal(button(tree,'更新托管').props.disabled,true);
+  button(tree,'更新托管').props.onClick();await settle();assert.equal(submitted.length,1);
+  h.props.sitesLoading=false;h.props.sites=[{...site,contentToken:'new'}];tree=h.render();
+  choice(tree,'发布到').props.onChange(site.id);tree=h.render();button(tree,'更新托管').props.onClick();await settle();
+  assert.deepEqual(submitted.map(input=>input.expectedToken),['old','new']);
+});
+
+test('switching update targets preserves the new-page name draft',t=>{
+  const site={id:'existing',name:'已有名称',entry:'index.html',contentToken:'token',enabled:true};
+  const h=harness(t,{}, {initialLocalPath:'D:/site/index.html',sites:[site]});
+  let tree=h.render();h.flush();input(tree,'页面名称').props.onChange({target:{value:'自定义名称'}});
+  tree=h.render();choice(tree,'发布到').props.onChange(site.id);tree=h.render();
+  assert.equal(input(tree,'页面名称'),undefined);
+  choice(tree,'发布到').props.onChange('');tree=h.render();
+  assert.equal(input(tree,'页面名称').props.value,'自定义名称');
+});
+
+test('a removed update target cannot silently turn into a new publication',async t=>{
+  const site={id:'existing',name:'已有页面',entry:'index.html',contentToken:'token',enabled:true};
+  const h=harness(t,{}, {initialLocalPath:'D:/site/index.html',sites:[site]});
+  let tree=h.render();h.flush();choice(tree,'发布到').props.onChange(site.id);tree=h.render();
+  button(tree,'检查页面').props.onClick();await settle();h.props.sites=[];tree=h.render();
+  assert.equal(button(tree,'更新托管').props.disabled,true);
+  button(tree,'更新托管').props.onClick();await settle();
+  assert.equal(h.calls.some(call=>call[0]==='publish'),false);
+});
+
+for(const enabled of [true,false])test(`preview publication shows a direct link result (${enabled?'enabled':'disabled'})`,async t=>{
+  const published={id:'created',publicId:'short-id',name:'结果页面',enabled};
+  const h=harness(t,{publishHostedSite:async()=>({site:published})},{initialLocalPath:'D:/site/index.html'});
+  let tree=h.render();h.flush();button(tree,'检查页面').props.onClick();await settle();tree=h.render();
+  button(tree,'发布').props.onClick();await settle();tree=h.render();
+  assert.equal(choice(tree,'发布到'),undefined);
+  assert.equal(nodes(tree,node=>node.type==='input'&&node.props.readOnly)[0].props.value,'/p/short-id/');
+  const open=nodes(tree,node=>node.type==='a'&&content(node)==='打开页面')[0];
+  assert.equal(Boolean(open),enabled);if(open)assert.equal(open.props.href,'/p/short-id/');
+  button(tree,'复制链接').props.onClick();await settle();tree=h.render();
+  assert.ok(button(tree,'链接已复制'));assert.equal(h.calls.find(call=>call[0]==='copy')[1],'/p/short-id/');
+  button(tree,'完成').props.onClick();assert.ok(h.calls.find(call=>call[0]==='close'));
+  h.cleanup();assert.equal(h.calls.some(call=>call[0]==='cancel'),false);
+});
+
+test('copy failure preserves the published link and provides a retry',async t=>{
+  const failure=new Error('剪贴板不可用');
+  const h=harness(t,{publishHostedSite:async()=>({site:{id:'created',name:'页面',enabled:true}})},{initialLocalPath:'D:/site/index.html',copyError:failure});
+  let tree=h.render();h.flush();button(tree,'检查页面').props.onClick();await settle();tree=h.render();button(tree,'发布').props.onClick();await settle();tree=h.render();
+  button(tree,'复制链接').props.onClick();await settle();tree=h.render();
+  assert.ok(button(tree,'复制链接'));assert.ok(nodes(tree,node=>node.props?.error===failure).length);
+  assert.equal(nodes(tree,node=>node.type==='input'&&node.props.readOnly)[0].props.value,'/p/created/');
+});
 
 test('generation rules copy the full portable document and report success without publishing',async t=>{
   const h=harness(t,{listHostedSites:async()=>({sites:[]})},{authUser:{id:'admin',role:'admin'}});
@@ -56,6 +178,73 @@ test('generation rules copy the full portable document and report success withou
   assert.equal(h.calls.find(call=>call[0]==='copy')[1],generationRules);
   assert.match(content(h.page()),/AI 生成规则已复制/);
   assert.equal(h.calls.some(call=>['upload','import','publish'].includes(call[0])),false);
+});
+
+test('preview request opens prefilled dialog and a new request replaces its seed',async t=>{
+  const pageProps={importRequest:{path:'D:/site/one.html',requestId:1}};
+  const h=harness(t,{listHostedSites:async()=>({sites:[]})},{authUser:{id:'admin',role:'admin'},pageProps});
+  h.page();h.flush();await settle();
+  let dialog=nodes(h.page(),node=>node.props?.initialLocalPath==='D:/site/one.html')[0];
+  assert.equal(dialog.key,'1');
+  pageProps.importRequest={path:'D:/site/two.html',requestId:2};
+  h.page();h.flush();
+  dialog=nodes(h.page(),node=>node.props?.initialLocalPath==='D:/site/two.html')[0];
+  assert.equal(dialog.key,'2');
+  assert.equal(h.calls.some(call=>['import','upload','publish'].includes(call[0])),false);
+});
+
+test('cancelling a preview addition closes its underlying hosting panel',async t=>{
+  let closed=0;
+  const h=harness(t,{listHostedSites:async()=>({sites:[]})},{authUser:{id:'admin',role:'admin'},pageProps:{onClose:()=>closed++,importRequest:{path:'D:/site/one.html',requestId:1}}});
+  h.page();h.flush();await settle();
+  nodes(h.page(),node=>typeof node.props?.onPublished==='function')[0].props.onClose();
+  assert.equal(closed,1);
+  assert.equal(nodes(h.page(),node=>typeof node.props?.onPublished==='function').length,0);
+  assert.equal(h.calls.some(call=>['import','upload','publish'].includes(call[0])),false);
+});
+
+test('cancelling an addition from management preserves its hosting panel',async t=>{
+  let closed=0;
+  const h=harness(t,{listHostedSites:async()=>({sites:[]})},{authUser:{id:'admin',role:'admin'},pageProps:{onClose:()=>closed++}});
+  h.page();h.flush();await settle();
+  button(h.page(),'添加页面').props.onClick();
+  nodes(h.page(),node=>typeof node.props?.onPublished==='function')[0].props.onClose();
+  assert.equal(closed,0);
+  assert.equal(nodes(h.page(),node=>typeof node.props?.onPublished==='function').length,0);
+});
+
+for(const fromPreview of [false,true])test(`publishing from ${fromPreview?'preview':'management'} preserves the correct containing window`,async t=>{
+  let closed=0;
+  const site={id:'new',publicId:'new-public',name:'新页面',entry:'index.html',fileCount:1,totalBytes:100,updatedAt:10,enabled:true};
+  const h=harness(t,{listHostedSites:async()=>({sites:[]})},{authUser:{id:'admin',role:'admin'},pageProps:{onClose:()=>closed++,...(fromPreview?{importRequest:{path:'D:/site/one.html',requestId:1}}:{})}});
+  h.page();h.flush();await settle();
+  if(!fromPreview)button(h.page(),'添加页面').props.onClick();
+  nodes(h.page(),node=>typeof node.props?.onPublished==='function')[0].props.onPublished(site);
+  const tree=h.page();
+  assert.equal(closed,0);
+  assert.equal(nodes(tree,node=>typeof node.props?.onPublished==='function').length,fromPreview?1:0);
+  if(fromPreview)assert.equal(tree.props.suspended,true);
+  if(fromPreview)assert.doesNotMatch(content(tree),/页面已发布，可打开或复制访问链接/);
+  else assert.match(content(tree),/页面已发布，可打开或复制访问链接/);
+  assert.ok(button(tree,'复制链接'));
+  assert.ok(button(tree,'更多'));
+  assert.equal(nodes(tree,node=>node.type==='a'&&content(node)==='打开')[0].props.href,'/p/new-public/');
+});
+
+test('a late initial list cannot erase a newly published preview result',async t=>{
+  let release,calls=0;
+  const site={id:'new',name:'新页面',entry:'index.html',fileCount:1,totalBytes:100,updatedAt:10,enabled:true};
+  const old={...site,id:'old',name:'已有页面',updatedAt:1};
+  const h=harness(t,{listHostedSites:()=>++calls===1?new Promise(resolve=>{release=resolve;}):Promise.resolve({sites:[site,old]})},{authUser:{id:'admin',role:'admin'},pageProps:{onClose(){},importRequest:{path:'D:/site/one.html',requestId:1}}});
+  h.page();h.flush();
+  nodes(h.page(),node=>typeof node.props?.onPublished==='function')[0].props.onPublished(site);
+  assert.match(content(h.page()),/新页面/);
+  release({sites:[old]});await settle();
+  assert.match(content(h.page()),/新页面/);
+  h.flush();await settle();
+  assert.equal(calls,2);
+  const tree=h.page();
+  assert.match(content(tree),/新页面/);assert.match(content(tree),/已有页面/);
 });
 
 test('generation rules surface clipboard failures without claiming success',async t=>{

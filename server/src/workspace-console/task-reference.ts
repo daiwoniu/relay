@@ -1,5 +1,9 @@
 export function feishuWorkItemIdFromTaskId(taskId: string): string | null {
-  return /^feishu:([1-9]\d*)$/.exec(taskId)?.[1] ?? null;
+  return parseFeishuTarget(taskId)?.id ?? null;
+}
+export function parseFeishuTarget(value:string):{kind:'work_item'|'subtask';id:string;parentId:string}|null {
+  const parent=/^feishu:([1-9]\d{0,18})$/.exec(value);if(parent)return{kind:'work_item',id:parent[1],parentId:parent[1]};
+  const child=/^feishu-subtask:([1-9]\d{0,18}):([1-9]\d{0,18})$/.exec(value);return child?{kind:'subtask',parentId:child[1],id:child[2]}:null;
 }
 
 /** Older Feishu launches carried the exact generated first-message context but no link record. */

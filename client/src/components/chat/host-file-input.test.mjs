@@ -120,7 +120,7 @@ test('附件授权后同时进入乐观消息与 WebSocket send 命令', () => {
   assert.match(inputSource, /authorizeHostFiles/);
   assert.match(viewSource, /buildOptimisticUserMessage\(\{ sessionId: targetSessionId, messageId, content, attachments, replyToAsyncQuestionId \}\)/);
   assert.match(sendPresentationSource, /attachments: MessageAttachmentDto\[\] = input\.attachments\.map/);
-  assert.match(viewSource, /send\(targetSessionId, content, messageId, attachments, onConfirmationState, selectedEngine, enginePreferences, workspaceTaskId, replyToAsyncQuestionId\)/);
+  assert.match(viewSource, /send\(targetSessionId, content, messageId, attachments, onConfirmationState, selectedEngine, enginePreferences, workspaceTaskId, replyToAsyncQuestionId, workspaceId\)/);
   assert.match(websocketSource, /payload\.attachments = attachments/);
 });
 
@@ -128,7 +128,7 @@ test('附件草稿等待服务端落库确认，拒绝时回滚乐观消息', ()
   assert.match(websocketSource, /pendingSendManagerRef\.current\.wait\(confirmedMessageId, \{/);
   assert.match(websocketSource, /pendingSendManagerRef\.current\.confirm\(msg\.message\.id\)/);
   assert.match(websocketSource, /pendingSendManagerRef\.current\.reject\(msg\.messageId/);
-  assert.match(viewSource, /await send\(targetSessionId, content, messageId, attachments, onConfirmationState, selectedEngine, enginePreferences, workspaceTaskId, replyToAsyncQuestionId\)/);
+  assert.match(viewSource, /await send\(targetSessionId, content, messageId, attachments, onConfirmationState, selectedEngine, enginePreferences, workspaceTaskId, replyToAsyncQuestionId, workspaceId\)/);
   assert.match(viewSource, /removeMessage\(targetSessionId, messageId\)/);
   assert.match(inputSource, /const accepted = await onSend\(content, sendAttachments, messageId,/);
   assert.match(inputSource, /if \(!accepted\) return/);
@@ -192,7 +192,7 @@ test('发送阶段只在主机附件授权时提示准备附件', () => {
 test('发送确认延迟时显示核实状态并把进度回调传入发送链路', () => {
   assert.match(inputSource, /onConfirmationState[\s\S]*updateSubmissionState\(current, submissionDraftKey, 'verifying'\)/);
   assert.match(inputSource, /正在核实发送结果，请勿重复发送/);
-  assert.match(viewSource, /onConfirmationState[\s\S]*send\(targetSessionId, content, messageId, attachments, onConfirmationState, selectedEngine, enginePreferences, workspaceTaskId, replyToAsyncQuestionId\)/);
+  assert.match(viewSource, /onConfirmationState[\s\S]*send\(targetSessionId, content, messageId, attachments, onConfirmationState, selectedEngine, enginePreferences, workspaceTaskId, replyToAsyncQuestionId, workspaceId\)/);
   assert.match(websocketSource, /onConfirmationState[\s\S]*onVerifying:[\s\S]*onConfirmationState\?\.\('verifying'\)/);
 });
 

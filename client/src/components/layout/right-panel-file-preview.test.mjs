@@ -22,7 +22,7 @@ test('路径栏支持选择和独立复制且不再使用文件路径悬浮卡',
   assert.match(panel, /onFocus=\{\(event\) => event\.currentTarget\.select\(\)\}/);
   assert.match(panel, /复制文件路径/);
   assert.match(panel, /onCopyPath=\{\(filePath\) => void handleCopyPath\(filePath\)\}/);
-  assert.match(panel, /onCopyPath\(activeTab\.title\)/);
+  assert.match(panel, /onCopyPath\(activeTab\.sourcePath \|\| activeTab\.title\)/);
   assert.doesNotMatch(panel, /title="文件路径"/);
 });
 

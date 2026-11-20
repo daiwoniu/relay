@@ -27,6 +27,9 @@ workspace/
 .worktrees/
 .relay-build/
 config/mcporter.json
+config/relay.local.conf
+config/feishu.local.conf
+config/workbench.local.conf
 config/workspace-console.local.conf
 config/workspace-console.local.json
 

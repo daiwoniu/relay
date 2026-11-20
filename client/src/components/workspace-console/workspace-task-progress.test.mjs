@@ -17,9 +17,9 @@ test('9001000000 observed execution duration proves work started in both the par
   const group=groupTaskEntries(buildTaskEntries(buildWorkspaceConsoleView(snapshot,report)))[0];
   const detail=withDashboardProgress(snapshot,now).tasks[0];
   assert.equal(hasTaskStarted(ledger),true);
-  assert.equal(taskEntryLane(group),'doing');
-  assert.equal(taskEntryStatusLabel(group),'处理中 · 等待中');
-  assert.equal(taskEntryStatusLabel(entry(detail)),'处理中 · 等待中');
+  assert.equal(taskEntryLane(group),'unstarted');
+  assert.equal(taskEntryStatusLabel(group),'等待中');
+  assert.equal(taskEntryStatusLabel(entry(detail)),'等待中');
   assert.equal(taskEntryProgressAt(group),taskProgressAt(detail));
   assert.equal(detail.status,'waiting');
   assert.equal(JSON.stringify(snapshot),before);
@@ -45,10 +45,10 @@ test('only finite positive numeric duration proves execution and never invents a
 test('an exact timed work run proves Dongguan has started while waiting preserves its reason', () => {
   const t=withTaskProgress(task(),[run],now);
   assert.equal(hasTaskStarted(t),true);
-  assert.equal(taskEntryLane(entry(t)),'doing');
-  assert.equal(taskEntryStatusLabel(entry(t)),'处理中 · 等待中');
+  assert.equal(taskEntryLane(entry(t)),'unstarted');
+  assert.equal(taskEntryStatusLabel(entry(t)),'等待中');
   assert.ok(taskEntryFilterStatuses(entry(t)).includes('等待中'));
-  assert.deepEqual(filterTaskEntries([entry(t)],'doing','').map(e=>e.key),['local:dongguan']);
+  assert.deepEqual(filterTaskEntries([entry(t)],'doing','').map(e=>e.key),[]);
   assert.equal(progressRecency(taskProgressAt(t),now).label,'今天有推进记录');
   assert.equal(t.status,'waiting');
 });
@@ -62,12 +62,12 @@ test('a new verification or linked session alone does not prove an unstarted tas
   assert.equal(hasTaskStarted(queued),false);
 });
 
-test('older started waiting work stays ongoing and only becomes a follow-up reminder after seven days', () => {
+test('older started waiting work stays in the waiting lane and retains its follow-up reminder', () => {
   const at=now-7*86_400_000;
   const t=withTaskProgress({...task(),startedAt:new Date(at-1000).toISOString(),lastVerifiedAt:new Date(at).toISOString()},[],now);
   assert.equal(progressRecency(at,now-1).stale,false);
   assert.equal(progressRecency(at,now).stale,true);
-  assert.equal(taskEntryLane(entry(t)),'doing');
+  assert.equal(taskEntryLane(entry(t)),'unstarted');
   assert.match(progressRecency(taskProgressAt(t),now).label,/待跟进/);
 });
 
@@ -85,10 +85,13 @@ test('parent and session updates do not refresh personal progress time or remove
   const t={...task(),startedAt:old,lastVerifiedAt:old,feishuWorkItemIds:['parent']};
   const dashboard={tasks:[t],runs:[],sessions:[{sessionId:'active',updatedAt:now,status:'processing',feishuWorkItemIds:['parent']}],unmatchedRuns:[],unlinkedSessions:[]};
   const report={sourceUserKey:'u',items:[],localAssociated:[],workbenchItems:[{workItemId:'parent',title:'父项',ownerUserKey:'u',flowFinished:false,isArchivedState:false,stateKey:'doing',currentNodeNames:['生产验收'],updatedAt:new Date(now).toISOString(),myNodes:[{id:'n',phase:'current'}],mySubtasks:[]}]};
-  const group=groupTaskEntries(buildTaskEntries(buildWorkspaceConsoleView(dashboard,report)))[0];
-  assert.equal(taskEntryLane(group),'doing');
-  assert.equal(taskEntryProgressAt(group),Date.parse(old));
-  assert.equal(progressRecency(taskEntryProgressAt(group),now).stale,true);
+  const entries=groupTaskEntries(buildTaskEntries(buildWorkspaceConsoleView(dashboard,report)));
+  const local=entries.find(entry=>entry.kind==='local'),native=entries.find(entry=>entry.kind==='group');
+  assert.equal(taskEntryLane(local),'unstarted');
+  assert.equal(taskEntryProgressAt(local),Date.parse(old));
+  assert.equal(progressRecency(taskEntryProgressAt(local),now).stale,true);
+  assert.equal(taskEntryLane(native),'unstarted');
+  assert.equal(taskEntryProgressAt(native),null);
 });
 
 test('invalid and future records do not count as execution evidence and calendar labels use China dates', () => {
@@ -105,8 +108,9 @@ test('runner wall clocks use China time and a stale reminder lowers waiting prio
   const old=entry(withTaskProgress({...task(),id:'old',startedAt:'2026-11-01T00:00:00+08:00',lastVerifiedAt:'2026-11-01T00:00:00+08:00'},[],now));
   const recent=entry(timed);
   assert.deepEqual(selectFocusEntries([old,recent],now).map(e=>e.key),['local:dongguan','local:old']);
-  assert.equal(taskEntryLane(old),'doing');
-  for (const status of ['blocked','paused']) assert.equal(taskEntryLane(entry(withTaskProgress(task(status),[run],now))),'doing');
+  assert.equal(taskEntryLane(old),'unstarted');
+  assert.equal(taskEntryLane(entry(withTaskProgress(task('blocked'),[run],now))),'doing');
+  assert.equal(taskEntryLane(entry(withTaskProgress(task('paused'),[run],now))),'unstarted');
 });
 
 test('detail dashboard rows share the same exact execution evidence as list cards without mutating source snapshots', () => {
@@ -115,8 +119,20 @@ test('detail dashboard rows share the same exact execution evidence as list card
   const detail=withDashboardProgress(snapshot,now);
   const list=buildWorkspaceConsoleView(snapshot,null);
   assert.equal(taskEntryLane(entry(detail.tasks[0])),taskEntryLane(entry(list.tasks[0])));
-  assert.equal(taskEntryLane(entry(detail.tasks[0])),'doing');
+  assert.equal(taskEntryLane(entry(detail.tasks[0])),'unstarted');
   assert.equal(taskEntryProgressAt(entry(detail.tasks[0])),taskEntryProgressAt(entry(list.tasks[0])));
   assert.equal(JSON.stringify(snapshot),before);
   assert.equal(taskProgressAt({...task(),startedAt:'2026-11-02T00:00:00+08:00',lastVerifiedAt:'2026-11-01T00:00:00+08:00'}),Date.parse('2026-11-02T00:00:00+08:00'));
+});
+
+test('waiting and paused ledgers stay in waiting despite execution evidence, while an executing sibling keeps the matter ongoing',()=>{
+ for(const status of ['waiting','paused']){
+  const ledger=withTaskProgress({...task(status),startedAt:'2026-11-12T12:00:00+08:00',observedDurationSeconds:695},[run],now);
+  const local=entry(ledger),done=entry({...task('done'),id:'done'});
+  const group={kind:'group',key:'matter',parent:{flowFinished:false},members:[local,done]};
+  assert.equal(taskEntryLane(local),'unstarted');assert.equal(taskEntryLane(group),'unstarted');
+  assert.equal(taskEntryStatusLabel(local),status==='waiting'?'等待中':'已暂停');
+  assert.ok(taskEntryProgressAt(local),'history remains available after changing lanes');
+  assert.equal(taskEntryLane({...group,members:[...group.members,entry({...task('doing'),id:'active'})]}),'doing');
+ }
 });

@@ -25,3 +25,11 @@ test('projects sample export counters and skips invalid values', () => {
     { label: '缺少映射', value: 10, kind: 'condition' },
   ]);
 });
+
+test('projects real scan schema without duplicating processed and scanned counters', () => {
+  assert.deepEqual(projectRunMetrics({ processed: 100000, counts: { 扫描行数: 100000, 重解析差异: 4, 成立日期矛盾: 44, 私有任意字段: 8 } }), [
+    { label: '已处理', value: 100000, kind: 'total' },
+    { label: '重解析差异', value: 4, kind: 'condition' },
+    { label: '成立日期矛盾', value: 44, kind: 'condition' },
+  ]);
+});

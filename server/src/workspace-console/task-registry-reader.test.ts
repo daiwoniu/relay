@@ -27,12 +27,25 @@ test('projects only task registry fields and structured Feishu ids', async () =>
     }), 'utf8');
     const result = await readTaskRegistry(root);
     assert.deepEqual(result.tasks, [{
-      id: 'task-a', title: '任务 A', description: null, taskPath: 'tasks/task-a', status: 'active', horizon: 'now',
+      id: 'task-a', kind: 'task', diagnostics: ['任务说明缺失或目录不可读取'], title: '任务 A', description: null, taskPath: 'tasks/task-a', status: 'active', horizon: 'now',
       nextAction: '继续验收', waitingOn: null, statusBasis: '本地修复已完成，等待验收', verification: 'verified',
-      lastVerifiedAt: '2026-09-22T09:00:00+08:00', startedAt: '2026-09-22T08:00:00+08:00', completedAt: null, taskDocumentPath: null, deliveryMatrix: [], feishuWorkItemIds: ['9001000007'], feishuWorkItemUrls: { '9001000007': 'https://project.feishu.cn/demo-space/story/detail/9001000007' },
+      lastVerifiedAt: '2026-09-22T09:00:00+08:00', startedAt: '2026-09-22T08:00:00+08:00', completedAt: null, taskDocumentPath: null, taskPlanPath: null, taskDirectoryUpdatedAt:null, deliveryMatrix: [], feishuWorkItemIds: ['9001000007'], feishuWorkItemUrls: { '9001000007': 'https://project.feishu.cn/demo-space/story/detail/9001000007' },
     }]);
     assert.equal('secret_field' in result.tasks[0]!, false);
   });
+});
+
+test('directory update time is the validated folder mtime, never completion or guide-file time',async()=>{
+ await withRoot(async root=>{
+  const directory=path.join(root,'tasks','recent');await fs.mkdir(directory,{recursive:true});
+  await fs.writeFile(path.join(directory,'README.md'),'# 任务');
+  const timestamp=new Date('2026-11-01T12:00:00Z');await fs.utimes(directory,timestamp,timestamp);
+  await fs.writeFile(path.join(root,'tasks','task-registry.json'),JSON.stringify({schema_version:1,tasks:{recent:{kind:'task',task_path:'tasks/recent',completed_at:'2026-11-20T12:00:00Z',status:'done'},outside:{kind:'task',task_path:'../outside',status:'done'},item:{kind:'item',status:'done'}}}));
+  const result=await readTaskRegistry(root);
+  assert.equal(result.tasks.find(task=>task.id==='recent')!.taskDirectoryUpdatedAt,timestamp.toISOString());
+  assert.equal(result.tasks.find(task=>task.id==='outside')!.taskDirectoryUpdatedAt,null);
+  assert.equal(result.tasks.find(task=>task.id==='item')!.taskDirectoryUpdatedAt,null);
+ });
 });
 
 test('recovers an exact Feishu work item URL from the task guide when the registry has only its ID', async () => {
@@ -128,6 +141,20 @@ test('projects a verified delivery matrix without trusting arbitrary paths', asy
     const result = await readTaskRegistry(root);
     assert.equal(result.tasks[0]!.taskDocumentPath, path.join(root, 'tasks', 'task-a', 'README.md'));
     assert.deepEqual(result.tasks[0]!.deliveryMatrix, [{ project: 'Web', baseBranch: 'prod', featureBranch: 'feature/demo', targetBranch: 'test', revision: 'abc123', source: 'tasks/task-a/README.md', verifiedAt: '2026-09-22T09:00:00+08:00' }]);
+  });
+});
+
+test('finds only existing task planning files and prefers a next-step document', async () => {
+  await withRoot(async root => {
+    const directory = path.join(root, 'tasks', 'task-a');
+    await fs.mkdir(path.join(directory, 'implementation'), {recursive:true});
+    await fs.writeFile(path.join(directory, 'implementation', 'application-side-technical-plan.md'), '# 实施计划');
+    await fs.writeFile(path.join(root, 'tasks', 'task-registry.json'), JSON.stringify({schema_version:1,tasks:{'task-a':{task_path:'tasks/task-a'}}}));
+    assert.equal((await readTaskRegistry(root)).tasks[0]!.taskPlanPath, path.join(directory, 'implementation', 'application-side-technical-plan.md'));
+    await fs.writeFile(path.join(directory, 'NEXT.md'), '# 下一步');
+    assert.equal((await readTaskRegistry(root)).tasks[0]!.taskPlanPath, path.join(directory, 'NEXT.md'));
+    await fs.writeFile(path.join(root, 'tasks', 'task-registry.json'), JSON.stringify({schema_version:1,tasks:{'task-a':{task_path:'../outside'}}}));
+    assert.equal((await readTaskRegistry(root)).tasks[0]!.taskPlanPath, null);
   });
 });
 

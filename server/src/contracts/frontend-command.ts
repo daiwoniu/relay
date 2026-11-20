@@ -24,6 +24,7 @@ export const SendCommandSchema = z.object({
   enginePreferences: EnginePreferencesDtoSchema.optional(),
   messageId: z.string().min(1).max(128).optional(),
   workspaceTaskId: z.string().min(1).max(256).optional(),
+  workspaceId: z.string().min(1).max(128).optional(),
   replyToAsyncQuestionId: z.string().startsWith('async-question:').max(256).optional(),
   attachments: z.array(SendAttachmentDtoSchema).max(10).optional(),
   client: ClientEnvironmentDtoSchema.optional(),

@@ -10,6 +10,7 @@ import { CodexAccountSnapshotDtoSchema } from '../contracts/index.js';
 import { Hono } from 'hono';
 import { createStoredWorkspaceConsoleRouter } from '../routes/stored-workspace-console.js';
 import { parseResponsibilityReport } from '../workspace-console/responsibility-report-source.js';
+import { ServiceError } from '../services/errors.js';
 const actor={kind:'user' as const,userId:'admin',authSessionHash:hashSessionToken('synthetic-provider-admin')};
 const report=()=>({reportKind:'project_responsibility' as const,sourceUserKey:'user-one',todoEquivalent:false as const,generatedAt:'2026-11-06T04:00:00Z',fetchedAt:1000,servedFromCache:false,complete:true,stale:false,error:null,items:[],workbenchItems:[],localAssociated:[],counts:{current:0,stateResponsibility:0,upcoming:0}});
 const official=(email='a@example.test',fetchedAt=1000)=>CodexAccountSnapshotDtoSchema.parse({fetchedAt,status:'ready',authMode:'chatgpt',email,planType:'pro',rateLimits:[],credits:{hasCredits:true,unlimited:false,remaining:12,currency:null},rateLimitResetCredits:null,usage:null,errorMessage:null});
@@ -29,6 +30,32 @@ async function prepared(){
 }
 test('responsibility persists a source-specific snapshot and hydrates without contacting the source',async()=>{
   const p=await prepared();try{const first=await p.make().responsibility(actor);assert.equal(first.sourceMeta!.state,'live');const cached=await p.make().responsibility(actor);assert.equal(cached.servedFromCache,true);assert.equal(p.state.calls,1);assert.equal(p.f.scalar('SELECT count(*) FROM _relay_provider_snapshot_versions'),1);}finally{await p.cleanup();}
+});
+
+test('responsibility preserves safe source failures without a cache and while retaining an older snapshot',async()=>{
+  const p=await prepared();try{
+    const error=new ServiceError(502,'飞书返回数据未通过结构或责任证据校验，本次报表未能更新','FEISHU_SOURCE_INVALID');
+    const failed=p.make({loadResponsibility:async()=>{throw error;}});
+    await assert.rejects(failed.responsibility(actor,true),caught=>caught===error);
+    await p.make().responsibility(actor,true);
+    const stale=await failed.responsibility(actor,true);
+    assert.equal(stale.stale,true);assert.equal(stale.error,error.message);assert.equal(stale.sourceMeta?.error,error.message);
+  }finally{await p.cleanup();}
+});
+test('responsibility connection/auth scope partitions snapshots even for the same project and user', async () => {
+  const p = await prepared();
+  try {
+    let scope = 'a'.repeat(64);
+    const service = p.make({ responsibilityIdentity: async () => ({ ...p.state.identity, scope }) });
+    await service.responsibility(actor);
+    scope = 'b'.repeat(64);
+    await service.responsibility(actor);
+    assert.equal(p.state.calls, 2);
+    assert.equal(p.f.scalar('SELECT count(*) FROM workspace_snapshots'), 2);
+    p.state.fail = true;
+    scope = 'c'.repeat(64);
+    await assert.rejects(service.responsibility(actor), { code: 'STORAGE_UNAVAILABLE' });
+  } finally { await p.cleanup(); }
 });
 test('fresh parsed responsibility items with absent optional fields replace the old Native snapshot',async()=>{
   const p=await prepared();try{

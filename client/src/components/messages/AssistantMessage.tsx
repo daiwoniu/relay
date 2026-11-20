@@ -246,7 +246,7 @@ function containsAbsoluteFilePathLine(text: string): boolean {
 
 /** Markdown 链接组件 —— 文件路径在右侧面板打开，其他 URL 在新标签打开 */
 function MarkdownLink({ href, children, projectPath, readOnly = false }: { href: string; children: React.ReactNode; projectPath?: string; readOnly?: boolean }) {
-  const openFilePreview = useFilePreview();
+  const openFilePreview = useFilePreview(projectPath);
   const codexReference = decodeCodexFileReference(href);
 
   if (codexReference) {
@@ -379,7 +379,7 @@ function createMarkdownComponents(readOnly: boolean, projectPath?: string) { ret
   img({ src, alt, title, node: _node, ...props }: any) {
     if (shouldRenderMarkdownImageAsFileLink(src)) {
       const label = alt?.trim() || normalizeFilePath(src) || '图片文件';
-      return <MarkdownLink href={src} readOnly={readOnly}>{label}</MarkdownLink>;
+      return <MarkdownLink href={src} projectPath={projectPath} readOnly={readOnly}>{label}</MarkdownLink>;
     }
     if (readOnly) {
       const label = alt?.trim() || src || '图片';
@@ -411,7 +411,7 @@ function createMarkdownComponents(readOnly: boolean, projectPath?: string) { ret
     }
     if (inline && isLikelyAbsoluteFilePath(codeContent.trim())) {
       const path = codeContent.trim();
-      return <MarkdownLink href={path} readOnly={readOnly}>{path}</MarkdownLink>;
+      return <MarkdownLink href={path} projectPath={projectPath} readOnly={readOnly}>{path}</MarkdownLink>;
     }
     return <code className={className} {...props}>{children}</code>;
   },

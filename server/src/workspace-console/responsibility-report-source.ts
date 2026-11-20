@@ -1,14 +1,10 @@
-import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { mkdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
-import { promisify } from 'node:util';
 import type { z } from 'zod';
 import { WorkspaceConsoleResponsibilityDtoSchema, WorkspaceSourceMetaDtoSchema } from '../contracts/dto.js';
+import type { WorkspaceFeishuContextDtoSchema } from '../contracts/dto.js';
 import { FIXED_WORKSPACE_PATH } from './workspace-snapshot.js';
-import { requireWorkspaceFile } from './workspace-config.js';
-
-const execFileAsync = promisify(execFile);
 
 export function projectPythonExecutable(workspaceRoot: string): string {
   return process.platform === 'win32'
@@ -17,8 +13,11 @@ export function projectPythonExecutable(workspaceRoot: string): string {
 }
 
 type RecordValue = Record<string, unknown>;
-export type ExpectedIdentity = { userKey: string; projectKey: string };
-export interface ResponsibilityItem {
+export type ExpectedIdentity = { userKey: string; projectKey: string; scope?: string };
+type FeishuContext = z.infer<typeof WorkspaceFeishuContextDtoSchema>;
+export interface ResponsibilityItem extends FeishuContext {
+  finishedAt?:string|null;
+  nativeCompleted?: boolean | null;
   workItemId: string;
   title: string;
   typeName: string | null;
@@ -35,14 +34,18 @@ export interface ResponsibilityItem {
   linkedStoryIds?: string[];
   updatedAt?: string | null;
 }
-export interface LocalAssociatedItem {
+export interface LocalAssociatedItem extends FeishuContext {
+  kind?:'work_item'|'subtask'|'unresolved';parentId?:string|null;
+  verified?: boolean;
+  error?: string | null;
   associationKey: string;
   workItemId: string;
   title: string;
   url: string | null;
   localTaskIds: string[];
 }
-export interface WorkbenchItem {
+export interface WorkbenchItem extends FeishuContext {
+  participated?: boolean;
   workItemId: string;
   title: string;
   typeName: string | null;
@@ -57,9 +60,11 @@ export interface WorkbenchItem {
   myNodes?: Array<{ id: string; name: string | null; phase: 'current' | 'upcoming' | 'completed' | 'unknown'; ownerCount?: number | null }>;
   updatedAt?: string | null;
   finishedAt?: string | null;
-  mySubtasks: Array<{ id: string; title: string; owners: string[]; passed: boolean; finishedAt?: string | null; nodeId: string; nodeName: string | null; phase: 'current' | 'upcoming' | 'completed' | 'unknown' }>;
+  mySubtasks: Array<{ id: string; title: string; owners: string[]; ownerNames?:string[]; passed: boolean; createdAt?:string|null;updatedAt?:string|null;finishedAt?: string | null; nodeId: string; nodeName: string | null; phase: 'current' | 'upcoming' | 'completed' | 'unknown';localTaskIds?:string[] }>;
 }
 export interface WorkspaceResponsibilitySnapshot {
+  sourceProjectKey?:string;relationCoverage?:'not_queried'|'complete'|'partial';
+  associationMeta?:{state:'unbound'|'complete'|'partial'|'unavailable';error:string|null;checkedAt:number|null};
   reportKind: 'project_responsibility';
   sourceUserKey: string;
   todoEquivalent: false;
@@ -367,21 +372,17 @@ export class ResponsibilityReportSource{
   protected readonly runner:(args:string[],cwd:string)=>Promise<string>;
   protected readonly diagnostic:NonNullable<ResponsibilityReportSourceOptions['diagnostic']>;
   protected readonly expected?:ExpectedIdentity;
+  private readonly legacyRunner: boolean;
   constructor(options: ResponsibilityReportSourceOptions = {}) {
     this.workspaceRoot = options.workspaceRoot ?? FIXED_WORKSPACE_PATH;
     this.now = options.now ?? Date.now;
     this.expected = options.expected;
+    this.legacyRunner = !!options.runner;
     this.diagnostic = options.diagnostic ?? (options.runner ? () => {} : (event) => {
       console.info(`[WorkspaceResponsibility] phase=${event.phase} elapsed_ms=${event.elapsedMs} outcome=${event.outcome}`);
     });
-    this.runner = options.runner ?? (async (args, cwd) => {
-      const reportScript = requireWorkspaceFile(this.workspaceRoot, 'ai', 'skills', 'operate-feishu-project-openapi', 'scripts', 'feishu_todo_report.py');
-      const executable = requireWorkspaceFile(this.workspaceRoot, path.relative(this.workspaceRoot, projectPythonExecutable(this.workspaceRoot)));
-      const result = await execFileAsync(executable, ['-X', 'utf8', reportScript, ...args], {
-        cwd, timeout: 90_000, maxBuffer: 2 * 1024 * 1024,
-      });
-      return result.stdout;
-    });
+    // Kept only for existing offline report fixtures; production always uses Relay's integration.
+    this.runner = options.runner ?? (async () => { throw new Error('LEGACY_REPORT_RUNNER_REQUIRED'); });
   }
 
   protected async measure<T>(phase: string, operation: () => Promise<T>): Promise<T> {
@@ -398,6 +399,10 @@ export class ResponsibilityReportSource{
   }
 
   protected async load(expected: ExpectedIdentity): Promise<WorkspaceResponsibilitySnapshot> {
+    if (!this.legacyRunner) {
+      const { FeishuWorkbenchSource } = await import('./feishu-source.js');
+      return new FeishuWorkbenchSource().loadFresh(expected);
+    }
     return this.measure('total', async () => {
       const output = path.join(this.workspaceRoot, '.tmp', 'todo-reports', `todo-report-${randomUUID()}.json`);
       await mkdir(path.dirname(output), { recursive: true });
@@ -425,10 +430,8 @@ export class ResponsibilityReportSource{
 
   protected async identity(): Promise<ExpectedIdentity> {
     if (this.expected) return { ...this.expected };
-    const configPath = requireWorkspaceFile(this.workspaceRoot, 'ai', 'skills', 'operate-feishu-project-openapi', 'config', 'feishu-project-openapi.local.json');
-    const config = record(JSON.parse(await readFile(configPath, 'utf8')));
-    if (typeof config.user_key !== 'string' || typeof config.project_key !== 'string') throw new Error('Project 本地配置缺少身份键');
-    return { userKey: config.user_key, projectKey: config.project_key };
+    const { FeishuWorkbenchSource } = await import('./feishu-source.js');
+    return new FeishuWorkbenchSource().readIdentity();
   }
 
 }

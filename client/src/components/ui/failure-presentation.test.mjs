@@ -4,6 +4,13 @@ import test from 'node:test';
 import { getFailurePresentation } from './failure-presentation.ts';
 import { getMessageErrorGuidance } from '../messages/message-error-guidance.ts';
 
+test('飞书读取与结构校验错误提供明确说明，不再降级为未知操作',()=>{
+  for(const code of ['FEISHU_SOURCE_INVALID','FEISHU_SOURCE_UNAVAILABLE']){
+    const value=getFailurePresentation({message:'飞书报表未更新',data:{code},status:502});
+    assert.match(value.description,/飞书/);assert.doesNotMatch(value.description,/未提供可识别/);assert.match(value.suggestion,/快照/);
+  }
+});
+
 test('存储结果未知不推断为连接异常，保留服务端原始提示', () => {
   const raw = '成员授权结果暂时无法确认，请刷新状态核对';
   const result = getFailurePresentation({ message: raw, status: 503, data: { code: 'STORAGE_RESULT_UNKNOWN' } });

@@ -48,16 +48,16 @@ test('Feishu-only detail stays a Feishu detail when no local task is linked', as
   assert.equal(detail.taskId, null);
 });
 
-test('a refreshed completed inquiry defect stays a project with the same personal completion as its card', async () => {
-  const defect={...item('9001000038'),typeName:'缺陷',statusName:'已修复，待验收',actionability:'state_responsibility',
-    currentNodes:[],personalSubtasks:[],linkedStoryIds:['9001000013'],myRoleKeys:['operator'],baseOwnerIsMe:false};
+test('a completed local ledger does not complete its refreshed native defect', async () => {
+  const defect={...item('9001000038',['inquiry-ledger']),typeName:'缺陷',statusName:'已修复，待验收',actionability:'state_responsibility',
+    nativeCompleted:false,currentNodes:[],personalSubtasks:[],linkedStoryIds:['9001000013'],myRoleKeys:['operator'],baseOwnerIsMe:false};
   const local={id:'inquiry-ledger',status:'done',feishuWorkItemIds:[defect.workItemId]};
   const snapshot=await taskDetail.loadWorkbenchDetailSnapshot({kind:'project',id:defect.workItemId},
     async()=>dashboard([local]),async()=>report([defect]));
   assert.equal(snapshot.taskId,null);
   const projected=buildWorkspaceConsoleView(snapshot.dashboard,snapshot.responsibility).responsibility.stateResponsibility[0];
-  assert.equal(isPersonalProjectComplete(projected),true);
-  assert.deepEqual(projectTaskCardDetails(projected),{current:'本轮已完成',next:'等待后续验收或流程流转'});
+  assert.equal(isPersonalProjectComplete(projected),false);
+  assert.deepEqual(projectTaskCardDetails(projected),{current:'负责流程流转，当前不一定需要操作',next:'飞书报表未提供明确下一步'});
   assert.deepEqual(projected.tasks.map((task)=>task.id),[local.id]);
 });
 

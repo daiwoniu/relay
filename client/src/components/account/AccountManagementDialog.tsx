@@ -9,6 +9,7 @@ import UserAvatar from './UserAvatar';
 import ConfirmDialog from '../ui/ConfirmDialog';
 import { FormField, FormFeedback, formControlClassName, primaryFormButtonClassName, secondaryFormButtonClassName } from '../ui/FormControls';
 import PanelShell from '../ui/PanelShell';
+import UserMenuIcon from '../icons/UserMenuIcon';
 import { useChatStore } from '../../stores/chat';
 
 function errorMessage(cause: unknown, fallback: string): string {
@@ -159,6 +160,7 @@ export default function AccountManagementDialog({ open, onClose, mobile }: { ope
     open={open}
     onClose={closeDialog}
     title="账号管理"
+    icon={<UserMenuIcon type="accounts" />}
     description="创建和维护 Relay 登录账号"
     titleId="account-management-title"
     size="content"

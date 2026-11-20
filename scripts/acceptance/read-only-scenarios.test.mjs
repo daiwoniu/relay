@@ -24,6 +24,47 @@ function createFakeCdp({ autoLoadOnReload = true } = {}) {
   };
 }
 
+test('工作台固定场景只读打开各列表和详情，复用同一浏览器与清理机制',async()=>{
+ const calls=[],shots=[];
+ const page={enableMonitoring:async()=>{},injectRelaySession:async()=>{},navigate:async url=>calls.push(['navigate',url]),setViewport:async()=>{},
+  waitForStable:async()=>({buildId:'abcdef123456',protocolVersion:23}),waitForWorkbench:async()=>{},captureScreenshot:async file=>shots.push(file),
+  readWorkbenchLayout:async()=>({overflow:false,drawerOverflow:false,cardOverflow:0}),showWorkbenchLane:async lane=>calls.push(['lane',lane]),
+  openWorkbenchDetail:async kind=>kind!=='project',closeWorkbenchDetail:async()=>calls.push(['close']),showWorkbenchRecords:async()=>calls.push(['records']),
+  getEvidence:()=>({exceptions:[],httpErrors:[],logErrors:[],webSockets:{created:0,closed:0,reconnects:0}})};
+ let cleanups=0;
+ const result=await runReadOnlyAcceptance({config:{origin:'http://localhost:9081',desktopViewport:{width:1456,height:819,deviceScaleFactor:1},mobileViewport:{width:390,height:844,deviceScaleFactor:1},timeouts:{}},
+  cookieValue:'test-cookie',workbench:true,launchRuntime:async()=>({runId:'test',runDir:'.relay-dev/test'}),connectPage:async()=>({page,browserCdp:{}}),
+  cleanupRuntime:async()=>{cleanups++;return{process:'cleaned',port:'released',profile:'removed'};},finalizeState:()=>{},writeReport:()=>{}});
+ assert.equal(result.status,'passed');assert.equal(cleanups,1);assert.deepEqual(result.scenarios.map(item=>item.id),['workbench-desktop','workbench-mobile']);
+ assert(calls.some(call=>call[0]==='navigate'&&call[1].endsWith('/admin/task-workbench')));
+ assert.deepEqual(calls.filter(call=>call[0]==='lane').map(call=>call[1]),['unstarted','unstarted','doing','completed']);
+ assert.equal(shots.length,13);
+ assert.deepEqual(result.scenarios[0].snapshot.detailSamples.map(sample=>sample.kind),['group','project','tracking','run']);
+ assert.equal(result.scenarios[0].snapshot.detailSamples.find(sample=>sample.kind==='project').status,'not_available');
+});
+
+test('workbench waits for both sources even when local task lanes already exist',async()=>{
+ let samples=0;
+ const page=new PageSession({async request(method,params){
+   assert.equal(method,'Runtime.evaluate');samples++;
+   const value=await runInNewContext(params.expression,{document:{body:{innerText:''},querySelector:selector=>selector.includes('task-lanes')?{}:samples<3?{}:null}});
+   return{result:{value}};
+ }});
+ await page.waitForWorkbench();
+ assert.equal(samples,3);
+});
+
+test('project detail sampling accepts native type names and never selects a local task action',async()=>{
+ const clicks=[];
+ const candidate=(id,labels)=>({closest:()=>({classList:{contains:()=>false},querySelectorAll:()=>labels.map(textContent=>({textContent}))}),getBoundingClientRect:()=>({width:100}),click:()=>clicks.push(id)});
+ const document={querySelectorAll:()=>[candidate('local',['本地交付','飞书需求 · 11']),candidate('project',['飞书B端售后支持 · 22'])],
+   querySelector:()=>clicks.length?{querySelectorAll:()=>[]}:null};
+ const page=new PageSession({async request(method,params){assert.equal(method,'Runtime.evaluate');return{result:{value:await runInNewContext(params.expression,{document})}};}});
+ assert.equal(await page.openWorkbenchDetail('project'),true);
+ assert.deepEqual(clicks,['project']);
+ await assert.rejects(page.openWorkbenchDetail('unknown'));
+});
+
 test('engine terminal inspection reads the public message-page envelope', async () => {
   const page = new PageSession({
     async request(method, params) {

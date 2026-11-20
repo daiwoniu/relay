@@ -68,6 +68,8 @@ import { isLocalUsageCommand,executeLocalUsage,readLocalUsageJob,authorizeLocalU
 import { isProviderSnapshotCommand,authorizeProviderSnapshot,executeProviderSnapshot,readProviderSnapshot } from './native-provider-snapshots.js';
 import { readUploadScope } from './native-upload-scope.js';
 import { FIXED_WORKSPACE_PATH } from '../workspace-console/workspace-snapshot.js';
+import { WORKSPACE_ID, WORKSPACE_CONNECTION_SCOPE } from '../workspace-console/workspace-context.js';
+import { parseFeishuTarget } from '../workspace-console/task-reference.js';
 import { isUploadCleanupCommand,readUploadCleanupJob,authorizeUploadCleanupJob,executeUploadCleanup,assertUploadCleanupWriteFence } from './native-upload-cleanup.js';
 
 type Bind = null | string | number | bigint | Uint8Array;
@@ -1081,6 +1083,8 @@ export class NativeStore {
           if(input.workspaceTaskLink){
             this.accountAdmin(request.principal);
             if(input.workspaceTaskLink.workspacePath.toLowerCase()!==FIXED_WORKSPACE_PATH.toLowerCase())deny('INVALID_ARGUMENT');
+            if(input.workspaceTaskLink.workspaceId&&input.workspaceTaskLink.workspaceId!==WORKSPACE_ID)deny('INVALID_ARGUMENT');
+            if(input.workspaceTaskLink.targetRef&&(!parseFeishuTarget(input.workspaceTaskLink.targetRef)||input.workspaceTaskLink.connectionScope!==WORKSPACE_CONNECTION_SCOPE))deny('INVALID_ARGUMENT');
           }
           let requestedByUserId: string;
           let metadata = input.metadata === null ? null : canonicalJson(input.metadata);

@@ -1271,13 +1271,18 @@ export interface MoveSidebarOrderResponseDto {
 }
 
 export interface WorkspaceConsoleTaskDto {
+  kind?: 'task' | 'item' | null;
+  diagnostics?: string[];
   id: string;
   title: string | null;
   taskPath: string | null;
   taskDocumentPath: string | null;
   status: string | null;
   description?: string | null;
+  taskPlanPath?: string | null;
+  taskDirectoryUpdatedAt?: string | null;
   feishuPrimaryWorkItemId?: string | null;
+  canaryApplicationIds?: string[];
   horizon: string | null;
   nextAction: string | null;
   waitingOn: string | null;
@@ -1300,6 +1305,44 @@ export interface WorkspaceConsoleTaskDto {
 }
 
 export interface WorkspaceConsoleRunDto {
+  taskContext?: {
+    directory: string;
+    title: string | null;
+    association: 'registered' | 'unregistered' | 'ambiguous';
+  };
+  testResult?: {
+    framework: 'junit';
+    total: number;
+    failures: number;
+    errorTypes: string[];
+  } | null;
+  operation?: {
+    title: string;
+    objects: string[];
+    scope: string[];
+    source: 'descriptor' | 'plan' | 'intent';
+    plannedBusinessWrite: boolean | null;
+  } | null;
+  displayName?: string | null;
+  failureReason?: string | null;
+  collectedAt?: string | null;
+  businessResult?: {
+    source: 'progress' | 'summary' | 'status';
+    status: string | null;
+    complete: boolean | null;
+    businessWrite: boolean | null;
+    stopReason: string | null;
+    object: string | null;
+    rowsPerSecond: number | null;
+    rowLimit: number | null;
+    limitPercent: number | null;
+    etaSeconds: number | null;
+    verified?: boolean | null;
+    preflightPassed?: boolean | null;
+    businessWrites?: number | null;
+    formalSpWrites?: number | null;
+    phase?: string | null;
+  } | null;
   runId: string;
   status: string;
   taskId: string | null;
@@ -1350,10 +1393,49 @@ export interface WorkspaceConsoleResponsibilityDto {
     lastAttemptAt: number | null;
     error: string | null;
   };
+  sourceProjectKey?: string;
+  relationCoverage?: 'not_queried' | 'complete' | 'partial';
+  associationMeta?: {
+    state: 'unbound' | 'complete' | 'partial' | 'unavailable';
+    error: string | null;
+    checkedAt: number | null;
+  };
   items: {
+    responsibleNames?: string[];
+    creatorNames?: string[];
+    createdAt?: string | null;
+    typeKey?: string;
+    reasons?: string[];
+    localTaskIds: string[];
+    linkedStoryIds?: string[];
+    release?: {
+      mode: 'normal' | 'canary';
+      conflict: boolean;
+      versionId: string | null;
+      version: string | null;
+      source: 'item' | 'linked_story';
+      error: string | null;
+    };
+    applicationCoverage?: 'not_configured' | 'not_queried' | 'complete' | 'partial';
+    applications?: {
+      workItemId: string;
+      typeKey: string;
+      title: string;
+      url: string | null;
+      status: string;
+      completed: boolean | null;
+      finishedAt: string | null;
+      unfinishedSubtasks: {
+        id: string;
+        name: string;
+      }[];
+      reconciliationRequired: boolean;
+      source: 'native_relation' | 'local_binding';
+    }[];
     workItemId: string;
     title: string;
     typeName: string | null;
+    nativeCompleted?: boolean | null;
     actionability: 'current' | 'state_responsibility' | 'upcoming';
     statusName?: string | null;
     myRoleKeys?: string[];
@@ -1371,10 +1453,41 @@ export interface WorkspaceConsoleResponsibilityDto {
     currentNodes: string[];
     version: string | null;
     url: string | null;
-    localTaskIds: string[];
-    linkedStoryIds?: string[];
+    finishedAt?: string | null;
   }[];
   workbenchItems: {
+    responsibleNames?: string[];
+    creatorNames?: string[];
+    createdAt?: string | null;
+    typeKey?: string;
+    reasons?: string[];
+    localTaskIds?: string[];
+    linkedStoryIds?: string[];
+    release?: {
+      mode: 'normal' | 'canary';
+      conflict: boolean;
+      versionId: string | null;
+      version: string | null;
+      source: 'item' | 'linked_story';
+      error: string | null;
+    };
+    applicationCoverage?: 'not_configured' | 'not_queried' | 'complete' | 'partial';
+    applications?: {
+      workItemId: string;
+      typeKey: string;
+      title: string;
+      url: string | null;
+      status: string;
+      completed: boolean | null;
+      finishedAt: string | null;
+      unfinishedSubtasks: {
+        id: string;
+        name: string;
+      }[];
+      reconciliationRequired: boolean;
+      source: 'native_relation' | 'local_binding';
+    }[];
+    participated?: boolean;
     workItemId: string;
     title: string;
     typeName: string | null;
@@ -1398,6 +1511,9 @@ export interface WorkspaceConsoleResponsibilityDto {
     updatedAt?: string | null;
     finishedAt?: string | null;
     mySubtasks: {
+      ownerNames?: string[];
+      createdAt?: string | null;
+      updatedAt?: string | null;
       id: string;
       title: string;
       owners: string[];
@@ -1405,15 +1521,50 @@ export interface WorkspaceConsoleResponsibilityDto {
       nodeId: string;
       nodeName: string | null;
       phase: 'current' | 'upcoming' | 'completed' | 'unknown';
+      localTaskIds?: string[];
       finishedAt?: string | null;
     }[];
   }[];
   localAssociated: {
+    responsibleNames?: string[];
+    creatorNames?: string[];
+    createdAt?: string | null;
+    typeKey?: string;
+    reasons?: string[];
+    localTaskIds: string[];
+    linkedStoryIds?: string[];
+    release?: {
+      mode: 'normal' | 'canary';
+      conflict: boolean;
+      versionId: string | null;
+      version: string | null;
+      source: 'item' | 'linked_story';
+      error: string | null;
+    };
+    applicationCoverage?: 'not_configured' | 'not_queried' | 'complete' | 'partial';
+    applications?: {
+      workItemId: string;
+      typeKey: string;
+      title: string;
+      url: string | null;
+      status: string;
+      completed: boolean | null;
+      finishedAt: string | null;
+      unfinishedSubtasks: {
+        id: string;
+        name: string;
+      }[];
+      reconciliationRequired: boolean;
+      source: 'native_relation' | 'local_binding';
+    }[];
+    verified?: boolean;
+    error?: string | null;
     associationKey: string;
     workItemId: string;
     title: string;
     url: string | null;
-    localTaskIds: string[];
+    kind?: 'work_item' | 'subtask' | 'unresolved';
+    parentId?: string | null;
   }[];
   counts: {
     current: number;
@@ -1436,6 +1587,7 @@ export interface WorkspaceOperationRecordsDto {
 }
 
 export interface WorkspaceConsoleDashboardDto {
+  workspaceId?: string;
   workspacePath: string;
   capturedAt: number;
   registryGeneratedAt: string | null;
@@ -1447,13 +1599,18 @@ export interface WorkspaceConsoleDashboardDto {
     sessions: number;
   };
   tasks: {
+    kind?: 'task' | 'item' | null;
+    diagnostics?: string[];
     id: string;
     title: string | null;
     taskPath: string | null;
     taskDocumentPath: string | null;
     status: string | null;
     description?: string | null;
+    taskPlanPath?: string | null;
+    taskDirectoryUpdatedAt?: string | null;
     feishuPrimaryWorkItemId?: string | null;
+    canaryApplicationIds?: string[];
     horizon: string | null;
     nextAction: string | null;
     waitingOn: string | null;
@@ -1476,6 +1633,10 @@ export interface WorkspaceConsoleDashboardDto {
     runIds: string[];
     sessionIds: string[];
     observedDurationSeconds: number | null;
+    activityEvidence?: {
+      state: 'complete' | 'active' | 'uncertain' | 'stale' | 'unavailable';
+      incomplete: boolean;
+    };
   }[];
   runs: WorkspaceConsoleRunDto[];
   unmatchedRuns: WorkspaceConsoleRunDto[];
@@ -1498,6 +1659,10 @@ export interface WorkspaceConsoleDashboardDto {
 }
 
 export interface WorkspaceConsoleSessionCandidateDto {
+  workspaceTargets?: {
+    taskId: string;
+    targetRef: string;
+  }[];
   sessionId: string;
   title: string;
   projectPath: string;
@@ -1918,6 +2083,7 @@ export interface SendCommand {
   enginePreferences?: EnginePreferencesDto;
   messageId?: string;
   workspaceTaskId?: string;
+  workspaceId?: string;
   replyToAsyncQuestionId?: string;
   attachments?: SendAttachmentDto[];
   client?: ClientEnvironmentDto;

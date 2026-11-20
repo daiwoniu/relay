@@ -9,6 +9,7 @@ export interface SessionProjectionInput {
   modelId?: string | null;
   latestMessage?: string | null;
   feishuWorkItemIds?: string[];
+  workspaceTargets?: Array<{taskId:string;targetRef:string}>;
 }
 
 export interface SessionCardProjection extends SessionProjectionInput {

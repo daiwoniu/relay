@@ -174,7 +174,7 @@ test('run reader merges remote runner registrations by start time and keeps only
       { run_id: 'collected-run', task_name: 'mapping-dry-run', location: 'remote', status: 'succeeded', mode: 'dry-run', server_profile: 'spider-manager-codex', created_at: '2026-10-09 18:00:00', last_checked_at: '2026-10-09 18:01:30', local_result_dir: 'tasks/task-a/project-results/remote-collected-run' },
     ] }));
     const runs = await readWorkspaceRuns(root);
-    assert.deepEqual(runs.map((run) => run.runId), ['remote-run', 'local-run', 'collected-run', 'zz-legacy']);
+    assert.deepEqual(runs.map((run) => run.runId), ['remote-run', 'local-run', 'collected-run']);
     assert.deepEqual(runs[0] && { taskId: runs[0].taskId, status: runs[0].status, mode: runs[0].mode, target: runs[0].target,
       startedAt: runs[0].startedAt, finishedAt: runs[0].finishedAt, executionLocation: runs[0].executionLocation,
       serverName: runs[0].serverName, observedAt: runs[0].observedAt },

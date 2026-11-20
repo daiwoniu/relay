@@ -46,7 +46,7 @@ test('切换项目与会话页签时清空上一页签的成功提示', () => {
   assert.match(dialog, /const selectTab = \(value: Tab\) => \{/);
   assert.match(dialog, /if \(value === tab\) return;/);
   assert.match(dialog, /setNotice\(null\);\s*setTab\(value\);/);
-  assert.match(dialog, /onClick=\{\(\) => selectTab\(value\)\}/);
+  assert.match(dialog, /onClick=\{\(\) => \{[^\n]*selectTab\(value\);\}\}/);
 });
 
 test('打开回收站时同时加载项目和会话页签的实际数量', () => {

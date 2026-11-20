@@ -294,7 +294,7 @@ export function enqueueTurnWithMessageInDatabase(
     queue: Omit<EngineQueueEntry, 'state' | 'claimToken' | 'claimedAt' | 'userMessageId'>;
     now: number;
     expectedPreferencesRevision?: number;
-    workspaceTaskLink?: { taskId: string; workspacePath: string };
+    workspaceTaskLink?: { taskId: string; workspacePath: string; workspaceId?:string; connectionScope?:string; targetRef?:string };
     bind?: {
       engineId: EngineId;
       preferences?: { modelId: string | null; reasoningEffort: string | null; serviceTier?: string | null; expectedRevision: number };
@@ -359,6 +359,7 @@ export function enqueueTurnWithMessageInDatabase(
     if (input.workspaceTaskLink) {
       const { taskId, workspacePath } = input.workspaceTaskLink;
       insertWorkspaceLinkInOpenTransaction(db, { id: randomUUID(), workspace_path: workspacePath, task_id: taskId,
+        workspace_id:input.workspaceTaskLink.workspaceId,connection_scope:input.workspaceTaskLink.connectionScope,target_ref:input.workspaceTaskLink.targetRef,
         session_id: input.queue.sessionId, feishu_work_item_id: feishuWorkItemIdFromTaskId(taskId), run_id: null, relation_source: 'explicit', confidence: 'high',
         last_verified_at: input.now, created_at: input.now, updated_at: input.now });
     }

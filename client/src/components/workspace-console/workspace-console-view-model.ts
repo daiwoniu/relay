@@ -9,31 +9,46 @@ type WorkbenchItem = WorkspaceConsoleResponsibilityDto['workbenchItems'][number]
 type WorkbenchSubtask = WorkbenchItem['mySubtasks'][number];
 type LocalAssociatedItem = WorkspaceConsoleResponsibilityDto['localAssociated'][number];
 type Linked<T> = T & { tasks: DashboardTask[]; needsRecheck: boolean; personalCompleted?: boolean };
-export type TaskEntry = { kind: 'local'; key: string; task: DashboardTask } | { kind: 'project'; key: string; item: Linked<ResponsibilityItem> }
+export type DeliveryFeishuParent = { workItemId: string; title: string; typeName: string | null; url: string | null; nodeNames: string[]; finished: boolean };
+export type DeliveryFeishuItem = { key: string; title: string; pending: boolean; statusLabel?: string; statusOnlyLabel?: string | null; nodeLabel?: '当前节点' | '所属节点'; nodeName?: string | null; nodeNames?: string[]; parent?: DeliveryFeishuParent; updatedAt?: string | null; kind?: 'workItem' | 'subtask'; typeName?: string | null; workItemId?: string; url?: string | null; finished?: boolean | null; associationVerified?: boolean };
+export type TaskEntry = { kind: 'local'; key: string; task: DashboardTask; linkedFeishu?: DeliveryFeishuItem[] } | { kind: 'project'; key: string; item: Linked<ResponsibilityItem> }
   | { kind: 'parent'; key: string; item: WorkbenchItem; personalState?: PersonalResponsibilityState }
   | { kind: 'subtask'; key: string; parent: WorkbenchItem; subtask: WorkbenchSubtask; localTasks: DashboardTask[] };
-export type TaskGroup = { kind: 'group'; key: string; parent: WorkbenchItem; members: TaskEntry[] };
+export type TaskGroup = { kind: 'group'; key: string; parent: WorkbenchItem; members: TaskEntry[]; unified?: boolean };
 export type TaskDisplayEntry = TaskEntry | TaskGroup;
 export type GroupedTaskEntry = TaskGroup | Extract<TaskEntry, { kind: 'local' | 'project' }>;
 export type TaskEntryFilter = 'all' | 'unfinished' | 'doing' | 'waiting' | 'completed' | 'recent' | 'paused' | 'project';
 export type TaskAssociationFilter = 'all' | 'feishu' | 'local' | 'uncertain';
 export type TaskLane = 'unstarted' | 'doing' | 'completed';
-export type PersonalResponsibilityState = 'completed' | 'current' | 'future' | 'unknown';
+export type PersonalResponsibilityState = 'completed' | 'current' | 'future' | 'shared' | 'unknown';
 
-export function workbenchPersonalState(item: WorkbenchItem, actionability?: ResponsibilityItem['actionability'], localTasks: readonly DashboardTask[] = []): PersonalResponsibilityState {
+export function taskRecordCounts(entries: readonly TaskEntry[]) {
+  const workItems=new Set<string>(),children=new Set<string>(),nodes=new Set<string>();
+  for(const entry of entries){
+    if(entry.kind==='local')continue;
+    const parent=entry.kind==='subtask'?entry.parent:entry.item;
+    workItems.add(parent.workItemId);
+    if(entry.kind==='subtask')children.add(`${parent.workItemId}:${entry.subtask.id}`);
+    if(entry.kind==='parent'||entry.kind==='subtask')for(const node of (parent as WorkbenchItem).myNodes??[])nodes.add(`${parent.workItemId}:${node.id}`);
+  }
+  return {deliveries:entries.filter(entry=>entry.kind==='local').length,workItems:workItems.size,children:children.size,nodes:nodes.size,cards:groupTaskEntries([...entries]).length};
+}
+
+export function workbenchPersonalState(item: WorkbenchItem, actionability?: ResponsibilityItem['actionability'], _localTasks: readonly DashboardTask[] = []): PersonalResponsibilityState {
+  if (item.mySubtasks.some(child => !child.passed && (child.phase === 'completed' || child.phase === 'unknown'))) return 'unknown';
   if (workbenchFlowEnded(item)) return 'completed';
   const nodes = item.myNodes ?? [];
-  const currentNodes = nodes.filter((node) => node.phase === 'current' && !((node.ownerCount ?? 1) > 1
-    && item.mySubtasks.some((child) => child.nodeId === node.id)
-    && item.mySubtasks.filter((child) => child.nodeId === node.id).every((child) => child.passed)));
-  if (currentNodes.length || item.mySubtasks.some((child) => !child.passed && child.phase !== 'upcoming')) return 'current';
-  if (nodes.some((node) => node.phase === 'unknown')) return 'unknown';
-  const completed = nodes.some((node) => node.phase === 'completed') || item.mySubtasks.some((child) => child.passed)
-    || localTasks.some((task) => task.status === 'done' || task.status === 'completed');
-  if (completed) return 'completed';
-  if (nodes.some((node) => node.phase === 'upcoming') || item.mySubtasks.some((child) => child.phase === 'upcoming') || actionability === 'upcoming') return 'future';
-  if (actionability === 'current') return 'current';
-  return Array.isArray(item.myNodes) ? 'completed' : 'unknown';
+  const personalNodes = nodes.filter(node => node.ownerCount == null || node.ownerCount <= 1);
+  const personalChildren = item.mySubtasks.filter(child => (child.owners?.length ?? 1) <= 1);
+  if (personalNodes.some(node => node.phase === 'current') || personalChildren.some(child => !child.passed && child.phase === 'current')) return 'current';
+  if (nodes.some(node => node.phase === 'unknown')) return 'unknown';
+  if (personalNodes.some(node => node.phase === 'upcoming') || personalChildren.some(child => !child.passed && child.phase === 'upcoming')) return 'future';
+  if (nodes.some(node => node.phase === 'completed') || item.mySubtasks.some(child => child.passed)) return 'completed';
+  if (nodes.some(node => ['current','upcoming'].includes(node.phase) && (node.ownerCount ?? 0) > 1)
+    || item.mySubtasks.some(child => !child.passed && (child.owners?.length ?? 1) > 1)) return 'shared';
+  if (actionability === 'upcoming') return 'future';
+  if (actionability === 'current' || actionability === 'state_responsibility') return 'current';
+  return 'unknown';
 }
 
 export function isPersonalProjectComplete(item: Partial<ResponsibilityItem> & { personalCompleted?: boolean }): boolean {
@@ -55,9 +70,14 @@ export function workbenchParticipationLabel(item: WorkbenchItem, userKey: string
     ? '本人参与' : '待核实';
 }
 
-export function responsibilityClassificationNotice(report: Pick<WorkspaceConsoleResponsibilityDto, 'complete' | 'unverifiedCount'> | null): string | null {
+export function responsibilityClassificationNotice(report: (Pick<WorkspaceConsoleResponsibilityDto, 'complete' | 'unverifiedCount'> & Partial<Pick<WorkspaceConsoleResponsibilityDto, 'workbenchItems'>>) | null): string | null {
   if (!report || report.complete) return null;
   const count = report.unverifiedCount;
+  const uncertain = report.workbenchItems?.filter(item => item.reasons?.length) ?? [];
+  if (uncertain.length && uncertain.length === count && uncertain.every(item => item.reasons?.every(reason => reason === 'unmapped_role'))) {
+    const ended = uncertain.filter(item => item.isArchivedState === true || item.flowFinished === true).length;
+    return `有 ${count} 项参与角色尚未取得飞书角色定义（${ended} 项流程已结束，${count - ended} 项仍在流转或状态待核实）。这不是待办数量；已保留事项，可重试刷新；仍无法取得定义时再核对飞书角色配置或接口权限。`;
+  }
   return `飞书责任尚未全部核实${typeof count === 'number' && count > 0 ? `：还有 ${count} 个候选待核实` : ''}。已保留可用事项，当前数据不代表完整责任清单。`;
 }
 
@@ -70,6 +90,28 @@ export function currentNodeResponsibilityLabel(item: Pick<WorkbenchItem, 'curren
     : '当前节点：接口未返回';
 }
 
+function workItemNodeNameList(item: { currentNodeNames?: readonly string[]; currentNodes?: readonly (string | { name: string })[] }): string[] {
+  const names = item.currentNodes?.length ? item.currentNodes.map(node => typeof node === 'string' ? node : node.name) : item.currentNodeNames ?? [];
+  return [...new Set(names.map(name => name.trim()).filter(Boolean))];
+}
+
+export function workItemCurrentNodeNames(item: Parameters<typeof workItemNodeNameList>[0]): string | null {
+  return workItemNodeNameList(item).join('、') || null;
+}
+
+export function workItemCurrentNodeLines(item: { currentNodeNames?: readonly string[]; currentNodes?: readonly (string | { name: string; ownerNames?: readonly string[] })[] }): string[] {
+  const nodes = item.currentNodes?.length ? item.currentNodes.map(node => typeof node === 'string' ? { name: node, ownerNames: undefined } : node)
+    : workItemNodeNameList(item).map(name => ({ name, ownerNames: undefined }));
+  return nodes.filter(node => node.name.trim()).map(({ name, ownerNames: owners }) => {
+    const ownerText = owners ? owners.length ? [...new Set(owners.map(owner => ['待核对', '姓名未获取', '本人'].includes(owner) ? '负责人信息待刷新' : owner))].join('、') : '未指定' : '接口未返回';
+    return `${name.trim()}（负责人：${ownerText}）`;
+  });
+}
+
+function deliveryParentContext(parent: WorkbenchItem): DeliveryFeishuParent {
+  return {workItemId:parent.workItemId,title:parent.title,typeName:parent.typeName,url:parent.url,nodeNames:workItemCurrentNodeLines(parent),finished:workbenchFlowEnded(parent)};
+}
+
 export function stateFlowResponsibilityLabel(item: Pick<ResponsibilityItem, 'statusName' | 'fallbackContact'>): string {
   const contact = item.fallbackContact;
   return `当前状态：${item.statusName || '接口未返回'}（${contact?.names.length
@@ -77,41 +119,27 @@ export function stateFlowResponsibilityLabel(item: Pick<ResponsibilityItem, 'sta
     : '报告人／创建人：接口未返回'}）`;
 }
 
-function hasUnfinishedLocalWork(tasks: readonly DashboardTask[], ids: ReadonlySet<string>, localTaskIds: readonly string[] = []): boolean {
-  return tasks.some((task) => (localTaskIds.includes(task.id) || task.feishuWorkItemIds.some((id) => ids.has(id))) && !isDone(task));
+export function feishuWorkItemStatusLabel(item: WorkbenchItem | ResponsibilityItem): string {
+  if ('mySubtasks' in item) return workbenchFlowEnded(item) ? '飞书流程：已结束' : `飞书${currentNodeResponsibilityLabel(item)}`;
+  return item.statusName ? `飞书${item.typeName || '工作项'}状态：${item.statusName}`
+    : isFinishedProjectIssue(item) ? '飞书流程：已结束' : `飞书当前节点：${item.currentNodes?.join('、') || '未返回'}`;
 }
 
-function acceptsLinkedIssue(parent: WorkbenchItem, tasks: readonly DashboardTask[]): boolean {
-  return !workbenchFlowEnded(parent) && (workbenchPersonalState(parent) !== 'completed'
-    || hasUnfinishedLocalWork(tasks, new Set([parent.workItemId, ...parent.mySubtasks.map((child) => child.id)])));
+export function personalIssueCompleted(item: ResponsibilityItem, tasks: readonly DashboardTask[]): boolean {
+  if(item.nativeCompleted===true)return true;
+  if(item.typeKey!=='issue'&&item.typeName!=='缺陷')return false;
+  if(item.actionability!=='state_responsibility'||!/^已修复[，,]\s*待验收$/.test(item.statusName??'')||item.reasons?.length
+    ||item.currentNodes?.length||item.personalSubtasks?.some(child=>!child.passed))return false;
+  const exact=tasks.filter(task=>primaryFeishuWorkItemId(task)===item.workItemId||task.feishuWorkItemIds.length===1&&task.feishuWorkItemIds[0]===item.workItemId);
+  if(!exact.length||exact.some(task=>!['done','completed'].includes(task.status??'')))return false;
+  const sourceAt=Date.parse(item.updatedAt??'');
+  const completed=exact.map(task=>Date.parse(task.completedAt??''));
+  return Number.isFinite(sourceAt)&&completed.every(Number.isFinite)&&Math.max(...completed)>=sourceAt;
 }
 
-function personalIssueCompleted(item: ResponsibilityItem, tasks: readonly DashboardTask[]): boolean {
-  return item.typeName === '缺陷' && item.actionability === 'state_responsibility'
-    && (item.personalSubtasks ?? []).every((child) => child.passed) && !isFinishedProjectIssue(item)
-    && ((item.personalSubtasks ?? []).some((child) => child.passed)
-      || tasks.some((task) => (task.status === 'done' || task.status === 'completed') && (item.localTaskIds.includes(task.id)
-        || task.feishuWorkItemIds.includes(item.workItemId)))
-      || (/^已修复[，,]待验收$/.test(item.statusName?.trim() ?? '')
-        && (item.myRoleKeys === undefined && item.baseOwnerIsMe === undefined
-          || item.myRoleKeys?.length === 1 && item.myRoleKeys[0] === 'operator' && item.baseOwnerIsMe === false)))
-    && !hasUnfinishedLocalWork(tasks, new Set([item.workItemId, ...(item.linkedStoryIds ?? [])]), item.localTaskIds);
-}
-
-/** Explain the existing classification without turning inferred handoff into verified completion. */
 export function personalIssueCompletionNotice(item: ResponsibilityItem, tasks: readonly DashboardTask[] = []): string | null {
-  if (!personalIssueCompleted(item, tasks)) return null;
-  if (item.baseOwnerIsMe === true || item.myRoleKeys?.includes('acceptor')) {
-    return '完成依据待核对：已有完成记录，但报表仍登记本人验收或负责人角色，请核对本轮责任范围。';
-  }
-  if ((item.personalSubtasks ?? []).some((child) => child.passed)) return '完成依据：报表中的本人子任务已完成，不代表整体流程结束。';
-  if (tasks.some((task) => (task.status === 'done' || task.status === 'completed')
-    && (item.localTaskIds.includes(task.id) || task.feishuWorkItemIds.includes(item.workItemId)))) {
-    return '完成依据：本地台账登记已完成；责任范围与核验记录请查看任务说明。';
-  }
-  return item.myRoleKeys === undefined && item.baseOwnerIsMe === undefined
-    ? '完成依据待核对：旧报表缺少本人责任信息，暂按原分类展示，请刷新核对。'
-    : '完成依据待核对：按修复状态与角色推断本轮修复已交接，尚无明确责任完成记录。';
+  return item.nativeCompleted === true ? '飞书原生状态已结束；本地交付状态独立保留。'
+    :personalIssueCompleted(item,tasks)?'本人本轮交付已完成，飞书仍待验收；保留的经办身份不视为新的待办。':null;
 }
 
 function openParticipationItems(
@@ -120,19 +148,22 @@ function openParticipationItems(
   mode: 'completed' | 'future' | 'all',
 ): ParticipatedOpenFeishuItem[] {
   if (!responsibility) return [];
-  const parents = (responsibility.workbenchItems ?? []).filter((parent) => {
+  // Prefer the native defect status and the main card's verified handoff evidence.
+  const handedOffIds = new Set(responsibility.items.filter(item => !isFinishedProjectIssue(item)
+    && personalIssueCompleted(item, tasks)
+    && !responsibility.workbenchItems?.some(parent => parent.workItemId === item.workItemId
+      && (parent.participated === false || workbenchFlowEnded(parent))))
+    .map(item => item.workItemId));
+  const parents = (responsibility.workbenchItems ?? []).filter(parent=>parent.participated!==false && !handedOffIds.has(parent.workItemId)).filter((parent) => {
     const state = workbenchPersonalState(parent, responsibility.items.find((item) => item.workItemId === parent.workItemId)?.actionability, localLedgersForParent(parent, [...tasks]));
-    return (state === 'completed' || state === 'future') && (mode === 'all' || state === mode) && !workbenchFlowEnded(parent);
+    return (state === 'completed' || state === 'future' || state === 'shared') && (mode === 'all' || state === mode) && !workbenchFlowEnded(parent);
   }).map((item): ParticipatedOpenFeishuItem => ({ kind: 'parent', item }));
   const parentIds = new Set((responsibility.workbenchItems ?? []).map((item) => item.workItemId));
-  const projects = responsibility.items.filter((item) => !parentIds.has(item.workItemId)
+  const projects = responsibility.items.filter((item) => (!parentIds.has(item.workItemId) || handedOffIds.has(item.workItemId))
     && (mode !== 'future' && personalIssueCompleted(item, tasks)
       || mode !== 'completed' && item.actionability === 'upcoming' && !isFinishedProjectIssue(item)))
     .map((item): ParticipatedOpenFeishuItem => ({ kind: 'project', item }));
-  return [...parents, ...projects].filter((entry) => entry.kind === 'parent'
-    ? !hasUnfinishedLocalWork(tasks, new Set([entry.item.workItemId, ...entry.item.mySubtasks.map((child) => child.id)]))
-    : !hasUnfinishedLocalWork(tasks, new Set([entry.item.workItemId, ...(entry.item.linkedStoryIds ?? [])]), entry.item.localTaskIds)
-  ).sort((a, b) => (Date.parse(b.item.updatedAt ?? '') || 0) - (Date.parse(a.item.updatedAt ?? '') || 0));
+  return [...parents, ...projects].sort((a, b) => (Date.parse(b.item.updatedAt ?? '') || 0) - (Date.parse(a.item.updatedAt ?? '') || 0));
 }
 
 export function participatedOpenFeishuItems(
@@ -149,18 +180,98 @@ export function trackedOpenFeishuItems(
   return openParticipationItems(responsibility, tasks, 'all');
 }
 
+export function trackedParticipationLabel(entry: ParticipatedOpenFeishuItem, tasks: readonly DashboardTask[] = []): string {
+  const state = entry.kind === 'parent' ? workbenchPersonalState(entry.item)
+    : personalIssueCompleted(entry.item, tasks) ? 'completed' : entry.item.actionability === 'upcoming' ? 'future' : 'unknown';
+  return ({completed:'本轮已完成',future:'后续参与',shared:'共同参与',current:'当前责任',unknown:'参与情况待核对'} as const)[state];
+}
+
+export function personalSubtaskSummary(parent: Pick<WorkbenchItem,'mySubtasks'>) {
+  const children = [...new Map(parent.mySubtasks.map(child=>[child.id,child])).values()];
+  const completed = children.filter(child=>child.passed).length;
+  return {total:children.length,completed,unfinished:children.length-completed};
+}
+
+export function localLedgerLabel(matchedCount: number, registeredCount: number): string {
+  return matchedCount > 0 ? `关联本地交付 ${matchedCount} 份` : registeredCount > 0 ? '已登记本地关联，台账尚未匹配' : '无本地台账';
+}
+
+export function feishuSubtaskUrl(parent: Pick<WorkbenchItem,'url'>, child: Pick<WorkbenchSubtask,'id'|'nodeId'>): string | null {
+  if(!parent.url)return null;
+  try {const url=new URL(parent.url);url.searchParams.set('activeStateId',child.nodeId);url.searchParams.set('subTaskId',child.id);return url.toString();}
+  catch{return null;}
+}
+
+export function deliveryFeishuGroups(items: readonly DeliveryFeishuItem[]) {
+  const unique = [...new Map(items.map(item=>[item.kind!=='subtask'&&item.workItemId ? `${item.kind}:${item.workItemId}` : item.key,item])).values()];
+  return [
+    {key:'workItems',label:'飞书流程',items:unique.filter(item=>item.associationVerified!==false&&item.kind!=='subtask'&&item.typeName!=='缺陷')},
+    {key:'issues',label:'本地交付关联缺陷',items:unique.filter(item=>item.associationVerified!==false&&item.kind!=='subtask'&&item.typeName==='缺陷')},
+    {key:'subtasks',label:'关联个人子任务',items:unique.filter(item=>item.associationVerified!==false&&item.kind==='subtask')},
+    {key:'uncertain',label:'关联待核实',items:unique.filter(item=>item.associationVerified===false)},
+  ].filter(group=>group.items.length).map(group=>({...group,
+    completed:group.items.filter(item=>item.finished===true),
+    unfinished:group.items.filter(item=>item.finished!==true),
+    unknown:group.items.filter(item=>item.finished==null).length,
+  }));
+}
+
+/** Display context for explicitly registered IDs; never used to merge tasks or infer responsibility. */
+export function taskFeishuContext(task: DashboardTask, report: WorkspaceConsoleResponsibilityDto | null): DeliveryFeishuItem[] {
+  const links=feishuLinksForTask(task,report);
+  return [...new Set([...task.feishuWorkItemIds,...links.map(link=>link.workItemId)])].map(id=>{
+    const item=report?.items.find(item=>item.workItemId===id);
+    const parent=report?.workbenchItems?.find(parent=>parent.workItemId===id);
+    const associated=report?.localAssociated.find(item=>item.workItemId===id&&item.localTaskIds.includes(task.id));
+    const uncertain=associated?.verified===false;
+    const children=report?.workbenchItems?.flatMap(parent=>parent.mySubtasks.filter(child=>child.id===id).map(child=>({parent,child})))??[];
+    if(!item&&!parent&&children.length>1)return {key:`ambiguous:${id}`,kind:'subtask',typeName:'子任务',workItemId:id,title:'关联子任务',pending:false,finished:null,url:null,associationVerified:false,statusLabel:'子任务所属父项待核实'};
+    if(!item&&!parent&&children.length===1){
+      const {parent,child}=children[0];
+      return {key:`subtask:${parent.workItemId}:${id}`,kind:'subtask',typeName:'子任务',workItemId:id,title:child.title,
+        pending:!uncertain&&!child.passed,finished:uncertain?null:child.passed,url:feishuSubtaskUrl(parent,child),updatedAt:null,associationVerified:!uncertain,
+        nodeLabel:'所属节点',nodeName:child.nodeName,parent:uncertain?undefined:deliveryParentContext(parent),statusOnlyLabel:uncertain?'本地关联尚未核实':workbenchSubtaskStatusLabel(child),
+        statusLabel:uncertain?'本地关联尚未核实':`飞书子任务：${workbenchSubtaskStatusLabel(child)} · ${workbenchSubtaskNodeLabel(child)}`};
+    }
+    const source=item?.statusName?item:parent??item;
+    const finished=item ? isFinishedProjectIssue(item)?true:item.nativeCompleted===false?false:null
+      : parent ? workbenchFlowEnded(parent) : null;
+    return {key:`workItem:${id}`,kind:'workItem',typeName:source?.typeName,workItemId:id,title:source?.title??associated?.title??'关联工作项',
+      pending:!uncertain&&finished===false,finished:uncertain?null:finished,associationVerified:!uncertain,
+      url:links.find(link=>link.workItemId===id)?.url??source?.url??task.feishuWorkItemUrls?.[id]??null,updatedAt:source?.updatedAt,
+      nodeLabel:finished===true?undefined:'当前节点',nodeNames:source&&!uncertain?workItemCurrentNodeLines(source):[],
+      statusOnlyLabel:uncertain?'本地关联尚未核实':finished===true?'流程已结束':source&&'statusName' in source?source.statusName||null:!source?'飞书状态未读取':null,
+      statusLabel:uncertain?'本地关联尚未核实':source?feishuWorkItemStatusLabel(source):'飞书状态未读取'};
+  });
+}
+
+export function taskPrimaryFiles(task: DashboardTask, runs: readonly WorkspaceConsoleDashboardDto['runs'][number][]) {
+  const files:Array<{path:string;label:string}> = task.taskDocumentPath ? [{path:task.taskDocumentPath,label:'任务说明'}] : [];
+  let runFiles=0;
+  for(const run of selectRecentRuns(runs.filter(run=>run.taskId===task.id&&run.detailFilePath),runs.length)){
+    if(files.some(file=>file.path===run.detailFilePath))continue;
+    files.push({path:run.detailFilePath!,label:runFiles===0?'最近执行文件':'上次执行文件'});
+    if(++runFiles>=2)break;
+  }
+  return files;
+}
+
 export function futureFeishuItems(responsibility: Pick<WorkspaceConsoleResponsibilityDto, 'sourceUserKey' | 'items' | 'workbenchItems'> | null, tasks: readonly DashboardTask[] = []): ParticipatedOpenFeishuItem[] {
   return openParticipationItems(responsibility, tasks, 'future');
 }
 
-export function isFinishedProjectIssue(item: Partial<Pick<ResponsibilityItem, 'typeName' | 'statusName'>>): boolean {
+export function isFinishedProjectIssue(item: Partial<Pick<ResponsibilityItem, 'typeName' | 'statusName' | 'nativeCompleted'>>): boolean {
+  // A transferred defect is closed as a defect; its requirement and local
+  // deliveries keep their own states even when Feishu leaves the flow open.
+  if (item.typeName === '缺陷' && item.statusName?.trim() === '转需求') return true;
+  if (item.nativeCompleted !== undefined) return item.nativeCompleted === true;
   if (item.typeName !== '缺陷') return false;
   const status = item.statusName?.trim() ?? '';
   return status === '转需求' || status === '已修复' || /^已修复[，,](已验收|验收通过)$/.test(status);
 }
 
 export function projectTaskCardDetails(item: Pick<ResponsibilityItem, 'actionability' | 'currentNodes' | 'personalSubtasks'> & Partial<Pick<ResponsibilityItem, 'typeName' | 'statusName'>> & { personalCompleted?: boolean }): { current: string; next: string } {
-  if (isFinishedProjectIssue(item)) return { current: `缺陷已结束 · ${item.statusName}`, next: '无须继续处理此缺陷' };
+  if (isFinishedProjectIssue(item)) return { current: finishedIssueLabel(item), next: '无须继续处理此缺陷' };
   if (item.personalCompleted) return { current: '本轮已完成', next: '等待后续验收或流程流转' };
   const current = item.currentNodes.length ? item.currentNodes.join('、')
     : item.actionability === 'state_responsibility' ? '负责流程流转，当前不一定需要操作'
@@ -173,7 +284,7 @@ export function projectTaskCardDetails(item: Pick<ResponsibilityItem, 'actionabi
 const terminal = new Set(['done', 'completed', 'closed', 'cancelled', 'canceled']);
 const isDone = (task: DashboardTask) => terminal.has(task.status ?? '');
 const activeStatuses = new Set(['doing', 'active', 'in_progress']);
-const ongoingStatuses = new Set(['waiting', 'blocked', 'paused', 'review_pending', 'review', 'failed']);
+const ongoingStatuses = new Set(['blocked', 'review_pending', 'review', 'failed']);
 
 export function localTaskLane(task: DashboardTask): TaskLane {
   if (isDone(task)) return 'completed';
@@ -188,10 +299,11 @@ export function localTaskStatusLabel(task: DashboardTask): string {
 export function taskEntryProgressAt(entry: TaskDisplayEntry): number | null {
   const tasks = entry.kind === 'group' ? entry.members.filter((member): member is Extract<TaskEntry, { kind: 'local' }> => member.kind === 'local').map((member) => member.task)
     : entry.kind === 'local' ? [entry.task] : [];
-  const times = tasks.filter((task) => localTaskLane(task) === 'doing').map(taskProgressAt).filter((at): at is number => at !== null);
+  const times = tasks.filter((task) => localTaskLane(task) === 'doing'
+    || ['waiting', 'paused'].includes(task.status ?? '') && hasTaskStarted(task))
+    .map(taskProgressAt).filter((at): at is number => at !== null);
   return times.length ? Math.max(...times) : null;
 }
-const directoryWorkItemIds = (task: DashboardTask): string[] => `${task.id} ${task.taskPath ?? ''}`.match(/(?<!\d)\d{10}(?!\d)/g) ?? [];
 
 export function latestTaskRecordAt(task: DashboardTask): string | null {
   return [task.lastVerifiedAt, task.completedAt, task.startedAt]
@@ -215,7 +327,7 @@ export function splitDetailLocalTasks(tasks: DashboardTask[]): { visible: Dashbo
 
 export function sortDetailSubtasks(parent: WorkbenchItem, localTasks: DashboardTask[], operationTimes: ReadonlyMap<string, string> = new Map()): WorkbenchSubtask[] {
   const updatedAt = (child: WorkbenchSubtask) => {
-    const localTime = Math.max(0, ...localTasks.filter((task) => task.feishuWorkItemIds.includes(child.id))
+    const localTime = Math.max(0, ...localTasks.filter((task) => child.localTaskIds?.includes(task.id))
       .map((task) => detailTime(latestTaskRecordAt(task))));
     return Math.max(localTime, detailTime(child.finishedAt), detailTime(operationTimes.get(child.id)));
   };
@@ -224,8 +336,8 @@ export function sortDetailSubtasks(parent: WorkbenchItem, localTasks: DashboardT
 }
 
 export function localLedgersForParent(parent: WorkbenchItem, tasks: DashboardTask[]): DashboardTask[] {
-  const ids = new Set([parent.workItemId, ...parent.mySubtasks.map((child) => child.id)]);
-  return sortDetailLocalTasks(tasks.filter((task) => task.feishuWorkItemIds.some((id) => ids.has(id))));
+  const ids = new Set([...(parent.localTaskIds ?? []), ...parent.mySubtasks.flatMap((child) => child.localTaskIds ?? [])]);
+  return sortDetailLocalTasks(tasks.filter((task) => ids.has(task.id)));
 }
 
 export function taskEntryUpdatedAt(entry: TaskEntry): number {
@@ -241,7 +353,7 @@ export function taskDisplayEntryUpdatedAt(entry: TaskDisplayEntry): number {
 export function taskEntryFinishedAt(entry: TaskEntry): number {
   const value = entry.kind === 'local' ? entry.task.completedAt
     : entry.kind === 'parent' ? entry.item.finishedAt
-      : entry.kind === 'subtask' ? entry.subtask.finishedAt : null;
+      : entry.kind === 'subtask' ? entry.subtask.finishedAt : entry.item.finishedAt;
   return Date.parse(value ?? '') || 0;
 }
 
@@ -259,7 +371,18 @@ export function taskEntryLane(entry: TaskDisplayEntry): TaskLane {
     return parentState(entry) === 'completed' ? 'completed' : 'unstarted';
   }
   if (entry.kind === 'subtask') return entry.subtask.passed ? 'completed' : 'unstarted';
-  return localTaskLane(entry.task);
+  return localEntryNeedsRecheck(entry) ? 'unstarted' : localTaskLane(entry.task);
+}
+
+export function localEntryNeedsRecheck(entry: Extract<TaskEntry, {kind:'local'}>): boolean {
+  const completedAt = Date.parse(entry.task.completedAt ?? '');
+  return isDone(entry.task) && !['cancelled','canceled'].includes(entry.task.status ?? '') && entry.linkedFeishu?.some(item => {
+    if (!item.pending) return false;
+    const updatedAt = Date.parse(item.updatedAt ?? '');
+    // A completed delivery already covers the older source state. Newer or
+    // undated responsibility evidence needs review, never an automatic reopen.
+    return !Number.isFinite(completedAt) || !Number.isFinite(updatedAt) || updatedAt > completedAt;
+  }) === true;
 }
 
 export function selectGroupPrimaryEntry(group: TaskGroup): TaskEntry | null {
@@ -272,7 +395,7 @@ export function selectGroupPrimaryEntry(group: TaskGroup): TaskEntry | null {
   const readyLocal = activeLocals.filter((entry) => !['waiting','blocked','paused'].includes(entry.task.status ?? ''));
   if (readyLocal.length) return recentLocal(readyLocal);
   const readyChild = candidates.find((entry) => entry.kind === 'subtask' && !entry.subtask.passed && entry.subtask.phase === 'current'
-    && !activeLocals.some((local) => local.task.feishuWorkItemIds.includes(entry.subtask.id)));
+    && !activeLocals.some((local) => entry.subtask.localTaskIds?.includes(local.task.id)));
   if (readyChild) return readyChild;
   const readyProject = candidates.find((entry) => entry.kind === 'project' && taskEntryLane(entry) !== 'completed');
   if (readyProject) return readyProject;
@@ -287,7 +410,20 @@ export function selectGroupPrimaryEntry(group: TaskGroup): TaskEntry | null {
 export function groupTaskEntriesByLane<T extends TaskDisplayEntry>(entries: T[]): Record<TaskLane, T[]> {
   const lanes: Record<TaskLane, T[]> = { unstarted: [], doing: [], completed: [] };
   for (const entry of entries) lanes[taskEntryLane(entry)].push(entry);
+  lanes.completed.sort((a,b)=>taskDisplayEntryFinishedAt(b)-taskDisplayEntryFinishedAt(a)||a.key.localeCompare(b.key));
   return lanes;
+}
+
+export function finishedIssueLabel(item: { statusName?:string|null }): string {
+  const status=item.statusName?.trim();
+  return status ? `缺陷已结束 · ${status}` : '缺陷已结束';
+}
+
+/** Registry machine outcomes are not explanatory business results. */
+export function taskVerificationLabel(value: string | null | undefined): string | null {
+  if (!value?.trim()) return null;
+  const labels:Record<string,string>={verified:'已核验',passed:'核验通过',failed:'核验未通过',pending:'待核验',unverified:'尚未核验',not_verified:'尚未核验',true:'已核验',false:'核验未通过'};
+  return labels[value.trim().toLowerCase()]??value.trim();
 }
 
 export function taskEntryStatusLabel(entry: TaskDisplayEntry): string {
@@ -295,28 +431,31 @@ export function taskEntryStatusLabel(entry: TaskDisplayEntry): string {
     if (taskEntryConflict(entry) && taskEntryLane(entry) !== 'doing') return '待核对';
     const activeLocal = selectGroupPrimaryEntry(entry);
     if (activeLocal?.kind === 'local' && !isDone(activeLocal.task)) return localTaskStatusLabel(activeLocal.task);
+    if (entry.unified && taskEntryLane(entry)!=='completed' && activeLocal) return activeLocal.kind==='project'?'缺陷待处理'
+      : activeLocal.kind==='subtask'?workbenchSubtaskStatusLabel(activeLocal.subtask)
+        : activeLocal.kind==='parent'&&parentState(activeLocal)==='current'?'当前待处理':'责任待核实';
     return taskEntryLane(entry) === 'completed' ? workbenchFlowEnded(entry.parent) ? '流程已结束' : '本轮已完成'
       : taskEntryLane(entry) === 'doing' ? '有任务处理中' : '有任务待处理／待确认';
   }
-  if (entry.kind === 'project') return isFinishedProjectIssue(entry.item) ? `缺陷已结束 · ${entry.item.statusName}`
+  if (entry.kind === 'project') return isFinishedProjectIssue(entry.item) ? finishedIssueLabel(entry.item)
     : isPersonalProjectComplete(entry.item) ? '本轮已完成' : entry.item.actionability === 'current' ? '当前待处理' : '待确认';
   if (entry.kind === 'parent') return parentState(entry) === 'completed'
     ? workbenchFlowEnded(entry.item) ? workbenchParentStatusLabel(entry.item) : '本轮已完成'
-    : parentState(entry) === 'current' ? '当前待处理' : parentState(entry) === 'future' ? '后续参与' : '状态待核对';
+    : parentState(entry) === 'current' ? '当前待处理' : parentState(entry) === 'future' ? '后续参与' : parentState(entry) === 'shared' ? '共同参与' : '状态待核对';
   if (entry.kind === 'subtask') return workbenchSubtaskStatusLabel(entry.subtask);
-  return localTaskStatusLabel(entry.task);
+  return localEntryNeedsRecheck(entry) ? '待核对' : localTaskStatusLabel(entry.task);
 }
 
 export function taskEntryFilterStatuses(entry: TaskDisplayEntry): string[] {
   if (entry.kind !== 'group') return entry.kind === 'local'
-    ? [...new Set([taskEntryStatusLabel(entry), taskStatusPresentation(entry.task.status).label])] : [taskEntryStatusLabel(entry)];
+    ? localEntryNeedsRecheck(entry) ? ['待核对'] : [...new Set([taskEntryStatusLabel(entry), taskStatusPresentation(entry.task.status).label])] : [taskEntryStatusLabel(entry)];
   const members = taskEntryLane(entry) === 'completed' ? entry.members
     : entry.members.filter((member) => taskEntryLane(member) !== 'completed');
   return [...new Set([taskEntryStatusLabel(entry), ...members.flatMap(taskEntryFilterStatuses)])];
 }
 
 export function workbenchFlowEnded(item: WorkbenchItem): boolean {
-  return item.stateKey === 'done' || item.isArchivedState === true || item.flowFinished === true;
+  return item.isArchivedState === true || item.flowFinished === true;
 }
 
 export function workbenchActionCompleted(entry: Extract<TaskEntry, { kind: 'parent' | 'subtask' }>, followFlow = false): boolean {
@@ -326,33 +465,35 @@ export function workbenchActionCompleted(entry: Extract<TaskEntry, { kind: 'pare
 export function taskEntryConflict(entry: TaskDisplayEntry): string | null {
   if (entry.kind !== 'group') return null;
   const completedLocals = entry.members.filter((member): member is Extract<TaskEntry, {kind:'local'}> => member.kind === 'local' && isDone(member.task));
-  const unfinishedFor = (id: string) => entry.members.some((member) => member.kind === 'local' && !isDone(member.task) && member.task.feishuWorkItemIds.includes(id));
+  const unfinishedFor = (id: string) => {
+    const ids = id === entry.parent.workItemId ? entry.parent.localTaskIds : entry.parent.mySubtasks.find(child => child.id === id)?.localTaskIds;
+    return entry.members.some(member => member.kind === 'local' && !isDone(member.task) && ids?.includes(member.task.id));
+  };
   const pendingChild = entry.members.find((member) => member.kind === 'subtask' && !member.subtask.passed
     && member.subtask.phase !== 'upcoming' && !unfinishedFor(member.subtask.id)
-    && completedLocals.some((local) => local.task.feishuWorkItemIds.includes(member.subtask.id)));
+    && completedLocals.some((local) => member.subtask.localTaskIds?.includes(local.task.id)));
   if (pendingChild) return '本地工作已结束，飞书子任务仍未完成，请核对。';
   const pendingParent = entry.members.find((member) => member.kind === 'parent' && parentState(member) === 'current');
-  if (pendingParent && !unfinishedFor(entry.parent.workItemId) && !entry.parent.mySubtasks.some((child) => !child.passed && child.phase === 'current')
-    && completedLocals.some((local) => local.task.feishuWorkItemIds.includes(entry.parent.workItemId))) {
+  if (!entry.unified && pendingParent && !unfinishedFor(entry.parent.workItemId) && !entry.parent.mySubtasks.some((child) => !child.passed && child.phase === 'current')
+    && completedLocals.some((local) => entry.parent.localTaskIds?.includes(local.task.id))) {
     return '本地本轮已结束，飞书仍有当前个人责任，请核对是否为新一轮工作。';
   }
   return null;
 }
 
 export function workbenchParentStatusLabel(item: WorkbenchItem): string {
-  return item.stateKey === 'done' ? '已完成' : item.isArchivedState === true ? '已归档'
+  return item.isArchivedState === true ? '已归档'
     : item.flowFinished === true ? '飞书流程已结束'
       : item.currentNodeNames.length ? '流程进行中' : '状态待核对';
 }
 
 export function workbenchSubtaskNodeLabel(subtask: WorkbenchSubtask): string {
-  const phase = subtask.phase === 'current' ? '当前节点' : subtask.phase === 'upcoming' ? '后续节点'
-    : subtask.phase === 'completed' ? '已结束节点' : '阶段待核对';
-  return `${phase}：${subtask.nodeName || '名称待核对'}`;
+  return `所属节点：${subtask.nodeName || '名称待核对'}`;
 }
 
 export function workbenchSubtaskStatusLabel(subtask: WorkbenchSubtask): string {
   if (subtask.passed) return '已完成';
+  if ((subtask.owners?.length ?? 1)>1 && ['current','upcoming'].includes(subtask.phase)) return '共同参与 · 未完成';
   if (subtask.phase === 'current') return '当前待处理';
   if (subtask.phase === 'upcoming') return '后续待处理';
   if (subtask.phase === 'completed') return '未完成';
@@ -380,10 +521,8 @@ export function filterTaskLanesByStatus<T extends TaskDisplayEntry>(lanes: Recor
 export function buildWorkspaceConsoleView(dashboard: WorkspaceConsoleDashboardDto | null, responsibility: WorkspaceConsoleResponsibilityDto | null) {
   const dashboardTasks = dashboard ? withDashboardProgress(dashboard).tasks : [];
   const taskById = new Map(dashboardTasks.map((task) => [task.id, task]));
-  const byProjectId = new Map<string, DashboardTask[]>();
-  for (const task of dashboardTasks) for (const id of new Set([...task.feishuWorkItemIds, ...directoryWorkItemIds(task)])) byProjectId.set(id, [...(byProjectId.get(id) ?? []), task]);
   const link = (item: ResponsibilityItem): Linked<ResponsibilityItem> => {
-    const tasks = [...new Set([...item.localTaskIds.map((id) => taskById.get(id)), ...(byProjectId.get(item.workItemId) ?? [])].filter((task): task is DashboardTask => Boolean(task)))];
+    const tasks = [...new Set(item.localTaskIds.map((id) => taskById.get(id)).filter((task): task is DashboardTask => Boolean(task)))];
     return { ...item, tasks, needsRecheck: tasks.some(isDone), personalCompleted: personalIssueCompleted(item, dashboardTasks) };
   };
   const linkLocal = (item: LocalAssociatedItem): Linked<LocalAssociatedItem> => {
@@ -432,11 +571,11 @@ export function selectFocusEntries<T extends TaskDisplayEntry>(entries: T[], now
       const nodes = member.item.myNodes?.filter((node) => node.phase === 'current') ?? [];
       if (nodes.length && nodes.every((node) => {
         const children = member.item.mySubtasks.filter((child) => child.nodeId === node.id && !child.passed);
-        return children.length && children.every((child) => locals.some((task) => task.feishuWorkItemIds.includes(child.id)));
+        return children.length && children.every((child) => locals.some((task) => child.localTaskIds?.includes(task.id)));
       })) return false;
     }
-    const id = member.kind === 'subtask' ? member.subtask.id : member.item.workItemId;
-    return !locals.some((task) => task.feishuWorkItemIds.includes(id));
+    const ids = member.kind === 'subtask' ? member.subtask.localTaskIds : member.item.localTaskIds;
+    return !locals.some((task) => ids?.includes(task.id));
   });
   const active = entries.filter((entry) => {
     if (taskEntryLane(entry) === 'completed') return false;
@@ -449,7 +588,7 @@ export function selectFocusEntries<T extends TaskDisplayEntry>(entries: T[], now
     if (taskEntryConflict(entry)) return 1;
     const readyChild = entry.kind === 'group' && entry.members.some((member) => member.kind === 'subtask'
       && !member.subtask.passed && member.subtask.phase === 'current'
-      && !locals.some((task) => task.feishuWorkItemIds.includes(member.subtask.id)));
+      && !locals.some((task) => member.subtask.localTaskIds?.includes(task.id)));
     if (!readyChild && locals.some((task) => ['waiting', 'blocked'].includes(task.status ?? ''))) return progressRecency(taskEntryProgressAt(entry), now).stale ? 4 : 3;
     return 2;
   };
@@ -474,15 +613,14 @@ export function distributeFocusEntries<T>(entries: readonly T[], columnCount: nu
   return columns;
 }
 
-export function selectRecentRuns<T extends { taskId: string | null }>(runs: T[], limit: number): T[] {
-  const seen = new Set<string>();
-  const distinct: T[] = [];
-  const rest: T[] = [];
-  for (const run of runs) {
-    if (run.taskId && !seen.has(run.taskId)) { seen.add(run.taskId); distinct.push(run); }
-    else rest.push(run);
-  }
-  return [...distinct, ...rest].slice(0, limit);
+export function selectRecentRuns<T extends { taskId: string | null; startedAt?: string | null; runId?: string }>(runs: T[], limit: number): T[] {
+  const time = (run: T) => {
+    const encoded = /^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})/.exec(run.runId ?? '');
+    const value = run.startedAt ?? (encoded ? `${encoded[1]}-${encoded[2]}-${encoded[3]}T${encoded[4]}:${encoded[5]}:${encoded[6]}` : null);
+    const parsed = value ? Date.parse(value.replace(' ', 'T')) : NaN;
+    return Number.isFinite(parsed) ? parsed : 0;
+  };
+  return [...runs].sort((a, b) => time(b) - time(a)).slice(0, limit);
 }
 
 export function formatFocusCurrent(value: string): string {
@@ -558,43 +696,35 @@ export function buildTaskEntries(view: ReturnType<typeof buildWorkspaceConsoleVi
   const futureIds = new Set(futureFeishuItems({sourceUserKey:view.sourceUserKey ?? '',items,workbenchItems:view.workbenchItems ?? []}, view.tasks).map((entry) => entry.item.workItemId));
   const reportedItems = [...items, ...view.localAssociated];
   const associatedTaskIds = new Set(reportedItems.flatMap((item) => item.localTaskIds));
-  const linkedIssueIds = new Set(items.filter((item) => item.typeName === '缺陷' && item.linkedStoryIds?.length === 1
-    && !(view.workbenchItems ?? []).some((parent) => parent.workItemId === item.workItemId && parent.mySubtasks.length > 0))
-    .map((item) => item.workItemId));
+  const uncertainTaskIds=new Set(view.localAssociated.filter(item=>item.verified===false).flatMap(item=>item.localTaskIds));
   const local: TaskEntry[] = view.tasks
     .filter((task) => {
       const linked = associatedTaskIds.has(task.id) || task.feishuWorkItemIds.length > 0;
-      return filter === 'feishu' ? linked : filter === 'local' ? !linked && directoryWorkItemIds(task).length === 0
-        : filter === 'uncertain' ? !linked && directoryWorkItemIds(task).length > 0 : true;
+      return filter === 'feishu' ? linked : filter === 'local' ? !linked
+        : filter === 'uncertain' ? uncertainTaskIds.has(task.id)||!!task.diagnostics?.length : true;
     })
     .map((task) => ({ kind: 'local', key: `local:${task.id}`, task }));
-  const workbenchIds = new Set((view.workbenchItems ?? []).map((item) => item.workItemId));
-  const groupableParentIds = new Set((view.workbenchItems ?? []).filter((parent) =>
-    !futureIds.has(parent.workItemId) && (parent.mySubtasks.length > 0
-      || ((isWorkbenchItemOwner(parent, view.sourceUserKey) || parent.myNodes?.length)
-        && !linkedIssueIds.has(parent.workItemId)))).map((parent) => parent.workItemId));
+  const participating=(view.workbenchItems??[]).filter(item=>item.participated!==false);
+  const workbenchIds = new Set(participating.map((item) => item.workItemId));
+  const stateItemIds=new Set(items.filter(item=>item.actionability==='state_responsibility').map(item=>item.workItemId));
   const project: TaskEntry[] = items
     .filter((item) => {
       if (filter === 'local' || filter === 'uncertain' || futureIds.has(item.workItemId)) return false;
-      const groupedWithStory = item.linkedStoryIds?.length === 1
-        && groupableParentIds.has(item.linkedStoryIds[0])
-        && (view.workbenchItems ?? []).some((parent) => parent.workItemId === item.linkedStoryIds![0] && acceptsLinkedIssue(parent, view.tasks));
-      if (item.typeName === '缺陷' && !isFinishedProjectIssue(item)
-        && item.tasks.some((task) => !isDone(task)) && !groupedWithStory) return false;
-      return item.personalCompleted === true && !workbenchIds.has(item.workItemId) || linkedIssueIds.has(item.workItemId)
-        || (item.typeName === '缺陷' && !isFinishedProjectIssue(item) && !workbenchIds.has(item.workItemId))
-        || item.tasks.length === 0 && !workbenchIds.has(item.workItemId);
+      return stateItemIds.has(item.workItemId)||!workbenchIds.has(item.workItemId);
     })
     .map((item) => ({ kind: 'project', key: `project:${item.workItemId}`, item }));
-  const workbench: TaskEntry[] = filter === 'local' || filter === 'uncertain' ? [] : (view.workbenchItems ?? []).filter((parent) =>
-    !futureIds.has(parent.workItemId)).flatMap((parent) => [
-    ...((isWorkbenchItemOwner(parent, view.sourceUserKey) || parent.myNodes?.length)
-      && !linkedIssueIds.has(parent.workItemId)
+  const workbench: TaskEntry[] = filter === 'local' || filter === 'uncertain' ? [] : participating.filter((parent) =>
+    !futureIds.has(parent.workItemId)&&!stateItemIds.has(parent.workItemId)).flatMap((parent) => {
+    // A child action is represented by that child; it must not reopen every delivery linked to its parent.
+    const personalState=workbenchPersonalState({...parent,mySubtasks:[]},parent.myNodes===undefined?items.find(item=>item.workItemId===parent.workItemId)?.actionability:undefined);
+    const hasParentTarget=parent.myNodes===undefined||parent.myNodes.length>0||parent.mySubtasks.length===0||parent.reasons?.some(reason=>reason!=='unmapped_role');
+    return [
+    ...((isWorkbenchItemOwner(parent, view.sourceUserKey) || parent.myNodes?.length) && hasParentTarget && personalState !== 'shared'
       ? [{ kind: 'parent' as const, key: `parent:${parent.workItemId}`, item: parent,
-        personalState:workbenchPersonalState(parent,items.find((item)=>item.workItemId===parent.workItemId)?.actionability, localLedgersForParent(parent, view.tasks)) }] : []),
-    ...parent.mySubtasks.filter((subtask) => subtask.passed || subtask.phase !== 'upcoming').map((subtask) => ({ kind: 'subtask' as const, key: `subtask:${parent.workItemId}:${subtask.id}`,
-      parent, subtask, localTasks: view.tasks.filter((task) => task.feishuWorkItemIds.includes(subtask.id)) })),
-  ]);
+        personalState }] : []),
+    ...parent.mySubtasks.filter((subtask) => subtask.passed || subtask.phase !== 'upcoming' && (subtask.owners?.length ?? 1) <= 1).map((subtask) => ({ kind: 'subtask' as const, key: `subtask:${parent.workItemId}:${subtask.id}`,
+      parent, subtask, localTasks: view.tasks.filter((task) => subtask.localTaskIds?.includes(task.id)) })),
+  ];});
   const title = (entry: TaskEntry) => entry.kind === 'local' ? entry.task.title ?? entry.task.id
     : entry.kind === 'subtask' ? entry.subtask.title : entry.item.title;
   return [...local, ...project, ...workbench].sort((a, b) => taskEntryUpdatedAt(b) - taskEntryUpdatedAt(a)
@@ -603,77 +733,44 @@ export function buildTaskEntries(view: ReturnType<typeof buildWorkspaceConsoleVi
 
 export function groupTaskEntries(entries: TaskEntry[]): GroupedTaskEntry[] {
   const groups = new Map<string, TaskGroup>();
-  for (const entry of entries) {
-    const parent = entry.kind === 'parent' ? entry.item : entry.kind === 'subtask' ? entry.parent : null;
-    if (parent && !groups.has(parent.workItemId)) groups.set(parent.workItemId,
-      { kind: 'group', key: `group:${parent.workItemId}`, parent, members: [] });
-  }
-  const localTasks = entries.filter((entry): entry is Extract<TaskEntry, {kind:'local'}> => entry.kind === 'local').map((entry) => entry.task);
-  const links = new Map<string, Set<TaskGroup>>();
-  const projectGroups = new Map<TaskEntry, TaskGroup>();
-  const link = (key: string, group: TaskGroup) => {
-    const matches = links.get(key) ?? new Set<TaskGroup>();
-    matches.add(group);
-    links.set(key, matches);
-  };
-  for (const group of groups.values()) {
-    for (const id of [group.parent.workItemId, ...group.parent.mySubtasks.map((child) => child.id)]) link(`f:${id}`, group);
-  }
-  for (const entry of entries) {
-    if (entry.kind !== 'project' || entry.item.typeName !== '缺陷' || isFinishedProjectIssue(entry.item)) continue;
-    const stories = entry.item.linkedStoryIds ?? [];
-    const group = stories.length === 1 ? groups.get(stories[0]) : undefined;
-    if (!group || !acceptsLinkedIssue(group.parent, localTasks)) continue;
-    projectGroups.set(entry, group);
-    link(`f:${entry.item.workItemId}`, group);
-    for (const task of entry.item.tasks) link(`t:${task.id}`, group);
-  }
-  const groupFor = (entry: TaskEntry): TaskGroup | undefined => {
-    if (entry.kind === 'parent') return groups.get(entry.item.workItemId);
-    if (entry.kind === 'subtask') return groups.get(entry.parent.workItemId);
-    if (entry.kind === 'project') return projectGroups.get(entry);
-    const matches = new Set<TaskGroup>();
-    for (const key of [`t:${entry.task.id}`, ...entry.task.feishuWorkItemIds.map((id) => `f:${id}`)]) {
-      for (const group of links.get(key) ?? []) matches.add(group);
-    }
-    return matches.size === 1 ? [...matches][0] : undefined;
-  };
   const result: GroupedTaskEntry[] = [];
-  const seen = new Set<string>();
-  const completedProjectCounts = new Map<string, number>();
+  const locals = new Map(entries.filter((entry):entry is Extract<TaskEntry,{kind:'local'}>=>entry.kind==='local').map(entry=>[entry.task.id,{...entry,linkedFeishu:[] as NonNullable<typeof entry.linkedFeishu>}]));
   for (const entry of entries) {
-    if (entry.kind !== 'project' || projectGroups.has(entry) || taskEntryLane(entry) !== 'completed') continue;
-    for (const task of entry.item.tasks) {
-      if (!entry.item.localTaskIds.includes(task.id) && !task.feishuWorkItemIds.includes(entry.item.workItemId)) continue;
-      if (!isDone(task) || task.feishuWorkItemIds.some((id) => id !== entry.item.workItemId)) continue;
-      completedProjectCounts.set(task.id, (completedProjectCounts.get(task.id) ?? 0) + 1);
-    }
-  }
-  for (const entry of entries) {
-    const group = groupFor(entry);
-    if (!group) {
-      if (entry.kind === 'parent' || entry.kind === 'subtask') throw new Error('飞书任务缺少父项分组');
-      // The completed project card exposes its ledgers in the detail drawer.
-      // Keep ambiguous or unfinished work visible as an independent card.
-      if (entry.kind === 'local' && isDone(entry.task) && completedProjectCounts.get(entry.task.id) === 1) continue;
-      result.push(entry);
+    if (entry.kind === 'local') { result.push(locals.get(entry.task.id)!); continue; }
+    const localIds = entry.kind === 'subtask' ? entry.subtask.localTaskIds : entry.item.localTaskIds;
+    const represented = [...new Set(localIds ?? [])].map(id=>locals.get(id)).filter((local):local is NonNullable<typeof local>=>!!local&&!['cancelled','canceled'].includes(local.task.status??''));
+    if (represented.length) {
+      const statusLabel = entry.kind === 'subtask' ? `飞书子任务：${workbenchSubtaskStatusLabel(entry.subtask)} · ${workbenchSubtaskNodeLabel(entry.subtask)}` : feishuWorkItemStatusLabel(entry.item);
+      for (const local of represented) if (!local.linkedFeishu.some(item=>item.key===entry.key)) local.linkedFeishu.push({key:entry.key,title:entry.kind==='subtask'?entry.subtask.title:entry.item.title,pending:taskEntryLane(entry)!=='completed',statusLabel,
+        updatedAt:entry.kind==='subtask'?null:entry.item.updatedAt,kind:entry.kind==='subtask'?'subtask':'workItem',
+        typeName:entry.kind==='subtask'?'子任务':entry.item.typeName,workItemId:entry.kind==='subtask'?entry.subtask.id:entry.item.workItemId,
+        nodeLabel:entry.kind==='subtask'?'所属节点':(entry.kind==='parent'?workbenchFlowEnded(entry.item):isFinishedProjectIssue(entry.item))?undefined:'当前节点',
+        nodeName:entry.kind==='subtask'?entry.subtask.nodeName:null,nodeNames:entry.kind==='subtask'?undefined:workItemCurrentNodeLines(entry.item),parent:entry.kind==='subtask'?deliveryParentContext(entry.parent):undefined,
+        statusOnlyLabel:entry.kind==='subtask'?workbenchSubtaskStatusLabel(entry.subtask):(entry.kind==='parent'?workbenchFlowEnded(entry.item):isFinishedProjectIssue(entry.item))?'流程已结束':entry.kind==='project'?entry.item.statusName||null:null,
+        url:entry.kind==='subtask'?feishuSubtaskUrl(entry.parent,entry.subtask):entry.item.url,
+        finished:entry.kind==='subtask'?entry.subtask.passed:entry.kind==='project'?entry.item.nativeCompleted==null&&!isFinishedProjectIssue(entry.item)?null:isFinishedProjectIssue(entry.item):workbenchFlowEnded(entry.item)});
       continue;
     }
+    if (entry.kind === 'project') { result.push(entry); continue; }
+    const parent = entry.kind === 'parent' ? entry.item : entry.parent;
+    let group = groups.get(parent.workItemId);
+    if (!group) {
+      group = { kind: 'group', key: 'group:' + parent.workItemId, parent, members: [] };
+      groups.set(parent.workItemId, group); result.push(group);
+    }
     group.members.push(entry);
-    if (!seen.has(group.key)) { result.push(group); seen.add(group.key); }
   }
-  return result.sort((a, b) => taskDisplayEntryUpdatedAt(b) - taskDisplayEntryUpdatedAt(a)
-    || (a.kind === 'group' ? a.parent.title : a.kind === 'local' ? a.task.title ?? a.task.id : a.item.title).localeCompare(
-      b.kind === 'group' ? b.parent.title : b.kind === 'local' ? b.task.title ?? b.task.id : b.item.title));
+  // Explicit adapter links choose a delivery card as the display entry; deliveries never merge through a shared ID.
+  return result.sort((a, b) => taskDisplayEntryUpdatedAt(b) - taskDisplayEntryUpdatedAt(a));
 }
 
 export function groupLocalTasks(group: TaskGroup): { parent: string[]; children: Record<string, string[]> } {
   const locals = group.members.filter((entry): entry is Extract<TaskEntry, { kind: 'local' }> => entry.kind === 'local');
   const children: Record<string, string[]> = {};
   for (const child of group.parent.mySubtasks) children[child.id] = locals
-    .filter((entry) => entry.task.feishuWorkItemIds.includes(child.id)).map((entry) => entry.task.id);
-  return { parent: locals.filter((entry) => entry.task.feishuWorkItemIds.includes(group.parent.workItemId)
-    && !group.parent.mySubtasks.some((child) => entry.task.feishuWorkItemIds.includes(child.id)))
+    .filter((entry) => child.localTaskIds?.includes(entry.task.id)).map((entry) => entry.task.id);
+  return { parent: locals.filter((entry) => group.parent.localTaskIds?.includes(entry.task.id)
+    && !group.parent.mySubtasks.some((child) => child.localTaskIds?.includes(entry.task.id)))
     .map((entry) => entry.task.id), children };
 }
 
@@ -686,6 +783,20 @@ export function newTaskEntryKeys(previousKeys: readonly string[] | null, entries
   if (!previousKeys) return [];
   const previous = new Set(previousKeys);
   return entries.filter((entry) => !previous.has(entry.key)).map((entry) => entry.key);
+}
+
+/** Include known future/shared children so responsibility transitions are not mistaken for creation. */
+export function snapshotTaskIdentityKeys(entries:readonly TaskEntry[],report:WorkspaceConsoleResponsibilityDto|null):string[]{
+  return [...new Set([...entries.map(entry=>entry.key),
+    ...(report?.items??[]).flatMap(item=>[`project:${item.workItemId}`,`parent:${item.workItemId}`]),
+    ...(report?.localAssociated??[]).flatMap(item=>[`project:${item.workItemId}`,`parent:${item.workItemId}`,...(item.kind==='subtask'&&item.parentId?[`subtask:${item.parentId}:${item.workItemId}`]:[])]),
+    ...(report?.workbenchItems??[]).flatMap(parent=>[`parent:${parent.workItemId}`,`project:${parent.workItemId}`,...parent.mySubtasks.map(child=>`subtask:${parent.workItemId}:${child.id}`)]),
+  ])];
+}
+
+export function retainNewTaskKeys(previous:ReadonlySet<string>,baseline:readonly string[]|null,keys:readonly string[]):Set<string>{
+  const known=baseline===null?null:new Set(baseline),live=new Set(keys);
+  return new Set([...previous].filter(key=>live.has(key)).concat(known?keys.filter(key=>!known.has(key)):[]));
 }
 
 export function prioritizeTaskEntries<T extends TaskDisplayEntry>(entries: T[], newKeys: ReadonlySet<string>): T[] {
@@ -723,21 +834,24 @@ export function filterTaskEntries<T extends TaskDisplayEntry>(entries: T[], filt
       && (!query || [entry.item.title, entry.item.workItemId, ...entry.item.tasks.flatMap((task) => [task.id, task.title ?? ''])]
         .some((value) => value.toLocaleLowerCase().includes(query)));
     const status = entry.task.status ?? '';
-    const matchesFilter = filter === 'all' || (filter === 'unfinished' ? !terminal.has(status) : filter === 'completed' ? terminal.has(status)
+    const matchesFilter = filter === 'all' || (filter === 'unfinished' ? taskEntryLane(entry)!=='completed' : filter === 'completed' ? taskEntryLane(entry)==='completed'
       : filter === 'recent' ? terminal.has(status) && Boolean(entry.task.completedAt && Date.parse(entry.task.completedAt) >= now - 7 * 24 * 60 * 60 * 1000)
       : filter === 'doing' ? localTaskLane(entry.task) === 'doing'
-      : filter === 'waiting' ? status === 'waiting' || status === 'blocked' : filter !== 'project' && status === filter);
-    return matchesFilter && (!query || [entry.task.id, entry.task.title ?? '', ...entry.task.feishuWorkItemIds]
+      : filter === 'waiting' ? status === 'waiting' || status === 'blocked' : filter === 'project' ? !!entry.linkedFeishu?.length : status === filter);
+    return matchesFilter && (!query || [entry.task.id, entry.task.title ?? '', ...entry.task.feishuWorkItemIds, ...(entry.linkedFeishu??[]).map(item=>item.title)]
       .some((value) => value.toLocaleLowerCase().includes(query)));
   });
 }
 
 export function projectItemsForTask(task: DashboardTask, responsibility: WorkspaceConsoleResponsibilityDto | null) {
   if (!responsibility) return [];
-  return [
-    ...responsibility.items.filter((item) => item.localTaskIds.includes(task.id) || task.feishuWorkItemIds.includes(item.workItemId) || directoryWorkItemIds(task).includes(item.workItemId)),
+  const items = [
+    ...responsibility.items.filter((item) => item.localTaskIds.includes(task.id)),
     ...responsibility.localAssociated.filter((item) => item.localTaskIds.includes(task.id)),
   ];
+  const unique = new Map<string, ResponsibilityItem | LocalAssociatedItem>();
+  for (const item of items) if (!unique.has(item.workItemId)) unique.set(item.workItemId, item);
+  return [...unique.values()];
 }
 
 export function registryFeishuLinksForTask(task: DashboardTask): Array<{ workItemId: string; url: string }> {
@@ -750,10 +864,10 @@ export function registryFeishuLinksForTask(task: DashboardTask): Array<{ workIte
 export function feishuLinksForTask(task: DashboardTask, responsibility: WorkspaceConsoleResponsibilityDto | null): Array<{ workItemId: string; title: string; url: string }> {
   const links = new Map<string, { workItemId: string; title: string; url: string }>();
   for (const parent of responsibility?.workbenchItems ?? []) {
-    if (task.feishuWorkItemIds.includes(parent.workItemId) && parent.url) links.set(parent.workItemId,
+    if (parent.localTaskIds?.includes(task.id) && parent.url) links.set(parent.workItemId,
       { workItemId: parent.workItemId, title: parent.title, url: parent.url });
     for (const child of parent.mySubtasks) {
-      if (!task.feishuWorkItemIds.includes(child.id) || !parent.url) continue;
+      if (!child.localTaskIds?.includes(task.id) || !parent.url) continue;
       try {
         const url = new URL(parent.url);
         url.searchParams.set('activeStateId', child.nodeId);
@@ -807,8 +921,7 @@ export function feishuUrlForWorkItem(item: { workItemId: string; url: string | n
 }
 
 export function runsForTask(dashboard: WorkspaceConsoleDashboardDto, task: DashboardTask) {
-  return dashboard.runs.filter((run) => run.taskId === task.id)
-    .sort((a, b) => detailTime(b.startedAt ?? b.finishedAt) - detailTime(a.startedAt ?? a.finishedAt));
+  return selectRecentRuns(dashboard.runs.filter((run) => run.taskId === task.id), dashboard.runs.length);
 }
 
 export function formatObservedDuration(seconds: number | null): string {

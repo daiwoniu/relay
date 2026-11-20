@@ -32,7 +32,7 @@ export class ResponsibilityReportService extends ResponsibilityReportSource{
   private async resolve(force: boolean): Promise<WorkspaceResponsibilitySnapshot> {
     const expected = await this.identity();
     const db = this.snapshotDatabase();
-    const identityKey = `${expected.projectKey}:${expected.userKey}`;
+    const identityKey = `${expected.scope ? expected.scope + ':' : ''}${expected.projectKey}:${expected.userKey}`;
     if (this.cachedIdentityKey !== identityKey) this.cached = null;
     this.cachedIdentityKey = identityKey;
     if (!this.cached && db) {

@@ -8,6 +8,15 @@ test('formats long run duration in hours, minutes and seconds', () => {
   assert.equal(result.summary, '退出码 0 · 用时 33 分 13 秒');
 });
 
+test('uses explicit operation names and does not mistake heartbeat for completion', () => {
+  const result = projectRunRecord({ status: 'running', started_at: '2026-11-20 09:00:00', updated_at: '2026-11-20 09:01:00' }, 'run', 'task', [],
+    { notification: { display_name: '新增裁判文书候选边界只读复核' }, command: 'private command' });
+  assert.equal(result.displayName, '新增裁判文书候选边界只读复核');
+  assert.equal(result.finishedAt, null);
+  assert.equal(result.durationSeconds, null);
+  assert.doesNotMatch(JSON.stringify(result), /private command/);
+});
+
 test('projects repair run facts into a readable summary', () => {
   const result = projectRunRecord({
     run_id: 'run-repair-1', mode: 'repair', target: 'df_risk.df_risk_judgement_ch', state: 'succeeded',

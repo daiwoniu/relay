@@ -8,7 +8,9 @@ import { buildWorkspaceDashboard,WORKSPACE_DASHBOARD_MAX_BYTES } from '../worksp
 import { insertWorkspaceLinkInOpenTransaction,type WorkspaceLink } from '../db/queries-workspace-console.js';
 import { WorkspaceConsoleDashboardDtoSchema } from '../contracts/index.js';
 import { appendAdminAuditEventInDatabase } from '../db/admin-audit.js';
-import { feishuWorkItemIdFromTaskId,feishuWorkItemIdFromLaunch } from '../workspace-console/task-reference.js';
+import { feishuWorkItemIdFromTaskId } from '../workspace-console/task-reference.js';
+import { parseFeishuTarget } from '../workspace-console/task-reference.js';
+import { WORKSPACE_ID, WORKSPACE_CONNECTION_SCOPE } from '../workspace-console/workspace-context.js';
 type DB=ReturnType<typeof nativeQueries>;type Actor={id:string;role:string};
 const names=['workspace.linkSession','workspace.unlinkSession','workspace.beginSnapshot','workspace.saveSnapshot'] as const;
 type Name=typeof names[number];
@@ -21,27 +23,28 @@ export function checkWorkspaceFirstSend(db:DB,actor:Actor,sessionId:string){
     AND lower(p.path)=lower(?)`,[sessionId,FIXED_WORKSPACE_PATH]))deny('NOT_FOUND');
   return !db.get('SELECT 1 FROM messages WHERE session_id=? LIMIT 1',[sessionId]);
 }
-const scope=(actor:Actor)=>'workspace-dashboard:'+createHash('sha256').update(canonicalJson([actor.id,FIXED_WORKSPACE_PATH])).digest('hex');
-const identity=(actor:Actor)=>`${actor.id}:${FIXED_WORKSPACE_PATH}`;
+const scope=(actor:Actor)=>'workspace-dashboard:'+createHash('sha256').update(canonicalJson([actor.id,WORKSPACE_ID,FIXED_WORKSPACE_PATH])).digest('hex');
+const identity=(actor:Actor)=>`${actor.id}:${WORKSPACE_ID}:${FIXED_WORKSPACE_PATH}`;
 export function readWorkspaceState(db:DB,actor:Actor):StoredWorkspaceState{
   authorizeWorkspace(actor);
-  const size=db.get(`SELECT count(*) AS n,coalesce(sum(length(CAST(id AS BLOB))+length(CAST(task_id AS BLOB))+coalesce(length(CAST(session_id AS BLOB)),0)+coalesce(length(CAST(feishu_work_item_id AS BLOB)),0)+coalesce(length(CAST(run_id AS BLOB)),0)),0) AS bytes FROM workspace_console_links WHERE workspace_path=?`,[FIXED_WORKSPACE_PATH])!;
+  const size=db.get(`SELECT count(*) AS n,coalesce(sum(length(CAST(id AS BLOB))+length(CAST(task_id AS BLOB))+coalesce(length(CAST(session_id AS BLOB)),0)+coalesce(length(CAST(feishu_work_item_id AS BLOB)),0)+coalesce(length(CAST(run_id AS BLOB)),0)),0) AS bytes FROM workspace_console_links WHERE workspace_id=? AND workspace_path=?`,[WORKSPACE_ID,FIXED_WORKSPACE_PATH])!;
   if(Number(size.n)>1000||Number(size.bytes)>512*1024)deny('PAYLOAD_TOO_LARGE');
-  const links=db.all('SELECT * FROM workspace_console_links WHERE workspace_path=? ORDER BY updated_at DESC,id LIMIT 1001',[FIXED_WORKSPACE_PATH]).map(row=>({...row,session_id:row.session_id||null,feishu_work_item_id:row.feishu_work_item_id||null,run_id:row.run_id||null})) as WorkspaceLink[];
+  const links=db.all('SELECT * FROM workspace_console_links WHERE workspace_id=? AND workspace_path=? ORDER BY updated_at DESC,id LIMIT 1001',[WORKSPACE_ID,FIXED_WORKSPACE_PATH]).map(row=>({...row,session_id:row.session_id||null,feishu_work_item_id:row.feishu_work_item_id||null,run_id:row.run_id||null,
+    ...((parseFeishuTarget(String(row.task_id))&&!row.connection_scope)||(row.target_ref&&row.connection_scope!==WORKSPACE_CONNECTION_SCOPE)?{relation_source:'candidate',confidence:'low'}:{})})) as WorkspaceLink[];
   const rows=db.all(`SELECT s.id,substr(s.title,1,200) AS title,s.status,s.updated_at,substr(s.engine,1,32) AS engine,
     substr(coalesce(s.selected_model_id,CASE WHEN s.engine=u.default_engine THEN u.default_model_id END),1,200) AS model,
-    (SELECT substr(coalesce(content,''),1,2048) FROM messages m WHERE m.session_id=s.id ORDER BY m.created_at DESC,m.rowid DESC LIMIT 1) AS latest,
-    (SELECT substr(coalesce(content,''),1,512) FROM messages m WHERE m.session_id=s.id AND m.role='user' ORDER BY m.created_at,m.rowid LIMIT 1) AS launch
+    (SELECT substr(coalesce(content,''),1,2048) FROM messages m WHERE m.session_id=s.id ORDER BY m.created_at DESC,m.rowid DESC LIMIT 1) AS latest
     FROM sessions s JOIN projects p ON p.id=s.project_id LEFT JOIN users u ON u.id=s.owner_user_id
     WHERE s.deleted_at IS NULL AND p.deleted_at IS NULL AND p.owner_user_id IS NOT NULL AND s.owner_user_id IS NOT NULL AND lower(p.path)=lower(?)
     AND EXISTS(SELECT 1 FROM messages m WHERE m.session_id=s.id) ORDER BY s.updated_at DESC,s.id LIMIT 1001`,[FIXED_WORKSPACE_PATH]);
   if(rows.length>1000)deny('PAYLOAD_TOO_LARGE');
   const sessions=rows.map(row=>{
-    const references=new Set(links.filter(link=>link.session_id===row.id&&link.relation_source==='explicit'&&link.confidence==='high').flatMap(link=>{
+    const trusted=links.filter(link=>link.session_id===row.id&&link.relation_source==='explicit'&&link.confidence==='high'&&(!link.target_ref||link.connection_scope===WORKSPACE_CONNECTION_SCOPE));
+    const references=new Set(trusted.filter(link=>link.target_ref&&link.connection_scope===WORKSPACE_CONNECTION_SCOPE).flatMap(link=>{
       const id=link.feishu_work_item_id??feishuWorkItemIdFromTaskId(link.task_id);return id&&/^[1-9]\d*$/.test(id)?[id]:[];
     }));
-    const legacy=feishuWorkItemIdFromLaunch(String(row.launch??''));if(legacy)references.add(legacy);
     return projectSessionCard({sessionId:String(row.id),title:String(row.title??''),projectPath:FIXED_WORKSPACE_PATH,updatedAt:Number(row.updated_at??0),status:String(row.status??'unknown'),
+      workspaceTargets:[...new Map(trusted.map(link=>[JSON.stringify([link.task_id,link.target_ref??'']),{taskId:link.task_id,targetRef:link.target_ref??''}])).values()],
       engine:row.engine??null,modelId:row.model??null,latestMessage:row.latest??null,url:`/?session=${encodeURIComponent(String(row.id))}`,feishuWorkItemIds:[...references]});
   });
   const state={sessions,links};canonicalJson(state,1024*1024);return state;
@@ -52,7 +55,7 @@ export function readWorkspaceDashboard(db:DB,actor:Actor){
   const row=db.get("SELECT schema_version,data_json,saved_at FROM workspace_snapshots WHERE source='dashboard' AND identity_key=?",[key]);if(!row||row.schema_version!==1||!Number.isSafeInteger(row.saved_at)||row.saved_at<0)return null;
   let parsed:ReturnType<typeof WorkspaceConsoleDashboardDtoSchema.safeParse>;
   try{parsed=WorkspaceConsoleDashboardDtoSchema.safeParse(JSON.parse(String(row.data_json)));}catch{return null;}
-  if(!parsed.success||parsed.data.workspacePath!==FIXED_WORKSPACE_PATH)return null;
+  if(!parsed.success||parsed.data.workspacePath!==FIXED_WORKSPACE_PATH||parsed.data.workspaceId!==WORKSPACE_ID)return null;
   const value=parsed.data,state=readWorkspaceState(db,actor),current=buildWorkspaceDashboard({schemaVersion:null,generatedAt:value.registryGeneratedAt,tasks:value.tasks.map(task=>({...task,description:task.description??null}))},[],state.sessions,state.links,Date.now());
   const sessionIds=new Map(current.tasks.map(task=>[task.id,task.sessionIds]));
   const refreshed=WorkspaceConsoleDashboardDtoSchema.parse({...value,tasks:value.tasks.map(task=>({...task,sessionIds:sessionIds.get(task.id)??[]})),sessions:current.sessions,unlinkedSessions:current.unlinkedSessions,
@@ -66,7 +69,7 @@ export function executeWorkspace(db:DB,actor:Actor,command:Extract<CoreCommand,{
     const version=Number(db.get('SELECT latest_issued FROM _relay_storage_observations WHERE scope=?',[scope(actor)])!.latest_issued);if(!Number.isSafeInteger(version))deny('CONFLICT');return{version};
   }
   if(command.name==='workspace.saveSnapshot'){
-    const {version,value}=command.input;canonicalJson(value,WORKSPACE_DASHBOARD_MAX_BYTES);if(value.workspacePath!==FIXED_WORKSPACE_PATH)deny('INVALID_ARGUMENT');
+    const {version,value}=command.input;canonicalJson(value,WORKSPACE_DASHBOARD_MAX_BYTES);if(value.workspacePath!==FIXED_WORKSPACE_PATH||value.workspaceId!==WORKSPACE_ID)deny('INVALID_ARGUMENT');
     const ticket=db.get('SELECT latest_issued,latest_applied,snapshot_digest FROM _relay_storage_observations WHERE scope=?',[scope(actor)]);if(ticket?.latest_issued!==version)deny('SUPERSEDED');
     const json=canonicalJson(value,WORKSPACE_DASHBOARD_MAX_BYTES),digest=createHash('sha256').update(json).digest('hex');
     if(ticket.latest_applied===version){if(ticket.snapshot_digest!==digest)deny('CONFLICT');return{version,savedAt:Number(db.get("SELECT saved_at FROM workspace_snapshots WHERE source='dashboard' AND identity_key=?",[identity(actor)])?.saved_at??now)};}
@@ -74,12 +77,14 @@ export function executeWorkspace(db:DB,actor:Actor,command:Extract<CoreCommand,{
     db.run('UPDATE _relay_storage_observations SET latest_applied=?,snapshot_digest=? WHERE scope=?',[version,digest,scope(actor)]);return{version,savedAt:now};
   }
   const {sessionId,taskId}=command.input;
+  const workspaceId=command.input.workspaceId??WORKSPACE_ID,targetRef=command.input.targetRef??(parseFeishuTarget(taskId)?taskId:''),connectionScope=command.input.connectionScope??'';
+  if(workspaceId!==WORKSPACE_ID||targetRef&&!parseFeishuTarget(targetRef)||targetRef&&connectionScope!==WORKSPACE_CONNECTION_SCOPE)deny('INVALID_ARGUMENT');
   const session=db.get(`SELECT s.owner_user_id FROM sessions s JOIN projects p ON p.id=s.project_id WHERE s.id=? AND s.deleted_at IS NULL AND p.deleted_at IS NULL AND p.owner_user_id IS NOT NULL AND lower(p.path)=lower(?)`,[sessionId,FIXED_WORKSPACE_PATH]);
   if(!session?.owner_user_id)deny('NOT_FOUND');
   if(command.name==='workspace.linkSession'&&!db.get('SELECT 1 FROM messages WHERE session_id=? LIMIT 1',[sessionId]))deny('CONFLICT');
   const audit=(result:'started'|'succeeded')=>appendAdminAuditEventInDatabase(db,{actorUserId:actor.id,action:'session.update',resourceType:'session',resourceId:sessionId,ownerUserId:String(session.owner_user_id),result,occurredAt:now});
   audit('started');
-  if(command.name==='workspace.linkSession')insertWorkspaceLinkInOpenTransaction(db,{id:command.input.linkId,workspace_path:FIXED_WORKSPACE_PATH,task_id:taskId,session_id:sessionId,feishu_work_item_id:feishuWorkItemIdFromTaskId(taskId),run_id:null,relation_source:'explicit',confidence:'high',last_verified_at:now,created_at:now,updated_at:now});
-  else db.run('DELETE FROM workspace_console_links WHERE workspace_path=? AND task_id=? AND session_id=?',[FIXED_WORKSPACE_PATH,taskId,sessionId]);
+  if(command.name==='workspace.linkSession')insertWorkspaceLinkInOpenTransaction(db,{id:command.input.linkId,workspace_id:workspaceId,connection_scope:connectionScope,target_ref:targetRef,workspace_path:FIXED_WORKSPACE_PATH,task_id:taskId,session_id:sessionId,feishu_work_item_id:parseFeishuTarget(targetRef)?.id??null,run_id:null,relation_source:'explicit',confidence:'high',last_verified_at:now,created_at:now,updated_at:now});
+  else db.run('DELETE FROM workspace_console_links WHERE workspace_id=? AND workspace_path=? AND task_id=? AND session_id=? AND target_ref=? AND connection_scope=?',[workspaceId,FIXED_WORKSPACE_PATH,taskId,sessionId,targetRef,connectionScope]);
   audit('succeeded');return{taskId,sessionId,linked:command.name==='workspace.linkSession'};
 }

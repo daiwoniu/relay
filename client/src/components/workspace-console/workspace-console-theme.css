@@ -514,7 +514,7 @@
   background: var(--wb-surface);
 }
 .workspace-workbench__observation summary::-webkit-details-marker { display: none; }
-.workspace-workbench__observation[open] summary [aria-hidden='true'] { display: inline-block; transform: rotate(180deg); }
+.workspace-workbench__observation[open] > summary > span > [aria-hidden='true'] { display: inline-block; transform: rotate(180deg); }
 
 .workspace-workbench__task-list {
   display: flex;
@@ -548,25 +548,86 @@
 }
 
 /* The tint describes progress; each task still uses the selected theme palette. */
+.workspace-workbench .workspace-workbench__task-status {
+  color: var(--wb-accent);
+  background: var(--wb-accent-soft);
+}
+.workspace-workbench .workspace-workbench__task-status[data-status-tone='waiting'] {
+  color: #87581a;
+  background: #fff0c9;
+}
+.workspace-workbench .workspace-workbench__task-status[data-status-tone='completed'] {
+  color: #276b50;
+  background: #e3f3e9;
+}
+.workspace-workbench .workspace-workbench__task-status[data-status-tone='attention'] {
+  color: #9b3434;
+  background: #fce8e8;
+}
+.workspace-workbench .workspace-workbench__task-status[data-status-tone='unknown'] {
+  color: var(--wb-text-muted);
+  background: var(--wb-surface);
+  box-shadow: inset 0 0 0 1px var(--wb-border);
+}
 .workspace-workbench article.workspace-workbench__task-card[data-task-tone='doing'] {
   border-color: var(--wb-accent-border);
   border-left: 3px solid var(--wb-accent);
   background: color-mix(in srgb, var(--wb-surface) 84%, var(--wb-accent-soft));
 }
 .workspace-workbench article.workspace-workbench__task-card[data-task-tone='unstarted'] {
+  --wb-card-hover-color: #c58a2d;
+  --wb-card-hover-bg: color-mix(in srgb, var(--wb-surface) 60%, #fff0c9);
+  --wb-card-hover-border: color-mix(in srgb, var(--wb-border) 35%, #c58a2d);
   border-color: color-mix(in srgb, var(--wb-border) 70%, #e8b661);
   border-left: 3px solid #c58a2d;
   background: color-mix(in srgb, var(--wb-surface) 87%, #fff0c9);
 }
 .workspace-workbench article.workspace-workbench__task-card[data-task-tone='completed'] {
+  --wb-card-hover-color: #80bba3;
+  --wb-card-hover-bg: color-mix(in srgb, var(--wb-surface) 72%, #e3f3e9);
+  --wb-card-hover-border: color-mix(in srgb, var(--wb-border) 35%, #80bba3);
   border-color: var(--wb-border);
   border-left: 3px solid color-mix(in srgb, var(--wb-border) 55%, #80bba3);
   background: var(--wb-surface);
 }
-.workspace-workbench .workspace-workbench__task-subsection,
 .workspace-workbench .workspace-workbench__local-row {
   border-color: var(--wb-border);
   background: color-mix(in srgb, var(--wb-surface) 94%, var(--wb-accent-soft));
+}
+
+.workspace-workbench .workspace-workbench__relation-item {
+  min-width: 0;
+  padding: .25rem 0;
+}
+.workspace-workbench .workspace-workbench__relation-list > .workspace-workbench__relation-item + .workspace-workbench__relation-item {
+  margin-top: .5rem;
+  border-top: 1px solid var(--wb-border);
+  padding-top: .75rem;
+}
+
+.workspace-workbench article.workspace-workbench__task-card {
+  --wb-card-hover-color: var(--wb-accent);
+  --wb-card-hover-bg: var(--wb-accent-hover-bg);
+  --wb-card-hover-border: var(--wb-accent-strong-border);
+  transition: background-color 140ms ease, border-color 140ms ease;
+}
+@media (hover: hover) and (pointer: fine) {
+  .workspace-workbench article.workspace-workbench__task-card:hover {
+    background: var(--wb-card-hover-bg);
+    border-top-color: var(--wb-card-hover-border);
+    border-right-color: var(--wb-card-hover-border);
+    border-bottom-color: var(--wb-card-hover-border);
+    box-shadow: 0 3px 12px color-mix(in srgb, var(--wb-card-hover-color) 14%, transparent);
+  }
+  .workspace-workbench article.workspace-workbench__task-card:hover .workspace-workbench__relation-item,
+  .workspace-workbench article.workspace-workbench__task-card:hover .workspace-workbench__local-row {
+    background: color-mix(in srgb, var(--wb-surface) 65%, var(--wb-card-hover-bg));
+    border-color: var(--wb-card-hover-border);
+    box-shadow: inset 0 0 0 1px var(--wb-card-hover-border);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .workspace-workbench article.workspace-workbench__task-card { transition: none; }
 }
 
 .workspace-workbench .workspace-workbench__refresh-trigger.workspace-workbench__theme-trigger {

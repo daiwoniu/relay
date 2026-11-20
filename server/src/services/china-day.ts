@@ -53,13 +53,20 @@ export async function locationFor(fetcher: typeof fetch, ip?: string) {
     ? `https://api.live.bilibili.com/ip_service/v1/ip_service/get_ip_addr?ip=${encodeURIComponent(ip)}`
     : 'https://api.bilibili.com/x/web-interface/zone';
   const body = await readJson(fetcher, url);
-  if (body?.code !== 0 || !body.data?.city) throw new Error('地区接口未返回城市');
+  const target = ip ? `访客 IPv${isIP(ip)}` : '服务器出口 IP';
+  if (body?.code !== 0) {
+    // Report only a numeric provider code, never its raw payload or the visitor's IP.
+    const code = typeof body?.code === 'number' && Number.isFinite(body.code) ? String(body.code) : '未知';
+    throw new Error(`地区接口请求失败（${target}，错误码 ${code}）`);
+  }
+  const city = typeof body.data?.city === 'string' ? body.data.city.trim() : '';
+  if (!city) throw new Error(`地区接口查询成功但未返回城市（${target}）`);
   const latitude = Number(body.data.latitude);
   const longitude = Number(body.data.longitude);
   return {
     country: body.data.country || null,
     province: body.data.province || null,
-    city: String(body.data.city),
+    city,
     latitude: Number.isFinite(latitude) ? latitude : null,
     longitude: Number.isFinite(longitude) ? longitude : null,
     source: ip ? 'bilibili-ip' as const : 'bilibili-server-ip' as const,

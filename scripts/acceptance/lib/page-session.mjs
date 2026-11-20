@@ -104,6 +104,66 @@ export class PageSession {
   }
 
   getEvidence() { return structuredClone(this.#evidence); }
+  waitForWorkbench() {
+    return this.#waitForValue(()=>Boolean(document.querySelector('.workspace-workbench__task-lanes'))
+      &&!document.querySelector('.workspace-workbench__refresh-trigger[aria-disabled="true"]')
+      &&!document.body.innerText.includes('正在读取任务…'),null,'工作台未在时限内就绪',{timeoutMs:60000});
+  }
+  readWorkbenchLayout() {
+    return this.#evaluate(()=>{
+      const visible=element=>element.getBoundingClientRect().width>0;
+      const cards=[...document.querySelectorAll('.workspace-workbench__task-card')].filter(visible);
+      const drawer=document.querySelector('[role="dialog"]');
+      return {width:innerWidth,overflow:document.documentElement.scrollWidth>innerWidth+2,
+        cardOverflow:cards.filter(card=>card.scrollWidth>card.clientWidth+2).length,
+        drawerOverflow:!!drawer&&(drawer.scrollWidth>drawer.clientWidth+2||drawer.getBoundingClientRect().right>innerWidth+2),
+        lanes:[...document.querySelectorAll('.workspace-workbench__task-lane')].map(lane=>({id:lane.id,visible:visible(lane),cards:lane.querySelectorAll('.workspace-workbench__task-card').length})),
+        controls:document.querySelectorAll('.workspace-workbench__task-card button').length,drawer:!!drawer};
+    },null,'工作台布局读取失败');
+  }
+  async showWorkbenchLane(lane) {
+    if(!['unstarted','doing','completed'].includes(lane))throw new Error('工作台列表无效');
+    await this.#evaluate(value=>{
+      const control=document.querySelector('[aria-label="任务状态列表"]');
+      if(control&&control.getBoundingClientRect().width>0)control.querySelectorAll('button')[['doing','unstarted','completed'].indexOf(value)]?.click();
+      document.getElementById(`task-lane-${value}`)?.scrollIntoView({block:'start'});
+    },lane,'工作台列表切换失败');
+    await this.#waitForValue(value=>{const lane=document.getElementById(`task-lane-${value}`);return lane&&lane.getBoundingClientRect().width>0;},lane,'工作台列表未显示');
+    await this.#evaluate(value=>document.getElementById(`task-lane-${value}`)?.scrollIntoView({block:'start'}),lane,'工作台列表定位失败');
+  }
+  async openWorkbenchDetail(kind='task') {
+    if(!['task','group','project','tracking','run'].includes(kind))throw new Error('工作台详情类型无效');
+    const opened=await this.#evaluate(value=>{
+      let buttons;
+      if(value==='tracking')buttons=[...document.querySelectorAll('details[aria-label="我参与的流转中事项"] button')].filter(button=>!button.getAttribute('aria-label')?.startsWith('处理'));
+      else if(value==='run')buttons=[...document.querySelectorAll('details[aria-label="执行记录与会话"] button.w-full')];
+      else buttons=[...document.querySelectorAll('.workspace-workbench__task-lane .workspace-workbench__task-card button[aria-label^="查看"]')].filter(button=>{
+        const card=button.closest('.workspace-workbench__task-card');
+        if(value==='group')return card.classList.contains('workspace-workbench__matter-card');
+        if(value==='project')return !card.classList.contains('workspace-workbench__matter-card')
+          &&![...card.querySelectorAll(':scope > p')].some(p=>['本地台账','本地交付'].includes(p.textContent.trim()))
+          &&[...card.querySelectorAll(':scope > p')].some(p=>/^飞书[^：]* ·/.test(p.textContent));
+        return true;
+      });
+      const button=buttons.find(button=>button.getBoundingClientRect().width>0);
+      if(!button)return false;button.click();return true;
+    },kind,'工作台详情打开失败');
+    if(opened)await this.#waitForValue(()=>{
+      const drawer=document.querySelector('[role="dialog"]');
+      return !!drawer&&![...drawer.querySelectorAll('button')].some(button=>button.textContent.includes('刷新中'));
+    },null,'工作台详情未就绪');
+    return opened;
+  }
+  async closeWorkbenchDetail() {
+    await this.#evaluate(()=>[...document.querySelectorAll('[role="dialog"] button')].find(button=>button.textContent.trim()==='关闭')?.click(),null,'关闭工作台详情失败');
+    await this.#waitForValue(()=>!document.querySelector('[role="dialog"]'),null,'工作台详情未关闭');
+  }
+  showWorkbenchRecords() {
+    return this.#evaluate(()=>{
+      for(const label of ['我参与的流转中事项','执行记录与会话']){const panel=document.querySelector(`details[aria-label="${label}"]`);if(panel)panel.open=true;}
+      document.querySelector('details[aria-label="执行记录与会话"]')?.scrollIntoView({block:'start'});
+    },null,'工作台记录展开失败');
+  }
   async createAcceptanceSession({ title, engine }) {
     return this.#evaluate(async (value) => {
       const response = await fetch('/api/sessions', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(value) });

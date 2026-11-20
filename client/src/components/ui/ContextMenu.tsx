@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { computeFloatingPosition } from './floating-position';
 import { shouldRestoreOverlayFocus } from './focus-restoration';
@@ -31,6 +31,9 @@ export default function ContextMenu({ open, anchorRect, items, onClose, mobile =
   const menuRef = useRef<HTMLDivElement>(null);
   const restoreFocusRef = useRef<HTMLElement | null>(null);
   const leaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+  const requestClose = useCallback(() => onCloseRef.current(), []);
   const [position, setPosition] = useState({ left: 8, top: 8 });
   const [positioned, setPositioned] = useState(false);
   const { openOverlay, closeOverlay, registerOverlayCloser } = useOverlay();
@@ -46,7 +49,7 @@ export default function ContextMenu({ open, anchorRect, items, onClose, mobile =
     cancelLeaveClose();
     leaveTimerRef.current = setTimeout(() => {
       leaveTimerRef.current = null;
-      onClose();
+      requestClose();
     }, 180);
   };
 
@@ -55,7 +58,7 @@ export default function ContextMenu({ open, anchorRect, items, onClose, mobile =
     cancelLeaveClose();
     restoreFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     openOverlay('context-menu', overlayId);
-    const unregisterCloser = registerOverlayCloser('context-menu', overlayId, onClose);
+    const unregisterCloser = registerOverlayCloser('context-menu', overlayId, requestClose);
     const frame = requestAnimationFrame(() => {
       const menu = menuRef.current;
       if (!menu) return;
@@ -72,12 +75,12 @@ export default function ContextMenu({ open, anchorRect, items, onClose, mobile =
     });
 
     const handlePointerDown = (event: MouseEvent) => {
-      if (!menuRef.current?.contains(event.target as Node)) onClose();
+      if (!menuRef.current?.contains(event.target as Node)) requestClose();
     };
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         event.preventDefault();
-        onClose();
+        requestClose();
         return;
       }
       if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
@@ -91,10 +94,10 @@ export default function ContextMenu({ open, anchorRect, items, onClose, mobile =
       else buttons[(current - 1 + buttons.length) % buttons.length].focus();
     };
     const handleScroll = (event: Event) => {
-      if (shouldClosePopoverForScroll(menuRef.current, event.target)) onClose();
+      if (shouldClosePopoverForScroll(menuRef.current, event.target)) requestClose();
     };
     const handleResize = () => {
-      if (shouldClosePopoverForWindowResize(mobile)) onClose();
+      if (shouldClosePopoverForWindowResize(mobile)) requestClose();
     };
 
     document.addEventListener('mousedown', handlePointerDown);
@@ -119,13 +122,14 @@ export default function ContextMenu({ open, anchorRect, items, onClose, mobile =
         restoreFocusTarget.focus();
       }
     };
-  }, [anchorRect, closeOverlay, mobile, onClose, open, openOverlay, overlayId, registerOverlayCloser]);
+  }, [anchorRect, closeOverlay, mobile, requestClose, open, openOverlay, overlayId, registerOverlayCloser]);
 
   if (!open || typeof document === 'undefined') return null;
 
   const menu = (
     <div
       ref={menuRef}
+      data-overlay-root
       role="menu"
       aria-label={label}
       onMouseEnter={cancelLeaveClose}
@@ -144,7 +148,7 @@ export default function ContextMenu({ open, anchorRect, items, onClose, mobile =
           aria-disabled={item.disabled || undefined}
           onClick={() => {
             if (item.disabled) return;
-            onClose();
+            requestClose();
             void item.onSelect();
           }}
           className={`flex w-full items-start gap-2 px-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--color-focus-ring)] ${mobile ? 'min-h-11 py-3' : 'min-h-9 py-2'} ${item.disabled
@@ -165,7 +169,7 @@ export default function ContextMenu({ open, anchorRect, items, onClose, mobile =
 
   return createPortal(
     mobile ? (
-      <div className="fixed inset-0 z-[1140] bg-[var(--color-backdrop)]" onMouseDown={onClose}>
+      <div data-overlay-root className="fixed inset-0 z-[1140] bg-[var(--color-backdrop)]" onMouseDown={requestClose}>
         <div onMouseDown={(event) => event.stopPropagation()}>{menu}</div>
       </div>
     ) : menu,

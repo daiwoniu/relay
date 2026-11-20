@@ -11,6 +11,7 @@ import ConfirmDialog, {
   type ConfirmDialogTone,
 } from '../ui/ConfirmDialog';
 import PanelShell from '../ui/PanelShell';
+import UserMenuIcon from '../icons/UserMenuIcon';
 import MaintenanceProgress from './MaintenanceProgress';
 import MaintenanceOutput from './MaintenanceOutput';
 import SystemResourceStatus from './SystemResourceStatus';
@@ -282,7 +283,7 @@ export function ServiceMaintenanceDialog({ open, onClose, controller, admin = fa
         minimizedDescription={minimizedDescription}
         minimizedDescriptionActive={controller.submitting}
         titleId="service-maintenance-title"
-        icon={<span>↻</span>}
+        icon={<UserMenuIcon type="server" />}
         size="operations"
         bodyClassName="space-y-3 p-3.5 pb-[max(0.875rem,env(safe-area-inset-bottom))]"
       >

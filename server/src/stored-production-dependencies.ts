@@ -10,10 +10,10 @@ import { ensureCodexProcessReady } from './system/codex-process-readiness.js';
 import { createCodexAccountReader,accountIdentity } from './system/codex-account-reader.js';
 import { readCodexLocalAccountId } from './system/codex-local-account.js';
 import { streamCodexLocalUsageEvents } from './system/codex-local-usage-stream.js';
-import { ResponsibilityReportSource } from './workspace-console/responsibility-report-source.js';
-import { readTaskRegistry } from './workspace-console/task-registry-reader.js';
-import { readWorkspaceRuns } from './workspace-console/workspace-runs-reader.js';
-import { readObservedTaskDurations } from './workspace-console/activity-duration.js';
+import { FeishuWorkbenchSource } from './workspace-console/feishu-source.js';
+import { TaskRegistryAdapter } from './workspace-console/task-registry-adapter.js';
+import { WORKSPACE_ID, WORKSPACE_SETTINGS } from './workspace-console/workspace-config.js';
+import { TaskRegistryComposition } from './workspace-console/task-registry-composition.js';
 import { FIXED_WORKSPACE_PATH } from './workspace-console/workspace-snapshot.js';
 import { ensureProjectFilesAsync } from './default-workspace.js';
 import { archiveCodexThreadGuarded,unarchiveCodexThreadGuarded,isCodexThreadArchivedFresh,listArchivedCodexThreadIdsFresh,forkCodexThreadGuarded } from './codex/thread-admin.js';
@@ -41,7 +41,9 @@ export async function createStoredProductionDependencies(scope:StoredApplication
     send:message=>{process.send?.(message);},ensureReady:()=>ensureCodexProcessReady()});
   const withCodexReady=async<T>(work:()=>Promise<T>)=>{await lifecycle.ensureReady();try{return await work();}finally{lifecycle.releaseReady();}};
   const account=createCodexAccountReader({ensureReady:()=>lifecycle.ensureReady(),releaseReady:()=>lifecycle.releaseReady()});
-  const responsibility=new ResponsibilityReportSource();
+  const responsibility=new FeishuWorkbenchSource();
+  const workspaceAdapter=new TaskRegistryAdapter(FIXED_WORKSPACE_PATH,WORKSPACE_ID);
+  const workspaceComposition=new TaskRegistryComposition(()=>workspaceAdapter.associations(),WORKSPACE_SETTINGS.adapterOptions,undefined,WORKSPACE_SETTINGS.feishuConnectionId);
   const dependencies:StoredDomainDependencies={registry:engines.registry,themeRoot:options.themeRoot,repairSourceRoot:options.repairSourceRoot,
     chinaDayCacheRoot:options.chinaDayCacheRoot,newsRoot:options.newsRoot,codexLifecycle:lifecycle,
     auth:{workspacePath:options.personalWorkspacePath},publicShares:options.publicShares,codexDebugInfo:getDebugInfo,
@@ -59,7 +61,7 @@ export async function createStoredProductionDependencies(scope:StoredApplication
       if(snapshot.status!=='ready'||snapshot.authMode==='apikey'||snapshot.authMode==='unknown'||!snapshot.email)return null;
       return{email:snapshot.email,accountId:await readCodexLocalAccountId(options.codexHome,snapshot.email)};
     },events:(since,until)=>streamCodexLocalUsageEvents(options.codexHome,since,until)},
-    workspace:{registry:()=>readTaskRegistry(FIXED_WORKSPACE_PATH),listRuns:()=>readWorkspaceRuns(FIXED_WORKSPACE_PATH),activityDurations:(ids,now)=>readObservedTaskDurations(FIXED_WORKSPACE_PATH,ids,now)},
+    workspace:{allowLocalFeishuLinks:!!WORKSPACE_SETTINGS.feishuConnectionId,registry:()=>workspaceAdapter.registry(),listRuns:()=>workspaceAdapter.runs(),activityDurations:(ids,now)=>workspaceAdapter.durations(ids,now),composeResponsibility:(value,taskId)=>workspaceComposition.compose(value,taskId),verifyFeishuTarget:reference=>workspaceComposition.verifyTarget(reference)},
     threads:{isThreadArchived:thread=>withCodexReady(()=>isCodexThreadArchivedFresh(thread)),archiveThread:(thread,mayDispatch)=>withCodexReady(()=>archiveCodexThreadGuarded(thread,mayDispatch)),
       unarchiveThread:(thread,mayDispatch)=>withCodexReady(()=>unarchiveCodexThreadGuarded(thread,mayDispatch))},
     fetchArchivedThreadIds:()=>withCodexReady(async()=>[...await listArchivedCodexThreadIdsFresh()]),

@@ -8,9 +8,11 @@ import * as api from '../../api/page-hosting';
 import { copyToClipboard } from '../../utils/clipboard';
 import Modal from '../ui/Modal';
 import PanelShell from '../ui/PanelShell';
+import PageHostingIcon from '../icons/PageHostingIcon';
 import ConfirmDialog from '../ui/ConfirmDialog';
 import FailureNotice from '../ui/FailureNotice';
 import HostingMoreMenu from './HostingMoreMenu';
+import PreviewHostingDialog from './PreviewHostingDialog';
 import generationRules from './generation-rules.md?raw';
 import { getHostParentPath } from '../chat/host-file-path';
 import './page-hosting.css';
@@ -20,16 +22,25 @@ const HostFilePicker=lazy(()=>import('../chat/HostFilePicker'));
 const size=(bytes:number)=>bytes<1024*1024?`${(bytes/1024).toFixed(1)} KB`:`${(bytes/1024/1024).toFixed(1)} MB`;
 const nameFromPath=(value:string)=>value.replace(/[\\/]+$/,'').split(/[\\/]/).pop()?.replace(/\.(?:zip|html?)$/i,'')??'';
 
-export function UploadDialog({site,onClose,onPublished}:{site:HostedSite|null;onClose:()=>void;onPublished:(site:HostedSite)=>void}){
+export function UploadDialog({site:existingSite,onClose,onPublished,initialLocalPath='',sites=[],sitesLoading=false,sitesError=null,onReloadSites=()=>{}}:{site:HostedSite|null;onClose:()=>void;onPublished:(site:HostedSite)=>void;initialLocalPath?:string;sites?:HostedSite[];sitesLoading?:boolean;sitesError?:unknown;onReloadSites?:()=>void}){
+  const [previewTarget,setPreviewTarget]=useState<HostedSite|null>(null);
+  const [publishedSite,setPublishedSite]=useState<HostedSite|null>(null);
+  const site=initialLocalPath?previewTarget:existingSite;
   const {user}=useAuth();
   const directoryKey=`relay:page-hosting:last-directory:${user?.id??''}`;
   const lastDirectory=useRef('');
   const [pickerPath,setPickerPath]=useState('');
-  const openPicker=(kind:'file'|'directory')=>{let saved=lastDirectory.current;try{saved=localStorage.getItem(directoryKey)||saved;}catch{}setPickerPath(saved);setPicker(kind);};
+  const openPicker=(kind:'file'|'directory')=>{
+    let saved=lastDirectory.current;
+    try{saved=localStorage.getItem(directoryKey)||saved;}catch{}
+    setPickerPath(saved);setPicker(kind);
+  };
   const rememberDirectory=(directory:string)=>{lastDirectory.current=directory;try{localStorage.setItem(directoryKey,directory);}catch{}};
-  const [source,setSource]=useState<'upload'|'local'>('upload');
-  const [file,setFile]=useState<File|null>(null),[localPath,setLocalPath]=useState('');
-  const [name,setName]=useState(site?.name??''),[entry,setEntry]=useState('');
+  const [source,setSource]=useState<'upload'|'local'>(initialLocalPath?'local':'upload');
+  const [file,setFile]=useState<File|null>(null),[localPath,setLocalPath]=useState(initialLocalPath);
+  const [name,setName]=useState(site?.name??nameFromPath(initialLocalPath)),[entry,setEntry]=useState('');
+  const publishName=initialLocalPath&&site?site.name:name;
+  const parentPath=getHostParentPath(initialLocalPath);
   const [stage,setStage]=useState<HostingInspection|null>(null),[busy,setBusy]=useState(false),[progress,setProgress]=useState(0);
   const [error,setError]=useState<unknown>(null),[picker,setPicker]=useState<'file'|'directory'|null>(null);
   const controller=useRef<AbortController|null>(null),currentStage=useRef<HostingInspection|null>(null),mounted=useRef(true);
@@ -45,16 +56,23 @@ export function UploadDialog({site,onClose,onPublished}:{site:HostedSite|null;on
       const result=source==='upload'?await api.uploadHostedFile(file!,abort.signal,setProgress):await api.importHostedFiles(localPath.trim(),abort.signal);
       report(true);
       if(!mounted.current){void api.cancelHostedUpload(result.uploadId).catch(()=>undefined);return;}
-      currentStage.current=result;setStage(result);setEntry(site&&result.entries.includes(site.entry)?site.entry:result.suggestedEntry??'');
-      if(!name.trim())setName(nameFromPath(source==='upload'?file!.name:localPath));
+      const preferred=source==='local'&&initialLocalPath?initialLocalPath.split(/[\\/]/).pop():undefined;
+      currentStage.current=result;setStage(result);setEntry(preferred&&result.entries.includes(preferred)?preferred:site&&result.entries.includes(site.entry)?site.entry:result.suggestedEntry??'');
+      if(!name.trim()&&!initialLocalPath)setName(nameFromPath(source==='upload'?file!.name:localPath));
     }catch(failure){report(abort.signal.aborted?'cancelled':'error');if(mounted.current)setError(failure);}finally{if(mounted.current)setBusy(false);}
   };
   const publish=async()=>{
-    if(!stage||busy)return;setBusy(true);setError(null);
-    try{const result=await api.publishHostedSite({uploadId:stage.uploadId,name:name.trim(),entry,...(site?{siteId:site.id,expectedToken:site.contentToken}:{})});currentStage.current=null;if(mounted.current)onPublished(result.site);}
-    catch(failure){if(mounted.current)setError(failure);}finally{if(mounted.current)setBusy(false);}
+    if(!stage||busy||(initialLocalPath&&site&&sitesLoading))return;setBusy(true);setError(null);
+    if(initialLocalPath&&site&&!sites.some(item=>item.id===site.id)){setBusy(false);setError(new Error('所选托管页面已不可用，请重新选择'));return;}
+    try{const result=await api.publishHostedSite({uploadId:stage.uploadId,name:publishName.trim(),entry,...(site?{siteId:site.id,expectedToken:site.contentToken}:{})});currentStage.current=null;if(mounted.current){if(initialLocalPath){setPublishedSite(result.site);setStage(null);}onPublished(result.site);}}
+    catch(failure){if(mounted.current){setError(failure);if(initialLocalPath&&site)onReloadSites();}}finally{if(mounted.current)setBusy(false);}
   };
-  const reset=async()=>{if(!stage||busy)return;setBusy(true);setError(null);try{await api.cancelHostedUpload(stage.uploadId);currentStage.current=null;setStage(null);}catch(failure){setError(failure);}finally{setBusy(false);}};
+  const reset=async()=>{if(!stage||busy)return false;setBusy(true);setError(null);try{await api.cancelHostedUpload(stage.uploadId);currentStage.current=null;setStage(null);return true;}catch(failure){setError(failure);return false;}finally{setBusy(false);}};
+  if(initialLocalPath)return <PreviewHostingDialog filePath={initialLocalPath} includeResources={localPath===parentPath} canIncludeResources={Boolean(parentPath)} onResourcesChange={include=>{void (async()=>{if(stage&&!await reset())return;setLocalPath(include?parentPath!:initialLocalPath);setError(null);})();}} sites={sites} sitesLoading={sitesLoading} sitesError={sitesError} onReloadSites={onReloadSites} site={site} onTargetChange={id=>{
+    const target=id?sites.find(item=>item.id===id):null;
+    if(id&&!target){setError(new Error('该托管页面已不可用，请重新选择'));return;}
+    setPreviewTarget(target??null);setError(null);
+  }} name={publishName} onNameChange={setName} stage={stage} entry={entry} onEntryChange={value=>{featureAction('hosting','select_entry','admin');setEntry(value);}} busy={busy} error={error} onCheck={()=>void check()} onPublish={()=>void publish()} onClose={onClose} publishedSite={publishedSite}/>;
   return <>
     <Modal open onClose={()=>{if(!busy)onClose();}} suspended={picker!==null} closeOnBackdrop={!busy} closeOnEscape={!busy} labelledBy="hosting-upload-title" contentClassName="hosting-dialog">
       <header className="hosting-dialog-header"><h2 id="hosting-upload-title">{site?'更新页面':'添加托管页面'}</h2><button type="button" onClick={onClose} disabled={busy} aria-label="关闭">×</button></header>
@@ -87,33 +105,44 @@ export function UploadDialog({site,onClose,onPublished}:{site:HostedSite|null;on
   </>;
 }
 
-export default function PageHostingPage({onClose,mobile=false}:{onClose?:()=>void;mobile?:boolean}={}){useFeatureView('hosting',true,'user_menu');
+export default function PageHostingPage({onClose,mobile=false,importRequest}:{onClose?:()=>void;mobile?:boolean;importRequest?:{path:string;requestId:number}|null}={}){useFeatureView('hosting',true,'user_menu');
   const {user}=useAuth(),toggleSidebar=useChatStore(state=>state.toggleSidebar);
   const [sites,setSites]=useState<HostedSite[]>([]),[loading,setLoading]=useState(true),[error,setError]=useState<unknown>(null),[message,setMessage]=useState('');
-  const [upload,setUpload]=useState<{site:HostedSite|null}|null>(null),[remove,setRemove]=useState<HostedSite|null>(null),[rename,setRename]=useState<HostedSite|null>(null),[newName,setNewName]=useState(''),[busy,setBusy]=useState(false);
+  const [upload,setUpload]=useState<{site:HostedSite|null;initialLocalPath?:string;requestId?:number}|null>(()=>importRequest&&user?.role==='admin'?{site:null,initialLocalPath:importRequest.path,requestId:importRequest.requestId}:null),[remove,setRemove]=useState<HostedSite|null>(null),[rename,setRename]=useState<HostedSite|null>(null),[newName,setNewName]=useState(''),[busy,setBusy]=useState(false);
+  useEffect(()=>{if(importRequest&&user?.role==='admin')setUpload({site:null,initialLocalPath:importRequest.path,requestId:importRequest.requestId});},[importRequest,user?.role]);
   const [reload,setReload]=useState(0);
   const [rulesError,setRulesError]=useState<unknown>(null);
   const [more,setMore]=useState<{site:HostedSite;anchor:HTMLButtonElement}|null>(null);
-  useEffect(()=>{if(user?.role!=='admin')return;const abort=new AbortController();setLoading(true);setError(null);void api.listHostedSites(abort.signal).then(result=>{if(!abort.signal.aborted)setSites(result.sites);}).catch(failure=>{if(!abort.signal.aborted)setError(failure);}).finally(()=>{if(!abort.signal.aborted)setLoading(false);});return()=>abort.abort();},[reload,user?.id,user?.role]);
-  const upsert=(site:HostedSite)=>setSites(current=>[site,...current.filter(item=>item.id!==site.id)].sort((a,b)=>b.updatedAt-a.updatedAt));
+  const sitesRevision=useRef(0);
+  useEffect(()=>{if(user?.role!=='admin')return;const abort=new AbortController(),revision=sitesRevision.current;setLoading(true);setError(null);void api.listHostedSites(abort.signal).then(result=>{
+    if(abort.signal.aborted)return;
+    if(revision!==sitesRevision.current){setReload(value=>value+1);return;}
+    setSites(result.sites);
+  }).catch(failure=>{if(!abort.signal.aborted)setError(failure);}).finally(()=>{if(!abort.signal.aborted)setLoading(false);});return()=>abort.abort();},[reload,user?.id,user?.role]);
+  const upsert=(site:HostedSite)=>{sitesRevision.current++;setSites(current=>[site,...current.filter(item=>item.id!==site.id)].sort((a,b)=>b.updatedAt-a.updatedAt));};
+  const handlePublished=(site:HostedSite)=>{
+    upsert(site);
+    if(upload?.initialLocalPath)return;
+    setUpload(null);setMessage(site.enabled?'页面已发布，可打开或复制访问链接。':'内容已更新，站点仍为停用状态。');
+  };
   const patch=async(site:HostedSite,changes:{name?:string;enabled?:boolean})=>{setBusy(true);setError(null);setMessage('');try{const result=await api.patchHostedSite(site,changes);upsert(result.site);setRename(null);}catch(failure){setError(failure);}finally{setBusy(false);}};
   const copy=async(site:HostedSite)=>{const report=localAction('hosting','copy_link','admin');try{await copyToClipboard(new URL(api.hostedUrl(site.publicId??site.id),window.location.origin).href);report(true);setMessage('访问链接已复制');}catch(failure){report(false);setError(failure);}};
   const copyRules=async()=>{setMessage('');setRulesError(null);try{await copyToClipboard(generationRules);setMessage('AI 生成规则已复制，可直接粘贴给其他 AI 或会话。');}catch(failure){setRulesError(failure);}};
   if(user?.role!=='admin')return <div className="hosting-page"><p>仅管理员可管理页面托管。</p></div>;
   const content=<section className="hosting-page">
-    <header className="hosting-page-header">{!onClose&&<button type="button" className="hosting-sidebar-toggle lg:hidden" onClick={toggleSidebar} aria-label="打开侧栏">☰</button>}<div>{onClose?<p className="hosting-muted">共 {sites.length} 个托管页面</p>:<><h1>页面托管 <span>{sites.length}</span></h1><p className="hosting-muted">上传或从服务器本机导入，生成可直接访问的公开链接。</p></>}</div><div className="hosting-actions hosting-header-actions"><button type="button" onClick={()=>void copyRules()}>复制 AI 生成规则</button><button type="button" className="hosting-primary" disabled={loading||busy} onClick={()=>{setMessage('');setUpload({site:null});}}>添加页面</button></div></header>
+    <header className="hosting-page-header">{!onClose&&<button type="button" className="hosting-sidebar-toggle lg:hidden" onClick={toggleSidebar} aria-label="打开侧栏">☰</button>}<div>{onClose?<p className="hosting-muted">共 {sites.length} 个托管页面</p>:<><h1><PageHostingIcon size={20} />页面托管 <span>{sites.length}</span></h1><p className="hosting-muted">上传或从服务器本机导入，生成可直接访问的公开链接。</p></>}</div><div className="hosting-actions hosting-header-actions"><button type="button" onClick={()=>void copyRules()}>复制 AI 生成规则</button><button type="button" className="hosting-primary" disabled={loading||busy} onClick={()=>{setMessage('');setUpload({site:null});}}>添加页面</button></div></header>
     <div className="hosting-page-body">
       {rulesError!==null&&<div className="hosting-summary" role="alert"><FailureNotice error={rulesError} description="AI 生成规则复制失败" suggestion="请允许浏览器访问剪贴板，并再次点击「复制 AI 生成规则」。" /></div>}
       {message&&<p role="status" className="hosting-summary">{message}</p>}{error!==null&&<div className="hosting-summary"><FailureNotice error={error} /><button type="button" onClick={()=>setReload(value=>value+1)}>刷新列表</button></div>}
-      {loading?<p role="status">正在加载托管页面…</p>:!sites.length?<div className="hosting-empty"><h2>还没有托管页面</h2><p className="hosting-muted">支持单个 HTML、ZIP 包，或直接复制服务器上的静态目录。</p><button className="hosting-primary" type="button" onClick={()=>setUpload({site:null})}>添加第一个页面</button></div>:<ul className="hosting-sites">{sites.map(site=><li key={site.id} className="hosting-site">
+      {loading&&!sites.length?<p role="status">正在加载托管页面…</p>:!sites.length?<div className="hosting-empty"><h2>还没有托管页面</h2><p className="hosting-muted">支持单个 HTML、ZIP 包，或直接复制服务器上的静态目录。</p><button className="hosting-primary" type="button" onClick={()=>setUpload({site:null})}>添加第一个页面</button></div>:<ul className="hosting-sites">{sites.map(site=><li key={site.id} className="hosting-site">
         <div className="hosting-site-info"><h2>{site.name}<span className={site.enabled?'hosting-status':'hosting-status is-disabled'}>{site.enabled?'已发布':'已停用'}</span></h2><p className="hosting-muted">{site.entry} · {size(site.totalBytes)} · {site.fileCount} 个文件</p><p className="hosting-muted">更新于 {formatDateTime(site.updatedAt, { seconds: true })}</p></div>
         <div className="hosting-actions"><a className="hosting-button" href={api.hostedUrl(site.publicId??site.id)} target="_blank" rel="noopener noreferrer" onClick={()=>{const report=localAction('hosting','open_external','admin');report(true);}}>打开</a><button type="button" onClick={()=>void copy(site)}>复制链接</button><button type="button" disabled={busy} aria-haspopup="menu" aria-expanded={more?.site.id===site.id} aria-label={`${site.name}的更多操作`} onClick={event=>setMore(more?.site.id===site.id?null:{site,anchor:event.currentTarget})}>更多</button></div>
       </li>)}</ul>}
     </div>
     {more&&<HostingMoreMenu site={more.site} anchor={more.anchor} onClose={()=>setMore(null)} onAction={action=>{const site=more.site;setMore(null);if(action==='update')setUpload({site});else if(action==='rename'){setRename(site);setNewName(site.name);}else if(action==='toggle')void patch(site,{enabled:!site.enabled});else setRemove(site);}}/>}
-    {upload&&<UploadDialog site={upload.site} onClose={()=>setUpload(null)} onPublished={site=>{upsert(site);setUpload(null);setMessage(site.enabled?'页面已发布，可打开或复制访问链接。':'内容已更新，站点仍为停用状态。');}}/>}
+    {upload&&<UploadDialog key={upload.requestId??upload.site?.id??'new'} site={upload.site} initialLocalPath={upload.initialLocalPath} sites={sites} sitesLoading={loading} sitesError={error} onReloadSites={()=>setReload(value=>value+1)} onClose={()=>{setUpload(null);if(upload.initialLocalPath)onClose?.();}} onPublished={handlePublished}/>}
     <Modal open={rename!==null} onClose={()=>{if(!busy)setRename(null);}} labelledBy="hosting-rename-title" contentClassName="hosting-dialog"><form onSubmit={event=>{event.preventDefault();if(rename&&newName.trim()&&!busy)void patch(rename,{name:newName.trim()});}}><header className="hosting-dialog-header"><h2 id="hosting-rename-title">重命名页面</h2></header><div className="hosting-dialog-body"><label className="hosting-field">页面名称<input data-autofocus value={newName} maxLength={80} disabled={busy} onChange={event=>setNewName(event.target.value)} /></label><p className="hosting-muted">访问链接保持不变。</p>{error!==null&&<FailureNotice error={error}/>}</div><footer className="hosting-dialog-footer"><button type="button" disabled={busy} onClick={()=>setRename(null)}>取消</button><button className="hosting-primary" disabled={busy||!newName.trim()} type="submit">保存</button></footer></form></Modal>
-    <ConfirmDialog open={remove!==null} title="删除托管页面" description="删除后托管文件会被移除，现有访问链接立即失效，无法恢复。" subject={remove?{label:'页面',value:remove.name}:undefined} tone="danger" confirmLabel="删除" onCancel={()=>{featureAction('hosting','cancel','admin');setRemove(null);}} onConfirm={async()=>{if(!remove)return;await api.deleteHostedSite(remove);setSites(current=>current.filter(site=>site.id!==remove.id));setRemove(null);}} />
+    <ConfirmDialog open={remove!==null} title="删除托管页面" description="删除后托管文件会被移除，现有访问链接立即失效，无法恢复。" subject={remove?{label:'页面',value:remove.name}:undefined} tone="danger" confirmLabel="删除" onCancel={()=>{featureAction('hosting','cancel','admin');setRemove(null);}} onConfirm={async()=>{if(!remove)return;await api.deleteHostedSite(remove);sitesRevision.current++;setSites(current=>current.filter(site=>site.id!==remove.id));setRemove(null);}} />
   </section>;
-  return onClose?<PanelShell open onClose={onClose} title="页面托管" description="上传或从服务器本机导入，生成公开访问链接" titleId="page-hosting-title" size="content" mobile={mobile} closeOnEscape={more===null} suspended={upload!==null||rename!==null||remove!==null}>{content}</PanelShell>:content;
+  return onClose?<PanelShell open onClose={onClose} title="页面托管" icon={<PageHostingIcon />} description="上传或从服务器本机导入，生成公开访问链接" titleId="page-hosting-title" size="content" mobile={mobile} closeOnEscape={more===null} suspended={upload!==null||rename!==null||remove!==null}>{content}</PanelShell>:content;
 }

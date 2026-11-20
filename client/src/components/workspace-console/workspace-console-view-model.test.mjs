@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import * as viewModel from './workspace-console-view-model.ts';
+
+test('ledger heading distinguishes no ledger from registered but unmatched links', () => {
+  assert.equal(viewModel.localLedgerLabel(0,0),'无本地台账');
+  assert.equal(viewModel.localLedgerLabel(0,1),'已登记本地关联，台账尚未匹配');
+  assert.equal(viewModel.localLedgerLabel(2,3),'关联本地交付 2 份');
+});
 const { buildWorkspaceConsoleView, buildWorkspaceSummary, buildTaskEntries, filterTaskEntries, filterTaskLanesByStatus, groupTaskEntriesByLane, selectFocusTasks, selectTaskAction, runsForTask, projectItemsForTask, formatObservedDuration, projectTaskCardDetails } = viewModel;
 
 test('classification notice distinguishes partial classification from complete and legacy snapshots', () => {
@@ -12,14 +18,16 @@ test('classification notice distinguishes partial classification from complete a
   assert.doesNotMatch(legacy, /0 个|undefined|查询失败|更新失败/);
 });
 
-test('parent participation labels do not claim ownership or change personal completion', () => {
-  const item = { ...parent('participation', 'creator'), roleOwnerUserKeys: ['u'], myNodes: [] };
-  assert.equal(viewModel.workbenchParticipationLabel(item, 'u'), '本人参与');
-  assert.equal(viewModel.workbenchPersonalState(item), 'completed');
-  assert.equal(viewModel.workbenchParticipationLabel({ ...item, roleOwnerUserKeys: [], myNodes: [{ id: 'n', phase: 'current' }] }, 'u'), '本人参与');
-  assert.equal(viewModel.workbenchParticipationLabel({ ...item, roleOwnerUserKeys: [], myNodes: [], mySubtasks: [child('mine')] }, 'u'), '本人参与');
-  assert.equal(viewModel.workbenchParticipationLabel({ ...item, roleOwnerUserKeys: [] }, 'u'), '待核实');
+test('unknown role notice distinguishes historical participation from live work without hiding the gap',()=>{
+  const notice=viewModel.responsibilityClassificationNotice({complete:false,unverifiedCount:2,workbenchItems:[
+    {reasons:['unmapped_role'],flowFinished:true,isArchivedState:false},
+    {reasons:['unmapped_role'],flowFinished:false,isArchivedState:false},
+  ]});
+  assert.match(notice,/2 项参与角色/);assert.match(notice,/1 项流程已结束/);assert.match(notice,/1 项仍在流转/);assert.match(notice,/不是待办数量/);
+  assert.match(notice,/尚未取得飞书角色定义/);assert.match(notice,/重试刷新/);
+  assert.doesNotMatch(notice,/尚未配置责任含义/);
 });
+
 
 test('primary item sorts verified links without losing other associations or changing grouping and filters', () => {
   const original = { ...task('multi', 'waiting', ['9001000001', '9001000002']), feishuWorkItemUrls: {
@@ -46,31 +54,6 @@ test('primary item sorts verified links without losing other associations or cha
   assert(grouped(primary).some(e => e.key === 'local:multi'), 'primary hint must not resolve ambiguous membership into a chosen group');
 });
 
-test('completion notices distinguish role inference, old snapshots, ledger records, child results and role conflicts without moving lanes', () => {
-  const inferred = { ...responsibility.items[0], workItemId: '9001000001', typeName: '缺陷',
-    actionability: 'state_responsibility', statusName: '已修复，待验收', personalSubtasks: [], localTaskIds: [],
-    myRoleKeys: ['operator'], baseOwnerIsMe: false };
-  const notice = (item, tasks = []) => viewModel.personalIssueCompletionNotice(item, tasks);
-  assert.match(notice(inferred), /推断/);
-  const { myRoleKeys, baseOwnerIsMe, ...legacy } = inferred;
-  assert.match(notice(legacy), /旧报表缺少本人责任/);
-  const ledger = task('local-completed', 'done', [inferred.workItemId]);
-  assert.match(notice(inferred, [ledger]), /台账登记/);
-  assert.match(notice({ ...inferred, personalSubtasks: [{ id: 'child', name: '修复', passed: true }] }), /子任务已完成/);
-  assert.match(notice({ ...inferred, myRoleKeys: ['operator', 'acceptor'] }, [ledger]), /请核对本轮责任范围/);
-  assert.equal(notice({ ...inferred, myRoleKeys: ['operator', 'acceptor'] }), null);
-  assert.equal(notice(inferred, [{ ...ledger, status: 'waiting' }]), null);
-  const snapshot = { ...responsibility, items: [inferred], workbenchItems: [], localAssociated: [] };
-  const entries = buildTaskEntries(buildWorkspaceConsoleView({ ...dashboard, tasks: [] }, snapshot));
-  assert.equal(viewModel.taskEntryLane(entries[0]), 'completed');
-  assert.deepEqual(filterTaskEntries(entries, 'completed', '').map(e => e.key), ['project:9001000001']);
-  assert.deepEqual(viewModel.trackedOpenFeishuItems(snapshot).map(e => e.item.workItemId), [inferred.workItemId]);
-  const fresh = { ...snapshot, items: [{ ...inferred, myRoleKeys: ['operator', 'acceptor'] }] };
-  const afterRefresh = buildTaskEntries(buildWorkspaceConsoleView({ ...dashboard, tasks: [] }, fresh));
-  assert.equal(viewModel.taskEntryLane(afterRefresh[0]), 'unstarted');
-  assert.equal(notice(fresh.items[0]), null);
-  assert.deepEqual(viewModel.trackedOpenFeishuItems(fresh), []);
-});
 
 test('each lane status filter is independent and groups synonymous statuses', () => {
   const lanes = groupTaskEntriesByLane([
@@ -137,7 +120,7 @@ test('finished defects leave the active lanes regardless of acceptance or linked
   assert.equal(viewModel.isFinishedProjectIssue({ ...base, typeName: '需求', statusName: '转需求' }), false);
 });
 
-test('a finished defect stays separate from its linked active story and local ledger', () => {
+test('a finished defect is represented by its explicit delivery without completing that delivery or merging its story', () => {
   const storyId = '9001000012';
   const issueId = '9001000009';
   const issue = { ...responsibility.items[0], workItemId: issueId, typeName: '缺陷', statusName: '转需求',
@@ -146,25 +129,15 @@ test('a finished defect stays separate from its linked active story and local le
   const entries = viewModel.groupTaskEntries(buildTaskEntries(buildWorkspaceConsoleView(
     { ...dashboard, tasks: [task('issue-ledger', 'waiting', [issueId])] }, report,
   )));
-  assert.deepEqual(entries.map((entry) => entry.key).sort(), [`group:${storyId}`, `local:issue-ledger`, `project:${issueId}`]);
-  assert.deepEqual(groupTaskEntriesByLane(entries).completed.map((entry) => entry.key), [`project:${issueId}`]);
-  assert.deepEqual(filterTaskEntries(entries, 'completed', '').map((entry) => entry.key), [`project:${issueId}`]);
+  assert.deepEqual(entries.map((entry) => entry.key).sort(), [`group:${storyId}`, `local:issue-ledger`]);
+  assert.deepEqual(groupTaskEntriesByLane(entries).completed, []);
+  assert.deepEqual(filterTaskEntries(entries, 'completed', ''), []);
+  const linked = entries.find(entry=>entry.key==='local:issue-ledger').linkedFeishu;
+  assert.equal(linked.length,1);assert.equal(linked[0].key,`project:${issueId}`);assert.equal(linked[0].pending,false);
+  assert.equal(linked[0].finished,true);assert.equal(linked[0].statusLabel,'飞书缺陷状态：转需求');
   assert.deepEqual(filterTaskEntries(entries, 'waiting', '').map((entry) => entry.key), ['local:issue-ledger']);
 });
 
-test('an unfinished defect with an active linked ledger has one pending card', () => {
-  const issueId = '9001000020';
-  const issue = { ...responsibility.items[0], workItemId: issueId, title: '【法院公告】案由优化',
-    typeName: '缺陷', statusName: '处理中', actionability: 'state_responsibility', localTaskIds: ['notice-ledger'] };
-  const report = { ...responsibility, items: [issue], localAssociated: [] };
-  const local = { ...dashboard, tasks: [{ ...task('notice-ledger', 'waiting', [issueId]), title: '送达公告案由优化' }] };
-  const view = buildWorkspaceConsoleView(local, report);
-  const entries = buildTaskEntries(view);
-  assert.deepEqual(entries.map((entry) => entry.key), ['local:notice-ledger']);
-  assert.deepEqual(groupTaskEntriesByLane(entries).unstarted.map((entry) => entry.key), ['local:notice-ledger']);
-  assert.deepEqual(projectItemsForTask(local.tasks[0], report).map((item) => item.workItemId), [issueId]);
-  assert.deepEqual(buildTaskEntries(view, 'feishu').map((entry) => entry.key), ['local:notice-ledger']);
-});
 
 test('attention items prioritize blocked work and recent records within each state', () => {
   const tasks = [
@@ -264,9 +237,25 @@ test('a refresh marks only newly discovered task IDs and temporarily prioritizes
     ['local:recent', 'local:new', 'project:42', 'local:old', 'local:finished']);
 });
 
+test('new markers retain both split refresh results while known future/shared identities stay known',()=>{
+  const report={items:[],localAssociated:[],workbenchItems:[{workItemId:'root',mySubtasks:[{id:'future',phase:'upcoming',owners:['me','other']}]}]};
+  const initial=viewModel.snapshotTaskIdentityKeys([],report);
+  assert(initial.includes('subtask:root:future'));assert(initial.includes('project:root'));
+  assert.equal(viewModel.retainNewTaskKeys(new Set(),null,initial).size,0,'first observation establishes a baseline');
+  const localKeys=viewModel.snapshotTaskIdentityKeys([{key:'local:new'}],report);
+  const first=viewModel.retainNewTaskKeys(new Set(),initial,localKeys);
+  assert.deepEqual([...first],['local:new']);
+  const changed={...report,workbenchItems:[{workItemId:'root',mySubtasks:[{id:'future',phase:'current'},{id:'fresh',phase:'current'}]}]};
+  const both=viewModel.snapshotTaskIdentityKeys([{key:'local:new'},{key:'subtask:root:future'}],changed);
+  const second=viewModel.retainNewTaskKeys(first,localKeys,both);
+  assert.deepEqual([...second],['local:new','subtask:root:fresh']);
+  assert.deepEqual([...viewModel.retainNewTaskKeys(second,both,both)],[...second],'association-only updates do not erase marks');
+  assert.equal(viewModel.retainNewTaskKeys(new Set(),both,both).size,0,'next manual refresh clears prior marks');
+});
+
 const task = (id, status, ids = []) => ({ id, title: id, status, completedAt: status === 'done' ? '2026-09-26T10:00:00+08:00' : null, feishuWorkItemIds: ids, runIds: [], sessionIds: [] });
 const dashboard = { registryGeneratedAt: '2026-09-26T10:00:00+08:00', tasks: [task('a', 'done', ['123']), task('b', 'active', ['123'])], runs: [{ runId: 'orphan', taskId: 'missing', status: 'unknown' }], unmatchedRuns: [{ runId: 'orphan', taskId: 'missing', status: 'unknown' }], sessions: [{ sessionId: 'alone' }], unlinkedSessions: [{ sessionId: 'alone' }] };
-const responsibility = { generatedAt: '2026-09-26T05:00:00+08:00', items: [{ workItemId: '123', title: '责任事项', actionability: 'current', localTaskIds: [], url: null }], localAssociated: [{ workItemId: '456', title: '关联事项', localTaskIds: ['b'], url: 'https://project.feishu.cn/demo-space/story/detail/456' }] };
+const responsibility = { generatedAt: '2026-09-26T05:00:00+08:00', items: [{ workItemId: '123', title: '责任事项', actionability: 'current', localTaskIds: ['a','b'], url: null }], localAssociated: [{ workItemId: '456', title: '关联事项', localTaskIds: ['b'], url: 'https://project.feishu.cn/demo-space/story/detail/456' }] };
 
 const parent = (workItemId, ownerUserKey, mySubtasks = [], stateKey = 'doing', isArchivedState = false) => ({
   workItemId, title: `父项 ${workItemId}`, typeName: '需求', url: null, ownerUserKey,
@@ -274,6 +263,97 @@ const parent = (workItemId, ownerUserKey, mySubtasks = [], stateKey = 'doing', i
 });
 const child = (id, passed = false, phase = 'current') => ({ id, title: `子任务 ${id}`, owners: ['u'], passed, nodeId: 'n1', nodeName: '实施改造', phase });
 const workbenchReport = (workbenchItems) => ({ ...responsibility, items: [], sourceUserKey: 'u', workbenchItems });
+
+test('personal child totals include children represented by separate deliveries and deduplicate identities',()=>{
+ const children=Array.from({length:35},(_,i)=>child(String(i),i!==34));
+ const before=JSON.stringify(children);
+ assert.deepEqual(viewModel.personalSubtaskSummary({mySubtasks:[...children,children[0]]}),{total:35,completed:34,unfinished:1});
+ assert.equal(JSON.stringify(children),before);
+});
+
+test('related summaries separate flow completion from personal action and do not mix child or defect totals',()=>{
+ const items=[
+  {key:'p:11',workItemId:'11',kind:'workItem',typeName:'需求',pending:false,finished:false},
+  {key:'i:12',workItemId:'12',kind:'workItem',typeName:'缺陷',pending:false,finished:true},
+  {key:'i:13',workItemId:'13',kind:'workItem',typeName:'缺陷',pending:true,finished:false},
+  {key:'i:14',workItemId:'14',kind:'workItem',typeName:'缺陷',pending:false,finished:null},
+  {key:'c:11',workItemId:'11',kind:'subtask',pending:false,finished:true},
+ ];
+ const groups=viewModel.deliveryFeishuGroups([...items,items[1]]);
+ assert.deepEqual(groups.map(g=>[g.key,g.items.length,g.completed.length,g.unfinished.length,g.unknown]),[
+  ['workItems',1,0,1,0],['issues',3,1,2,1],['subtasks',1,1,0,0]]);
+});
+
+test('task file previews use known task and run paths, limit entries and preserve cross-task isolation',()=>{
+ const local={...task('a','doing'),taskDocumentPath:'D:/tasks/a/README.md'};
+ const files=viewModel.taskPrimaryFiles(local,[
+  {taskId:'other',detailFilePath:'D:/private/other.json',startedAt:'2026-11-19T20:00:00Z'},
+  {taskId:'a',detailFilePath:'D:/tasks/a/latest.json',startedAt:'2026-11-19T10:00:00Z'},
+  {taskId:'a',detailFilePath:'D:/tasks/a/latest.json',startedAt:'2026-11-19T09:00:00Z'},
+  {taskId:'a',detailFilePath:null,startedAt:'2026-11-19T08:00:00Z'},
+  {taskId:'a',detailFilePath:'D:/tasks/a/older.json',startedAt:'2026-11-19T07:00:00Z'},
+  {taskId:'a',detailFilePath:'D:/tasks/a/oldest.json',startedAt:'2026-11-19T06:00:00Z'},
+ ]);
+ assert.deepEqual(files.map(f=>f.path),['D:/tasks/a/README.md','D:/tasks/a/latest.json','D:/tasks/a/older.json']);
+});
+
+test('subtask links preserve the verified parent route and add precise node and child identifiers',()=>{
+ const url=viewModel.feishuSubtaskUrl({url:'https://project.feishu.cn/demo/story/detail/11?tab=task'}, {nodeId:'node',id:'child'});
+ const parsed=new URL(url);assert.equal(parsed.pathname,'/demo/story/detail/11');assert.equal(parsed.searchParams.get('tab'),'task');
+ assert.equal(parsed.searchParams.get('activeStateId'),'node');assert.equal(parsed.searchParams.get('subTaskId'),'child');
+ assert.equal(viewModel.feishuSubtaskUrl({url:null},{nodeId:'n',id:'c'}),null);
+});
+
+test('tracking rows explain completed, shared and future participation separately',()=>{
+ assert.equal(viewModel.workbenchSubtaskStatusLabel({...child('shared'),owners:['u','other']}),'共同参与 · 未完成');
+ assert.equal(viewModel.workbenchSubtaskStatusLabel({...child('shared',false,'unknown'),owners:['u','other']}),'状态待核对');
+ assert.equal(viewModel.trackedParticipationLabel({kind:'parent',item:{...parent('a','u',[child('c',true)]),myNodes:[]}}),'本轮已完成');
+ assert.equal(viewModel.trackedParticipationLabel({kind:'parent',item:{...parent('a','u'),myNodes:[{phase:'current',ownerCount:3}]}}),'共同参与');
+ assert.equal(viewModel.trackedParticipationLabel({kind:'project',item:{...responsibility.items[0],actionability:'upcoming'}}),'后续参与');
+});
+
+test('local display context includes completed history, exact child links and unknown states without reclassifying a delivery',()=>{
+ const local={...task('delivery','done',['11','33','unknown']),feishuWorkItemUrls:{unknown:'https://project.feishu.cn/demo/issue/detail/unknown'}};
+ const p={...parent('11','u',[{...child('child',true),localTaskIds:['delivery']}]),url:'https://project.feishu.cn/demo/story/detail/11',currentNodes:[{name:'全量上线',ownerNames:['李国祥']}]};
+ const closed={...parent('33','u'),typeName:'缺陷',flowFinished:true,url:'https://project.feishu.cn/demo/issue/detail/33'};
+ const report={...workbenchReport([p,closed]),items:[],localAssociated:[]};
+ const context=viewModel.taskFeishuContext(local,report);
+ assert(context.find(i=>i.workItemId==='11').statusLabel.includes('全量上线'));
+ assert.deepEqual(context.find(i=>i.workItemId==='11').nodeNames,['全量上线（负责人：李国祥）']);
+ assert.equal(context.find(i=>i.workItemId==='11').statusOnlyLabel,null);
+ assert.equal(context.find(i=>i.workItemId==='child').nodeLabel,'所属节点');
+ assert.equal(context.find(i=>i.workItemId==='child').nodeName,'实施改造');
+ assert.equal(context.find(i=>i.workItemId==='child').parent.workItemId,'11');
+ assert.deepEqual(context.find(i=>i.workItemId==='child').parent.nodeNames,['全量上线（负责人：李国祥）']);
+ assert.equal(context.find(i=>i.workItemId==='33').finished,true);
+ assert.equal(context.find(i=>i.workItemId==='unknown').finished,null);
+ assert.equal(context.find(i=>i.workItemId==='unknown').url,local.feishuWorkItemUrls.unknown);
+ assert.equal(new URL(context.find(i=>i.workItemId==='child').url).searchParams.get('subTaskId'),'child');
+ assert.equal(local.status,'done');assert.equal(viewModel.taskEntryLane({kind:'local',key:'delivery',task:local}),'completed');
+});
+
+test('current node owners stay paired with their own node and missing owner data remains explicit', () => {
+  assert.deepEqual(viewModel.workItemCurrentNodeLines({currentNodeNames:['stale'],currentNodes:[
+    {name:'调研、设计',ownerNames:['张三']},{name:'推进验证',ownerNames:['李四','王五']},
+  ]}),['调研、设计（负责人：张三）','推进验证（负责人：李四、王五）']);
+  assert.deepEqual(viewModel.workItemCurrentNodeLines({currentNodeNames:['审核']}),['审核（负责人：接口未返回）']);
+  assert.deepEqual(viewModel.workItemCurrentNodeLines({currentNodes:[{name:'审核',ownerNames:[]}]}),['审核（负责人：未指定）']);
+  assert.deepEqual(viewModel.workItemCurrentNodeLines({currentNodes:[{name:'审核',ownerNames:['张三']},{name:'审核',ownerNames:['李四']}]}),['审核（负责人：张三）','审核（负责人：李四）']);
+});
+
+test('uncertain associations and ambiguous child parents remain outside confirmed completion counts',()=>{
+ const local=task('delivery','done',['33','child']);
+ const report={...workbenchReport([
+  {...parent('11','u',[{...child('child'),localTaskIds:['delivery']}]),url:'https://project.feishu.cn/demo/story/detail/11'},
+  {...parent('22','u',[{...child('child'),localTaskIds:['delivery']}]),url:'https://project.feishu.cn/demo/story/detail/22'},
+ ]),items:[{...responsibility.items[0],workItemId:'33',typeName:'缺陷',nativeCompleted:true,localTaskIds:[]}],localAssociated:[{workItemId:'33',localTaskIds:['delivery'],verified:false}]};
+ const context=viewModel.taskFeishuContext(local,report);
+ assert.equal(context.find(i=>i.workItemId==='child').url,null);
+ assert.equal(context.find(i=>i.workItemId==='33').finished,null);
+ const groups=viewModel.deliveryFeishuGroups(context);
+ assert.equal(groups.find(g=>g.key==='issues'),undefined);
+ assert.equal(groups.find(g=>g.key==='uncertain').items.length,2);
+});
 
 test('participated panel requires completed personal work and keeps unknown ownership in the main list', () => {
   const mine = { ...parent('11', 'u'), updatedAt: '2026-10-29T10:00:00Z' };
@@ -304,39 +384,7 @@ test('completed personal nodes without children remain in completed history', ()
   assert.equal(viewModel.taskEntryLane(entries[0]), 'completed');
 });
 
-test('base owner without remaining assigned work stays completed until current responsibility arrives', () => {
-  const owned = { ...parent('owner-only', 'u'), myNodes: [] };
-  const report = workbenchReport([owned]);
-  assert.deepEqual(viewModel.participatedOpenFeishuItems(report).map((entry) => entry.item.workItemId), ['owner-only']);
-  const entries = buildTaskEntries(buildWorkspaceConsoleView({ ...dashboard, tasks: [] }, report));
-  assert.equal(viewModel.taskEntryLane(entries[0]), 'completed');
-  const pending = { ...report, items: [{ ...responsibility.items[0], workItemId: 'owner-only', actionability: 'current' }] };
-  assert.deepEqual(viewModel.participatedOpenFeishuItems(pending), []);
-  assert.deepEqual(buildTaskEntries(buildWorkspaceConsoleView({ ...dashboard, tasks: [] }, pending))
-    .map((entry) => entry.key), ['parent:owner-only']);
-});
 
-test('role and base owners without pending personal work appear once in participated items', () => {
-  const role = { ...parent('9001000037', 'creator'), roleOwnerUserKeys: ['u', 'other'], myNodes: [] };
-  const base = { ...parent('base-owner', 'u'), roleOwnerUserKeys: [], myNodes: [] };
-  const report = workbenchReport([role, base]);
-  assert.deepEqual(viewModel.participatedOpenFeishuItems(report).map((entry) => entry.item.workItemId).sort(),
-    ['9001000037', 'base-owner']);
-  assert.ok(buildTaskEntries(buildWorkspaceConsoleView({ ...dashboard, tasks: [] }, report)).every((entry) => viewModel.taskEntryLane(entry) === 'completed'));
-  for (const pending of [
-    { ...role, myNodes: [{ id: 'n1', name: '研发', phase: 'current' }] },
-    { ...role, mySubtasks: [child('pending')] },
-  ]) {
-    const active = workbenchReport([pending]);
-    assert.deepEqual(viewModel.participatedOpenFeishuItems(active), []);
-    assert.ok(buildTaskEntries(buildWorkspaceConsoleView({ ...dashboard, tasks: [] }, active))
-      .some((entry) => entry.key === 'parent:9001000037'));
-  }
-  assert.deepEqual(viewModel.participatedOpenFeishuItems(workbenchReport([{ ...role, flowFinished: true }])), []);
-  const local = { ...dashboard, tasks: [task('pending-local', 'doing', ['9001000037'])] };
-  assert.deepEqual(viewModel.participatedOpenFeishuItems(report, local.tasks).map((entry) => entry.item.workItemId), ['base-owner']);
-  assert.ok(buildTaskEntries(buildWorkspaceConsoleView(local, report)).some((entry) => entry.key === 'parent:9001000037'));
-});
 
 test('an unfinished personal node or subtask remains in the main list', () => {
   const ownNode = { ...parent('active-node', 'other'), myNodes: [
@@ -350,21 +398,6 @@ test('an unfinished personal node or subtask remains in the main list', () => {
     .map((entry) => entry.key).sort(), ['parent:active-node', 'subtask:active-child:22', 'subtask:active-child:23']);
 });
 
-test('completed personal work and repaired issues remain in completed history without duplicate report parents', () => {
-  const issue = { ...responsibility.items[0], workItemId: '9001000019', typeName: '缺陷',
-    actionability: 'state_responsibility', statusName: '已修复，待验收', localTaskIds: [],
-    myRoleKeys: ['operator'], baseOwnerIsMe: false };
-  const pipeline = { ...parent('9001000003', 'other', [child('9001000028', true, 'current')]),
-    myNodes: [{ id: 'n1', name: '实施改造', phase: 'current', ownerCount: 5 }] };
-  const report = { ...workbenchReport([pipeline]), items: [issue,
-    { ...responsibility.items[0], workItemId: pipeline.workItemId, actionability: 'current' }] };
-  const local = { ...dashboard, tasks: [task('finished-issue', 'done', [issue.workItemId])] };
-  assert.deepEqual(viewModel.participatedOpenFeishuItems(report).map((entry) => `${entry.kind}:${entry.item.workItemId}`).sort(),
-    ['parent:9001000003', 'project:9001000019']);
-  const entries = buildTaskEntries(buildWorkspaceConsoleView(local, report));
-  assert.deepEqual(entries.map((entry) => entry.key).sort(), ['local:finished-issue', 'parent:9001000003', 'project:9001000019', 'subtask:9001000003:9001000028']);
-  assert.ok(entries.every((entry) => viewModel.taskEntryLane(entry) === 'completed'));
-});
 
 test('a sole unfinished node stays above even when its own child passed', () => {
   const sole = { ...parent('sole-node', 'u', [child('child', true, 'current')]),
@@ -403,12 +436,6 @@ test('an acceptance role keeps a repaired issue in the main list', () => {
     .map((entry) => entry.key), ['project:open-acceptance']);
 });
 
-test('an older cached issue keeps its existing bottom placement until the next report refresh', () => {
-  const issue = { ...responsibility.items[0], workItemId: 'cached-issue', typeName: '缺陷',
-    actionability: 'state_responsibility', statusName: '已修复，待验收', localTaskIds: [], personalSubtasks: [] };
-  assert.deepEqual(viewModel.participatedOpenFeishuItems({ ...workbenchReport([]), items: [issue] })
-    .map((entry) => entry.item.workItemId), ['cached-issue']);
-});
 
 test('owner parent remains visible without any child', () => {
   const entries = buildTaskEntries(buildWorkspaceConsoleView({ ...dashboard, tasks: [] }, workbenchReport([parent('11', 'u')])));
@@ -416,24 +443,6 @@ test('owner parent remains visible without any child', () => {
   assert.equal(viewModel.taskEntryLane(entries[0]), 'unstarted');
 });
 
-test('groups an operator-owned issue under its verified story without losing the issue status or search ID', () => {
-  const storyId = '9001000029';
-  const issueId = '9001000032';
-  const issue = { ...responsibility.items[0], workItemId: issueId, title: '账款评估入口缺陷', typeName: '缺陷',
-    actionability: 'state_responsibility', linkedStoryIds: [storyId], localTaskIds: [],
-    url: `https://project.feishu.cn/demo-space/issue/detail/${issueId}` };
-  const report = { ...workbenchReport([parent(storyId, 'other', [child('9001000031', true, 'completed')])]), items: [issue] };
-  const local = { ...dashboard, tasks: [task('story-ledger', 'waiting', [storyId])] };
-  assert.deepEqual(viewModel.participatedOpenFeishuItems(report, local.tasks), []);
-  const entries = buildTaskEntries(buildWorkspaceConsoleView(local, report));
-  assert.deepEqual(entries.map((entry) => entry.key).sort(), [`local:story-ledger`, `project:${issueId}`, `subtask:${storyId}:9001000031`]);
-  const groups = viewModel.groupTaskEntries(entries);
-  assert.equal(groups.length, 1);
-  assert.equal(groups[0].key, `group:${storyId}`);
-  assert.deepEqual(groups[0].members.map((entry) => entry.key).sort(), entries.map((entry) => entry.key).sort());
-  assert.equal(viewModel.taskEntryLane(groups[0]), 'unstarted');
-  assert.deepEqual(filterTaskEntries(groups, 'all', issueId).map((entry) => entry.key), [`group:${storyId}`]);
-});
 
 test('keeps a responsibility item outside a story group when its relation is ambiguous', () => {
   const issue = { ...responsibility.items[0], workItemId: '9001000032', typeName: '缺陷',
@@ -443,33 +452,7 @@ test('keeps a responsibility item outside a story group when its relation is amb
   assert.deepEqual(groups.map((entry) => entry.key).sort(), ['group:9001000029', 'project:9001000032']);
 });
 
-test('keeps a linked issue as one distinct entry when the same issue is also a workbench parent', () => {
-  const storyId = '9001000029';
-  const issueId = '9001000032';
-  const issue = { ...responsibility.items[0], workItemId: issueId, title: '关联缺陷', typeName: '缺陷',
-    linkedStoryIds: [storyId], localTaskIds: [] };
-  const issueParent = { ...parent(issueId, 'u'), typeName: '缺陷' };
-  const report = { ...workbenchReport([parent(storyId, 'u'), issueParent]), items: [issue] };
-  const entries = buildTaskEntries(buildWorkspaceConsoleView({ ...dashboard, tasks: [] }, report));
-  assert.deepEqual(entries.map((entry) => entry.key).sort(), [`parent:${storyId}`, `project:${issueId}`]);
-  const groups = viewModel.groupTaskEntries(entries);
-  assert.equal(groups.length, 1);
-  assert.deepEqual(groups[0].members.map((entry) => entry.key).sort(), [`parent:${storyId}`, `project:${issueId}`]);
-});
 
-test('keeps a local ledger linked to the issue inside its related story group', () => {
-  const storyId = '9001000029';
-  const issueId = '9001000032';
-  const issue = { ...responsibility.items[0], workItemId: issueId, title: '关联缺陷', typeName: '缺陷',
-    linkedStoryIds: [storyId], localTaskIds: ['issue-ledger'] };
-  const report = { ...workbenchReport([parent(storyId, 'u')]), items: [issue] };
-  const local = { ...dashboard, tasks: [task('issue-ledger', 'doing', [issueId])] };
-  const entries = buildTaskEntries(buildWorkspaceConsoleView(local, report));
-  const groups = viewModel.groupTaskEntries(entries);
-  assert.equal(groups.length, 1);
-  assert.deepEqual(groups[0].members.map((entry) => entry.key).sort(), [`local:issue-ledger`, `parent:${storyId}`, `project:${issueId}`]);
-  assert.equal(viewModel.taskEntryLane(groups[0]), 'doing');
-});
 
 test('every own child gets a parent-scoped card without claiming another owner parent', () => {
   const entries = buildTaskEntries(buildWorkspaceConsoleView({ ...dashboard, tasks: [] }, workbenchReport([
@@ -488,25 +471,6 @@ test('old parent ledger link cannot hide a newly assigned child or change its NE
   assert.deepEqual(viewModel.newTaskEntryKeys(['local:old-parent'], entries), ['subtask:11:9001000028']);
 });
 
-test('one parent group keeps every own child and separates parent and child ledger links', () => {
-  const local = { ...dashboard, tasks: [
-    task('parent-ledger', 'waiting', ['11']),
-    task('child-ledger', 'doing', ['11', '22']),
-    task('unrelated', 'todo', ['99']),
-  ] };
-  const source = buildTaskEntries(buildWorkspaceConsoleView(local, workbenchReport([
-    parent('11', 'other', [child('22', true, 'completed'), child('23', false, 'upcoming')]),
-  ])));
-  const grouped = viewModel.groupTaskEntries(source);
-  const group = grouped.find((entry) => entry.key === 'group:11');
-  assert.deepEqual(group.members.map((entry) => entry.key).sort(),
-    ['local:child-ledger', 'local:parent-ledger', 'subtask:11:22']);
-  assert.equal(viewModel.taskEntryLane(group), 'doing');
-  assert.deepEqual(viewModel.groupLocalTasks(group), {
-    parent: ['parent-ledger'], children: { '22': ['child-ledger'], '23': [] },
-  });
-  assert.deepEqual(viewModel.filterTaskEntries(grouped, 'all', '23').map((entry) => entry.key), ['group:11']);
-});
 
 test('a later own child reopens its parent group and keeps its independent NEW identity', () => {
   const oldEntries = buildTaskEntries(buildWorkspaceConsoleView({ ...dashboard, tasks: [] }, workbenchReport([
@@ -523,30 +487,7 @@ test('a later own child reopens its parent group and keeps its independent NEW i
   assert.equal(viewModel.taskDisplayEntryIsNew(latestGroup, new Set(newKeys)), true);
 });
 
-test('a grouped waiting ledger remains available in the lane status filter', () => {
-  const entries = buildTaskEntries(buildWorkspaceConsoleView({ ...dashboard, tasks: [task('ledger', 'waiting', ['11'])] },
-    workbenchReport([parent('11', 'other', [child('22', true, 'completed')])])));
-  const group = viewModel.groupTaskEntries(entries)[0];
-  const lanes = groupTaskEntriesByLane([group]);
-  assert.deepEqual(viewModel.taskEntryFilterStatuses(group), ['等待中']);
-  assert.deepEqual(filterTaskLanesByStatus(lanes, { unstarted: '等待中', doing: '', completed: '' }).unstarted.map((entry) => entry.key), ['group:11']);
-});
 
-test('group lane and primary action follow an unfinished local ledger before a current Feishu child', () => {
-  const report = workbenchReport([parent('11', 'u', [child('22', false, 'current')])]);
-  const grouped = (status) => viewModel.groupTaskEntries(buildTaskEntries(buildWorkspaceConsoleView(
-    { ...dashboard, tasks: [task('ledger', status, ['22'])] }, report,
-  )))[0];
-  const waiting = grouped('waiting');
-  assert.equal(viewModel.taskEntryLane(waiting), 'unstarted');
-  assert.equal(viewModel.taskEntryStatusLabel(waiting), '等待中');
-  assert.equal(viewModel.selectGroupPrimaryEntry(waiting).key, 'local:ledger');
-  assert.deepEqual(groupTaskEntriesByLane([waiting]).unstarted.map((entry) => entry.key), ['group:11']);
-  const completedLocal = grouped('done');
-  assert.equal(viewModel.taskEntryLane(completedLocal), 'unstarted');
-  assert.equal(viewModel.taskEntryStatusLabel(completedLocal), '待核对');
-  assert.equal(viewModel.selectGroupPrimaryEntry(completedLocal).key, 'subtask:11:22');
-});
 
 test('an unfinished child of an ended Feishu node stays in the ordinary pending lane', () => {
   const ended = { ...parent('9001000033', 'u', [child('9001000034', false, 'completed')], 'done'), flowFinished: true };
@@ -558,22 +499,6 @@ test('an unfinished child of an ended Feishu node stays in the ordinary pending 
   assert.deepEqual(groupTaskEntriesByLane([group]).unstarted.map((entry) => entry.key), ['group:9001000033']);
 });
 
-test('native completion and archive status control lanes and labels', () => {
-  const entries = buildTaskEntries(buildWorkspaceConsoleView({ ...dashboard, tasks: [] }, workbenchReport([
-    parent('11', 'u', [child('21', true), child('22', false, 'upcoming')], 'done'),
-    parent('12', 'u', [], 'archived', true),
-    { ...parent('13', 'u', [], null), currentNodeNames: [] },
-  ])));
-  const byKey = new Map(entries.map((entry) => [entry.key, entry]));
-  for (const [key, lane, label] of [
-    ['subtask:11:21', 'completed', '已完成'],
-    ['parent:11', 'completed', '已完成'], ['parent:12', 'completed', '已归档'],
-    ['parent:13', 'unstarted', '状态待核对'],
-  ]) {
-    assert.equal(viewModel.taskEntryLane(byKey.get(key)), lane);
-    assert.equal(viewModel.taskEntryStatusLabel(byKey.get(key)), label);
-  }
-});
 
 test('completed workflow leaves active lanes without exposing opaque keys', () => {
   const entries = buildTaskEntries(buildWorkspaceConsoleView({ ...dashboard, tasks: [] }, workbenchReport([
@@ -585,8 +510,8 @@ test('completed workflow leaves active lanes without exposing opaque keys', () =
   assert.equal(viewModel.taskEntryStatusLabel(byKey.get('parent:9001000010')), '飞书流程已结束');
   assert.equal(viewModel.taskEntryLane(byKey.get('parent:15')), 'unstarted');
   assert.equal(viewModel.taskEntryStatusLabel(byKey.get('parent:15')), '状态待核对');
-  assert.equal(viewModel.workbenchSubtaskNodeLabel(child('1', false, 'current')), '当前节点：实施改造');
-  assert.equal(viewModel.workbenchSubtaskNodeLabel(child('1', true, 'completed')), '已结束节点：实施改造');
+  assert.equal(viewModel.workbenchSubtaskNodeLabel(child('1', false, 'current')), '所属节点：实施改造');
+  assert.equal(viewModel.workbenchSubtaskNodeLabel(child('1', true, 'completed')), '所属节点：实施改造');
 });
 
 test('an unfinished child in an ended or unknown node stays visible for review', () => {
@@ -630,22 +555,16 @@ test('retains distinct local tasks under one responsibility', () => {
   assert.deepEqual(view.unlinkedSessions.map((item) => item.sessionId), ['alone']);
 });
 
-test('Feishu view retains linked ledgers while local-only view keeps unmatched tasks', () => {
-  const local = { ...dashboard, tasks: [task('linked', 'doing', ['123']), task('linked-by-report', 'waiting'), task('local-only', 'paused')] };
-  const project = { ...responsibility, items: [
-    { ...responsibility.items[0], workItemId: '123', title: '关联飞书', localTaskIds: ['linked'] },
-    { ...responsibility.items[0], workItemId: '789', title: '独立飞书', localTaskIds: [] },
-    { ...responsibility.items[0], workItemId: '999', title: '已有任务目录', localTaskIds: ['directory-only'] },
-    { ...responsibility.items[0], workItemId: '456', title: '报表关联飞书', localTaskIds: ['linked-by-report'] },
-  ], localAssociated: [] };
-  const view = buildWorkspaceConsoleView(local, project);
-  assert.deepEqual(buildTaskEntries(view).map((entry) => entry.key).sort(), ['local:linked', 'local:linked-by-report', 'local:local-only', 'project:789', 'project:999']);
-  assert.deepEqual(buildTaskEntries(view, 'local').map((entry) => entry.key), ['local:local-only']);
-  const feishu = buildTaskEntries(view, 'feishu');
-  assert.deepEqual(feishu.map((entry) => entry.key).sort(), ['local:linked', 'local:linked-by-report', 'project:789', 'project:999']);
-  assert.deepEqual(groupTaskEntriesByLane(feishu).unstarted.map((entry) => entry.key).sort(), ['local:linked-by-report', 'project:789', 'project:999']);
-  assert.deepEqual(filterTaskEntries(feishu, 'all', '独立').map((entry) => entry.key), ['project:789']);
+test('unbound reports do not infer local identity and duplicate projections keep the native responsibility',()=>{
+  const unbound={...responsibility,associationMeta:{state:'unbound'},items:responsibility.items.map(item=>({...item,localTaskIds:[]})),localAssociated:[]};
+  const view=buildWorkspaceConsoleView(dashboard,unbound);
+  assert.deepEqual(view.responsibility.current[0].tasks,[]);
+  assert.deepEqual(projectItemsForTask(dashboard.tasks[0],unbound),[]);
+  const duplicated={...responsibility,localAssociated:[{...responsibility.localAssociated[0],workItemId:'123',localTaskIds:['a']}]};
+  const linked=projectItemsForTask(dashboard.tasks[0],duplicated);
+  assert.equal(linked.length,1);assert.equal(linked[0].actionability,'current');
 });
+
 
 test('local-only excludes tasks with a Feishu ID even when the current report omits it', () => {
   const local = { ...dashboard, tasks: [task('registry-link', 'paused', ['901']), task('report-link', 'paused'), task('orphan', 'paused')] };
@@ -667,16 +586,6 @@ test('a work item ID without a verified URL never invents a task-specific link',
   assert.deepEqual(viewModel.registryFeishuLinksForTask(finished), []);
 });
 
-test('a work item ID in a task directory belongs to the uncertain association filter', () => {
-  const local = { ...dashboard, tasks: [{ ...task('directory-task', 'waiting'), taskPath: 'tasks/feishu-9001000002-review' }] };
-  const report = { ...responsibility, items: [{ ...responsibility.items[0], workItemId: '9001000002', localTaskIds: [] }], localAssociated: [] };
-  const view = buildWorkspaceConsoleView(local, report);
-  assert.deepEqual(buildTaskEntries(view, 'feishu'), []);
-  assert.deepEqual(buildTaskEntries(view, 'local'), []);
-  assert.deepEqual(buildTaskEntries(view, 'uncertain').map((entry) => entry.key), ['local:directory-task']);
-  assert.deepEqual(buildTaskEntries(view).map((entry) => entry.key), ['local:directory-task']);
-  assert.deepEqual(projectItemsForTask(local.tasks[0], report).map((item) => item.workItemId), ['9001000002']);
-});
 
 test('task links use source data rather than task-specific overrides', () => {
   assert.equal(typeof viewModel.feishuUrlForTask, 'function');
@@ -766,8 +675,8 @@ test('detail local ledger folding always exposes unfinished work and fills two s
 test('detail Feishu children put unfinished work first and use their available own or local dates', () => {
   const children = [
     { id: 'done', passed: true, finishedAt: '2026-10-16T12:00:00+08:00' },
-    { id: 'open-old', passed: false },
-    { id: 'open-new', passed: false },
+    { id: 'open-old', passed: false, localTaskIds: ['local-old'] },
+    { id: 'open-new', passed: false, localTaskIds: ['local-new'] },
     { id: 'done-old', passed: true, finishedAt: '2026-10-15T12:00:00+08:00' },
   ];
   const next = parent('123', 'user', children);
@@ -788,9 +697,10 @@ test('detail Feishu children put unfinished work first and use their available o
 
 test('parent detail collects child and direct ledgers once for a separate local list', () => {
   const story = parent('parent-1', 'other', [
-    { id: 'child-1', title: '子任务一', passed: true },
-    { id: 'child-2', title: '子任务二', passed: false },
+    { id: 'child-1', title: '子任务一', passed: true, localTaskIds: ['completed-child'] },
+    { id: 'child-2', title: '子任务二', passed: false, localTaskIds: ['active-child'] },
   ]);
+  story.localTaskIds=['direct-parent','active-child'];
   const rows = [
     { ...task('completed-child', 'done', ['child-1']), completedAt: '2026-10-16T11:00:00+08:00' },
     { ...task('direct-parent', 'doing', ['parent-1']), lastVerifiedAt: '2026-10-15T09:00:00+08:00' },
@@ -845,16 +755,6 @@ test('focus selection keeps an odd final task instead of silently dropping it', 
   }
 });
 
-test('focus groups two active ledgers under their one Feishu child', () => {
-  const local = { ...dashboard, tasks: [task('etl', 'doing', ['9001000024']), task('alert', 'waiting', ['9001000024'])] };
-  const grouped = viewModel.groupTaskEntries(buildTaskEntries(buildWorkspaceConsoleView(local,
-    workbenchReport([parent('9001000005', 'other', [child('9001000024', false, 'current')])]))));
-  assert.deepEqual(viewModel.selectFocusEntries(grouped).map((entry) => entry.key), ['group:9001000005']);
-  assert.deepEqual(viewModel.focusGroupLocalTasks(grouped[0]).map((item) => item.id), ['etl', 'alert']);
-  const filtered = viewModel.groupTaskEntries(buildTaskEntries(buildWorkspaceConsoleView(local,
-    workbenchReport([parent('9001000005', 'other', [child('9001000024', false, 'current')])])), 'feishu'));
-  assert.deepEqual(filtered[0].members.filter((entry) => entry.kind === 'local').map((entry) => entry.task.id).sort(), ['alert', 'etl']);
-});
 
 test('focus order follows a waiting local ledger before a current Feishu child without a ledger', () => {
   const waiting = viewModel.groupTaskEntries(buildTaskEntries(buildWorkspaceConsoleView(
@@ -873,22 +773,11 @@ test('a passed Feishu child stays actionable while its linked local ledger is st
   assert.equal(viewModel.workbenchChildNeedsAttention(child('22', true, 'completed'), [task('local', 'done', ['22'])]), false);
 });
 
-test('group card action targets active work, then an available task for reprocessing', () => {
-  const report = workbenchReport([parent('11', 'u', [child('22', false, 'current')])]);
-  const makeGroup = (tasks) => viewModel.groupTaskEntries(buildTaskEntries(buildWorkspaceConsoleView({ ...dashboard, tasks }, report)))[0];
-  assert.equal(viewModel.selectGroupPrimaryEntry(makeGroup([task('ledger', 'doing', ['22'])])).key, 'local:ledger');
-  assert.equal(viewModel.selectGroupPrimaryEntry(makeGroup([task('ledger', 'done', ['22'])])).key, 'subtask:11:22');
-  const finishedReport = workbenchReport([{ ...parent('11', 'u', [child('22', true, 'completed')], 'done'), flowFinished: true }]);
-  const finished = viewModel.groupTaskEntries(buildTaskEntries(buildWorkspaceConsoleView(
-    { ...dashboard, tasks: [task('ledger', 'done', ['22'])] }, finishedReport,
-  )))[0];
-  assert.equal(viewModel.selectGroupPrimaryEntry(finished).key, 'local:ledger');
-});
 
 test('a local task linked to a child opens the exact Feishu subtask with its title and ID', () => {
   const linked = task('etl', 'doing', ['9001000024']);
   const report = workbenchReport([{
-    ...parent('9001000005', 'other', [child('9001000024', false, 'current')]),
+    ...parent('9001000005', 'other', [{...child('9001000024', false, 'current'),localTaskIds:['etl']}]),
     url: 'https://project.feishu.cn/demo-space/detail/9001000005',
   }]);
   const links = viewModel.feishuLinksForTask(linked, report);
@@ -919,12 +808,23 @@ test('focus cards fill the first row then stack in the shortest column', () => {
   assert.deepEqual(viewModel.distributeFocusEntries(entries, 3, (entry) => heights[entry]), [['a'], ['b', 'e'], ['c', 'd', 'f']]);
 });
 
-test('recent run observation shows distinct tasks before older runs of the same task', () => {
+test('recent run observation does not displace newer runs to favor distinct tasks', () => {
   const runs = [
-    { runId: 'a3', taskId: 'a' }, { runId: 'a2', taskId: 'a' },
-    { runId: 'b1', taskId: 'b' }, { runId: 'a1', taskId: 'a' }, { runId: 'c1', taskId: 'c' },
+    { runId: 'c1', taskId: 'c', startedAt: '2026-11-19 09:00:00' },
+    { runId: 'a3', taskId: 'a', startedAt: '2026-11-20 10:00:00' }, { runId: 'a2', taskId: 'a', startedAt: '2026-11-20 09:00:00' },
+    { runId: 'b1', taskId: 'b', startedAt: '2026-11-20 08:00:00' }, { runId: 'a1', taskId: 'a', startedAt: '2026-11-20 07:00:00' },
   ];
-  assert.deepEqual(viewModel.selectRecentRuns(runs, 4).map((item) => item.runId), ['a3', 'b1', 'c1', 'a2']);
+  assert.deepEqual(viewModel.selectRecentRuns(runs, 4).map((item) => item.runId), ['a3', 'a2', 'b1', 'a1']);
+  assert.equal(runs[0].runId, 'c1');
+});
+
+test('latest execution file uses the same order as the run list when start time is absent', () => {
+  const item = { ...task('a', 'doing'), taskDocumentPath: null };
+  const runs = [
+    { taskId: 'a', runId: 'dated', detailFilePath: 'older.json', startedAt: '2026-11-19 09:00:00' },
+    { taskId: 'a', runId: '20261120-090000-new', detailFilePath: 'newer.json', startedAt: null },
+  ];
+  assert.equal(viewModel.taskPrimaryFiles(item, runs)[0].path, 'newer.json');
 });
 
 test('focus current removes only a leading timestamp and keeps dates in the description', () => {
@@ -971,46 +871,8 @@ test('observed activity time distinguishes missing records from recorded minutes
   assert.equal(formatObservedDuration(3661), '1 小时 1 分钟');
 });
 
-test('all-task list keeps local history and standalone Project responsibility without duplicating linked items', () => {
-  const local = { ...dashboard, tasks: [task('doing-task', 'doing', ['123']), task('finished-task', 'done')] };
-  const project = { ...responsibility, items: [
-    { ...responsibility.items[0], workItemId: '123', localTaskIds: ['doing-task'] },
-    { ...responsibility.items[0], workItemId: '789', title: '仅 Project 责任', localTaskIds: [] },
-  ] };
-  const entries = buildTaskEntries(buildWorkspaceConsoleView(local, project));
-  assert.deepEqual(entries.map((item) => item.key), ['local:finished-task', 'project:789', 'local:doing-task']);
-  assert.deepEqual(filterTaskEntries(entries, 'unfinished', '').map((item) => item.key), ['project:789', 'local:doing-task']);
-  assert.deepEqual(filterTaskEntries(entries, 'doing', '').map((item) => item.key), ['local:doing-task']);
-  assert.deepEqual(filterTaskEntries(entries, 'completed', '').map((item) => item.key), ['local:finished-task']);
-  assert.deepEqual(filterTaskEntries(entries, 'project', '789').map((item) => item.key), ['project:789']);
-});
 
-test('9001000037 completed personal work stays completed until the future application node activates', () => {
-  const p = { ...parent('9001000037', 'other', [child('9001000040', true, 'completed')]), currentNodeNames: ['生产验收'],
-    myNodes: [{id:'n1',name:'数据治理',phase:'completed'}, {id:'application',name:'衔接应用',phase:'upcoming'}] };
-  const local = {...dashboard,tasks:[task('terminal-ledger','done',[p.workItemId])]};
-  const report = {...workbenchReport([p]),items:[{...responsibility.items[0],workItemId:p.workItemId,actionability:'upcoming'}]};
-  const grouped = (r) => viewModel.groupTaskEntries(buildTaskEntries(buildWorkspaceConsoleView(local,r)))[0];
-  const complete = grouped(report);
-  assert.equal(viewModel.taskEntryLane(complete),'completed');
-  assert.equal(viewModel.taskEntryStatusLabel(complete),'本轮已完成');
-  assert.equal(viewModel.taskEntryConflict(complete),null);
-  assert.deepEqual(viewModel.futureFeishuItems(report,local.tasks),[]);
-  const activated = {...report,workbenchItems:[{...p,myNodes:[p.myNodes[0],{...p.myNodes[1],phase:'current'}]}]};
-  const pending = grouped(activated);
-  assert.equal(viewModel.taskEntryLane(pending),'unstarted');
-  assert.equal(viewModel.taskEntryStatusLabel(pending),'待核对');
-  assert.match(viewModel.taskEntryConflict(pending),/新一轮/);
-});
 
-test('9001000036 local execution remains doing even after personal Feishu development completed', () => {
-  const p={...parent('9001000036','other',[child('9001000039',true,'completed')]),myNodes:[{id:'n1',phase:'completed'}]};
-  const entries=buildTaskEntries(buildWorkspaceConsoleView({...dashboard,tasks:[task('running','doing',[p.workItemId])]},workbenchReport([p])));
-  const group=viewModel.groupTaskEntries(entries)[0];
-  assert.equal(viewModel.taskEntryLane(group),'doing');
-  assert.equal(viewModel.taskEntryStatusLabel(group),'处理中');
-  assert.equal(viewModel.selectGroupPrimaryEntry(group).key,'local:running');
-});
 
 test('9001000013 ended story stays completed and its new linked defect remains separate and pending', () => {
   const p={...parent('9001000013','u',[child('9001000035',true,'completed')]),flowFinished:true};
@@ -1038,17 +900,6 @@ test('future-only personal responsibility is background, not a current pending o
   assert.equal(buildTaskEntries(buildWorkspaceConsoleView(cancelled,report)).some(e=>e.kind==='parent'),false);
 });
 
-test('a waiting branch cannot hide an independently executing sibling or an available new task', () => {
-  const p=parent('parallel','other',[child('wait'),child('run'),child('new')]);
-  const local={...dashboard,tasks:[task('waiting','waiting',['wait']),task('running','doing',['run'])]};
-  const group=viewModel.groupTaskEntries(buildTaskEntries(buildWorkspaceConsoleView(local,workbenchReport([p]))))[0];
-  assert.equal(viewModel.taskEntryLane(group),'doing');
-  assert.equal(viewModel.selectGroupPrimaryEntry(group).key,'local:running');
-  const pending=viewModel.groupTaskEntries(buildTaskEntries(buildWorkspaceConsoleView({...local,tasks:local.tasks.slice(0,1)},workbenchReport([p]))))[0];
-  assert.ok(['subtask:parallel:run','subtask:parallel:new'].includes(viewModel.selectGroupPrimaryEntry(pending).key));
-  const allWaiting={kind:'local',key:'local:external',task:task('external','waiting')};
-  assert.equal(viewModel.selectFocusEntries([allWaiting,pending])[0].key,'group:parallel');
-});
 
 test('paused-only work leaves focus while unknown or unfinished ended-node work remains pending review', () => {
   const paused={kind:'local',key:'paused',task:task('paused','paused')};
@@ -1059,12 +910,6 @@ test('paused-only work leaves focus while unknown or unfinished ended-node work 
   assert.deepEqual(viewModel.selectFocusEntries([paused,unknown]).map(e=>e.key),['parent:unknown']);
 });
 
-test('old completed branch records do not conflict with its explicitly unfinished new local round', () => {
-  const p={...parent('round','u',[child('c')]),myNodes:[{id:'n1',phase:'current',ownerCount:1}]};
-  const group=viewModel.groupTaskEntries(buildTaskEntries(buildWorkspaceConsoleView({...dashboard,tasks:[task('old','done',['c']),task('new','doing',['c'])]},workbenchReport([p]))))[0];
-  assert.equal(viewModel.taskEntryConflict(group),null);
-  assert.equal(viewModel.taskEntryStatusLabel(group),'处理中');
-});
 
 test('flow tracking combines completed personal work and future participation without changing main lanes or duplicating report parents', () => {
   const finished={...parent('finished','u',[child('c',true,'completed')]),myNodes:[{id:'n1',phase:'completed'}]};
@@ -1079,42 +924,11 @@ test('flow tracking combines completed personal work and future participation wi
   const before=viewModel.groupTaskEntries(buildTaskEntries(buildWorkspaceConsoleView(local,report))).map(e=>[e.key,viewModel.taskEntryLane(e)]);
   assert.deepEqual(viewModel.trackedOpenFeishuItems(report).map(e=>e.item.workItemId).sort(),['finished','future','project-next']);
   assert.deepEqual(viewModel.groupTaskEntries(buildTaskEntries(buildWorkspaceConsoleView(local,report))).map(e=>[e.key,viewModel.taskEntryLane(e)]),before);
-  assert.deepEqual(viewModel.trackedOpenFeishuItems(report,[task('running','doing',['finished'])]).map(e=>e.item.workItemId).sort(),['future','project-next']);
+  assert.deepEqual(viewModel.trackedOpenFeishuItems(report,[task('running','doing',['finished'])]).map(e=>e.item.workItemId).sort(),['finished','future','project-next']);
 });
 
-test('a grouped pending defect is a primary action candidate instead of the old parent or completed work', () => {
-  const p={...parent('story','u'),myNodes:[{id:'n1',phase:'current'}]};
-  const issue={...responsibility.items[0],workItemId:'issue',typeName:'缺陷',title:'新缺陷',linkedStoryIds:['story']};
-  const report={...workbenchReport([p]),items:[issue]};
-  const group=viewModel.groupTaskEntries(buildTaskEntries(buildWorkspaceConsoleView({...dashboard,tasks:[]},report)))[0];
-  assert.equal(viewModel.taskEntryLane(group),'unstarted');
-  assert.equal(viewModel.selectGroupPrimaryEntry(group).key,'project:issue');
-});
 
-test('a paused branch leaves focus even when its covered parent node is current, but a new independent child stays visible', () => {
-  const p={...parent('paused-parent','u'),myNodes:[{id:'n1',phase:'current'}]};
-  const local={...dashboard,tasks:[{...task('paused-work','paused',[p.workItemId]),startedAt:'2026-11-01T00:00:00+08:00'}]};
-  const group=viewModel.groupTaskEntries(buildTaskEntries(buildWorkspaceConsoleView(local,workbenchReport([p]))))[0];
-  assert.equal(viewModel.taskEntryLane(group),'doing');
-  assert.deepEqual(viewModel.selectFocusEntries([group]),[]);
-  const fresh=viewModel.groupTaskEntries(buildTaskEntries(buildWorkspaceConsoleView(local,workbenchReport([{...p,mySubtasks:[child('new-work')]}]))))[0];
-  assert.equal(viewModel.selectFocusEntries([fresh]).length,1);
-  assert.equal(viewModel.selectGroupPrimaryEntry(fresh).key,'subtask:paused-parent:new-work');
-  const ownChild={...p,mySubtasks:[child('paused-child')]};
-  const childPaused={...local,tasks:[{...local.tasks[0],feishuWorkItemIds:['paused-child']}]};
-  const childGroup=viewModel.groupTaskEntries(buildTaskEntries(buildWorkspaceConsoleView(childPaused,workbenchReport([ownChild]))))[0];
-  assert.deepEqual(viewModel.selectFocusEntries([childGroup]),[]);
-});
 
-test('an ended story cannot keep both a standalone active issue ledger and a duplicate pending issue card', () => {
-  const p={...parent('ended-story','u'),flowFinished:true};
-  const issue={...responsibility.items[0],workItemId:'new-issue',typeName:'缺陷',linkedStoryIds:[p.workItemId],localTaskIds:['issue-work']};
-  const local={...dashboard,tasks:[task('issue-work','doing',['new-issue'])]};
-  const groups=viewModel.groupTaskEntries(buildTaskEntries(buildWorkspaceConsoleView(local,{...workbenchReport([p]),items:[issue]})));
-  assert.deepEqual(groups.map(e=>e.key).sort(),['group:ended-story','local:issue-work']);
-  assert.equal(viewModel.taskEntryLane(groups.find(e=>e.key==='local:issue-work')),'doing');
-  assert.equal(viewModel.taskEntryLane(groups.find(e=>e.key==='group:ended-story')),'completed');
-});
 
 test('the grouping index keeps ambiguous shared children and numeric local IDs independent', () => {
   const report=workbenchReport([parent('11','other',[child('shared')]),parent('12','other',[child('shared')])]);
@@ -1124,22 +938,6 @@ test('the grouping index keeps ambiguous shared children and numeric local IDs i
   assert.ok(groups.filter(e=>e.kind==='group').every(e=>e.members.every(m=>m.kind!=='local')));
 });
 
-test('9001000038 completed defect and its completed ledger share one history card outside the ended story', () => {
-  const p = { ...parent('9001000013', 'u'), flowFinished: true };
-  const issue = { ...responsibility.items[0], workItemId: '9001000038', typeName: '缺陷',
-    title: '司法案件询价评估企业角色重复', statusName: '已修复，待验收', actionability: 'state_responsibility',
-    linkedStoryIds: [p.workItemId], localTaskIds: [], personalSubtasks: [], myRoleKeys: ['operator'], baseOwnerIsMe: false };
-  const ledger = { ...task('feishu-9001000038-inquiry-subject', 'done', [issue.workItemId]), title: '询价评估时间线补充被执行人' };
-  const view = buildWorkspaceConsoleView({ ...dashboard, tasks: [ledger] }, { ...workbenchReport([p]), items: [issue] });
-  const entries = viewModel.groupTaskEntries(buildTaskEntries(view));
-  assert.deepEqual(entries.map((entry) => entry.key).sort(), ['group:9001000013', 'project:9001000038']);
-  assert.equal(groupTaskEntriesByLane(entries).completed.length, 2);
-  const card = entries.find((entry) => entry.kind === 'project');
-  assert.deepEqual(card.item.tasks.map((task) => task.id), [ledger.id]);
-  assert.deepEqual(projectTaskCardDetails(card.item), { current: '本轮已完成', next: '等待后续验收或流程流转' });
-  assert.deepEqual(filterTaskEntries(entries, 'completed', ledger.title).map((entry) => entry.key), [card.key]);
-  assert.deepEqual(filterTaskEntries(entries, 'completed', ledger.id).map((entry) => entry.key), [card.key]);
-});
 
 test('a directory-only inferred association never hides a completed local ledger', () => {
   const issue = { ...responsibility.items[0], workItemId: '9001000038', typeName: '缺陷', statusName: '已修复',
@@ -1151,17 +949,226 @@ test('a directory-only inferred association never hides a completed local ledger
   assert.deepEqual(cards.map((entry) => entry.key).sort(), [`local:${local.id}`, 'project:9001000038']);
 });
 
-test('completed project dedup preserves unfinished, shared and locally filtered ledgers', () => {
-  const issue = { ...responsibility.items[0], workItemId: 'issue-a', typeName: '缺陷', statusName: '已修复',
-    localTaskIds: ['ledger'], linkedStoryIds: ['ended-story'], personalSubtasks: [] };
-  const report = { ...responsibility, items: [issue], workbenchItems: [], localAssociated: [] };
-  const cards = (tasks, source = report, filter = 'all') => viewModel.groupTaskEntries(buildTaskEntries(
-    buildWorkspaceConsoleView({ ...dashboard, tasks }, source), filter));
-  assert.deepEqual(cards([task('ledger', 'done', ['issue-a'])]).map((entry) => entry.key), ['project:issue-a']);
-  assert.equal(cards([task('ledger', 'waiting', ['issue-a'])]).length, 2);
-  assert.equal(cards([task('ledger', 'done', ['issue-a', 'other'])]).length, 2);
-  const shared = { ...report, items: [issue, { ...issue, workItemId: 'issue-b' }] };
-  assert.equal(cards([task('ledger', 'done')], shared).length, 3);
-  const localReport = { ...report, items: [{ ...issue, workItemId: 'other', localTaskIds: [] }] };
-  assert.deepEqual(cards([task('local-only', 'done')], localReport, 'local').map((entry) => entry.key), ['local:local-only']);
+
+test('native facts and multiple local deliveries remain independent cards and states',()=>{
+ const p={...parent('11','u',[child('22')]),myNodes:[{id:'n1',phase:'current'}]};
+ const locals=[task('done','done',['11','22']),task('active','doing',['22']),task('waiting','waiting',['11'])];
+ const entries=viewModel.groupTaskEntries(buildTaskEntries(buildWorkspaceConsoleView({...dashboard,tasks:locals},workbenchReport([p]))));
+ assert.deepEqual(entries.map(e=>e.key).sort(),['group:11','local:active','local:done','local:waiting']);
+ const group=entries.find(e=>e.kind==='group');
+ assert.deepEqual(group.members.map(e=>e.kind),['parent','subtask']);
+ assert.equal(viewModel.taskEntryLane(group),'unstarted');
+ assert.equal(viewModel.taskEntryLane(entries.find(e=>e.key==='local:active')),'doing');
+ assert.equal(viewModel.taskEntryLane(entries.find(e=>e.key==='local:done')),'completed');
+ assert.equal(filterTaskEntries(entries,'waiting','').some(e=>e.key==='local:waiting'),true);
+ const counts=viewModel.taskRecordCounts(buildTaskEntries(buildWorkspaceConsoleView({...dashboard,tasks:locals},workbenchReport([p]))));
+ assert.deepEqual(counts,{deliveries:3,workItems:1,children:1,nodes:1,cards:4});
+});
+
+test('explicit related issues use their local delivery card while the unassociated parent stays independent',()=>{
+ const p=parent('11','u');
+ const issue={...responsibility.items[0],workItemId:'33',typeName:'缺陷',statusName:'处理中',actionability:'state_responsibility',nativeCompleted:false,linkedStoryIds:['11'],localTaskIds:['a']};
+ const report={...workbenchReport([p]),items:[issue]};
+ const entries=viewModel.groupTaskEntries(buildTaskEntries(buildWorkspaceConsoleView({...dashboard,tasks:[task('a','doing',['33'])]},report)));
+ assert.deepEqual(entries.map(e=>e.key).sort(),['group:11','local:a']);
+ assert.deepEqual(filterTaskEntries(entries,'all','33').map(e=>e.key).sort(),['local:a']);
+ assert.deepEqual(projectItemsForTask(task('a','doing',['33']),report).map(e=>e.workItemId),['33']);
+});
+
+test('native completion does not complete or suppress any linked local delivery',()=>{
+ const issue={...responsibility.items[0],workItemId:'33',nativeCompleted:true,localTaskIds:['a','b']};
+ const report={...responsibility,items:[issue],workbenchItems:[],localAssociated:[]};
+ const entries=viewModel.groupTaskEntries(buildTaskEntries(buildWorkspaceConsoleView({...dashboard,tasks:[task('a','doing',['33']),task('b','done',['33'])]},report)));
+ assert.deepEqual(entries.map(e=>e.key).sort(),['local:a','local:b']);
+ assert.equal(viewModel.taskEntryLane(entries.find(e=>e.key==='local:a')),'doing');
+ assert.equal(viewModel.taskEntryLane(entries.find(e=>e.key==='local:b')),'completed');
+ assert.equal(report.items[0].nativeCompleted,true);
+ assert.deepEqual(viewModel.participatedOpenFeishuItems(report,[task('a','doing',['33'])]).map(e=>e.item.workItemId),['33']);
+});
+
+test('local completion and role names never prove native responsibility complete',()=>{
+ const issue={...responsibility.items[0],nativeCompleted:false,typeName:'缺陷',statusName:'已修复',myRoleKeys:['operator'],localTaskIds:['a']};
+ assert.equal(viewModel.isFinishedProjectIssue(issue),false);
+ assert.equal(viewModel.personalIssueCompletionNotice(issue,[task('a','done',['123'])]),null);
+ const entries=buildTaskEntries(buildWorkspaceConsoleView({...dashboard,tasks:[task('a','done',['123'])]},{...responsibility,items:[issue],workbenchItems:[]}));
+ assert.equal(viewModel.taskEntryLane(entries.find(e=>e.kind==='project')),'unstarted');
+ assert.equal(viewModel.isFinishedProjectIssue({...issue,nativeCompleted:null}),false);
+});
+
+test('exact completed delivery may finish personal responsibility after handoff without closing the Feishu defect',()=>{
+ const issue={...responsibility.items[0],workItemId:'33',typeKey:'issue',typeName:'缺陷',nativeCompleted:false,statusName:'已修复，待验收',actionability:'state_responsibility',updatedAt:'2026-11-20T11:13:24Z',currentNodes:[],personalSubtasks:[],reasons:[]};
+ const delivered={...task('delivery','done',['33']),completedAt:'2026-11-20T11:13:30Z'};
+ assert.equal(viewModel.personalIssueCompleted(issue,[delivered]),true);
+ assert.equal(viewModel.isFinishedProjectIssue(issue),false,'the native defect remains open for acceptance');
+ assert.match(viewModel.personalIssueCompletionNotice(issue,[delivered]),/本人本轮交付已完成/);
+ for(const changed of [{statusName:'重新打开'},{statusName:'新建'},{updatedAt:'2026-11-20T11:14:00Z'},{updatedAt:null},{actionability:'current'},{currentNodes:['本人当前节点']},{personalSubtasks:[{passed:false}]}])assert.equal(viewModel.personalIssueCompleted({...issue,...changed},[delivered]),false);
+ assert.equal(viewModel.personalIssueCompleted(issue,[{...delivered,completedAt:null}]),false);
+ assert.equal(viewModel.personalIssueCompleted(issue,[{...delivered,status:'waiting'}]),false);
+ assert.equal(viewModel.personalIssueCompleted(issue,[{...delivered,feishuWorkItemIds:['parent','33'],feishuPrimaryWorkItemId:'parent'}]),false);
+ const view=buildWorkspaceConsoleView({...dashboard,tasks:[delivered]},{...responsibility,items:[issue],workbenchItems:[]});
+ assert.equal(view.responsibility.stateResponsibility[0].personalCompleted,true);
+});
+
+test('transferred defects are completed despite an open native flow, without completing local work or linked requirements',()=>{
+ const issue={...responsibility.items[0],workItemId:'33',typeName:'缺陷',statusName:'转需求',actionability:'state_responsibility',nativeCompleted:false,localTaskIds:[],linkedStoryIds:['11']};
+ const report={...responsibility,items:[issue],workbenchItems:[],localAssociated:[]};
+ const cardsFor=locals=>viewModel.groupTaskEntries(buildTaskEntries(buildWorkspaceConsoleView({...dashboard,tasks:locals},report)));
+ const cards=cardsFor([]);
+ assert.equal(viewModel.taskEntryLane(cards[0]),'completed');
+ assert.equal(viewModel.taskEntryStatusLabel(cards[0]),'缺陷已结束 · 转需求');
+ assert.equal(viewModel.trackedOpenFeishuItems(report).length,0);
+ assert.equal(viewModel.isFinishedProjectIssue({...issue,nativeCompleted:null}),true);
+ assert.equal(viewModel.isFinishedProjectIssue({...issue,typeName:'需求'}),false);
+ assert.equal(viewModel.isFinishedProjectIssue({...issue,statusName:'已修复，待验收'}),false);
+ issue.localTaskIds=['delivery'];
+ const done=cardsFor([task('delivery','done',['33'])]);
+ assert.equal(done.length,1);assert.equal(viewModel.taskEntryLane(done[0]),'completed');
+ assert.equal(viewModel.localEntryNeedsRecheck(done[0]),false);
+ const unfinished=cardsFor([task('delivery','doing',['33'])]);
+ assert.equal(unfinished.length,1);assert.equal(viewModel.taskEntryLane(unfinished[0]),'doing');
+ assert.equal(unfinished[0].task.status,'doing');
+ assert.equal(issue.nativeCompleted,false);
+});
+
+test('explicit delivery is the only card across lanes while all native records remain available',()=>{
+ const p={...parent('11','u'),myNodes:[{id:'n',phase:'current',ownerCount:1}],localTaskIds:['delivery']};
+ const local={...task('delivery','waiting',['11']),startedAt:'2026-09-26T10:00:00+08:00'};
+ const raw=buildTaskEntries(buildWorkspaceConsoleView({...dashboard,tasks:[local]},workbenchReport([p])));
+ const before=JSON.stringify(raw),cards=viewModel.groupTaskEntries(raw),lanes=groupTaskEntriesByLane(cards);
+ assert.deepEqual(cards.map(card=>card.key),['local:delivery']);assert.equal(lanes.doing.length,0);assert.equal(lanes.unstarted.length,1);
+ assert.equal(cards[0].linkedFeishu[0].key,'parent:11');assert.equal(JSON.stringify(raw),before);assert.equal(p.myNodes[0].phase,'current');
+});
+
+test('one completed delivery represents its pending story and defect once as recheck without reopening it',()=>{
+ const p={...parent('11','u'),myNodes:[{id:'n',phase:'current',ownerCount:1}],localTaskIds:['delivery']};
+ const issue={...responsibility.items[0],workItemId:'33',title:'new issue title',actionability:'state_responsibility',nativeCompleted:false,localTaskIds:['delivery']};
+ const local=task('delivery','done',['11','33']);
+ const cards=viewModel.groupTaskEntries(buildTaskEntries(buildWorkspaceConsoleView({...dashboard,tasks:[local]},{...workbenchReport([p]),items:[issue]})));
+ assert.deepEqual(cards.map(card=>card.key),['local:delivery']);assert.equal(cards[0].linkedFeishu.length,2);
+ assert.equal(viewModel.taskEntryLane(cards[0]),'unstarted');assert.equal(viewModel.taskEntryStatusLabel(cards[0]),'待核对');
+ assert.equal(cards[0].task.status,'done');assert.deepEqual(viewModel.taskEntryFilterStatuses(cards[0]),['待核对']);
+ assert.deepEqual(filterTaskEntries(cards,'completed',''),[]);assert.equal(filterTaskEntries(cards,'unfinished','new issue title').length,1);
+});
+
+test('a completed delivery covers older Feishu flow evidence, while newer or undated responsibilities still need review',()=>{
+ const p={...parent('11','u'),myNodes:[{id:'n',phase:'current',ownerCount:1}],currentNodes:[{name:'全量上线',ownerNames:['本人姓名']}],localTaskIds:['delivery'],updatedAt:'2026-09-26T09:00:00+08:00'};
+ const issue={...responsibility.items[0],workItemId:'33',typeName:'缺陷',statusName:'已修复，待验收',actionability:'state_responsibility',nativeCompleted:false,localTaskIds:['delivery'],updatedAt:'2026-09-26T01:30:00Z'};
+ const local=task('delivery','done',['11','33']);
+ const cardsFor=()=>viewModel.groupTaskEntries(buildTaskEntries(buildWorkspaceConsoleView({...dashboard,tasks:[local]},{...workbenchReport([p]),items:[issue]})));
+ const cards=cardsFor();
+ assert.equal(cards.length,1);assert.equal(viewModel.taskEntryLane(cards[0]),'completed');
+ assert.equal(viewModel.taskEntryStatusLabel(cards[0]),'已完成');
+ assert(cards[0].linkedFeishu.some(x=>x.statusLabel.includes('全量上线')&&x.statusLabel.includes('本人姓名')));
+ assert(cards[0].linkedFeishu.some(x=>x.statusLabel==='飞书缺陷状态：已修复，待验收'));
+ assert.equal(issue.nativeCompleted,false);assert.equal(local.status,'done');
+ issue.updatedAt='2026-09-26T02:01:00Z';assert.equal(viewModel.taskEntryLane(cardsFor()[0]),'unstarted');
+ issue.updatedAt=null;assert.equal(viewModel.taskEntryLane(cardsFor()[0]),'unstarted');
+});
+
+test('multiple verified deliveries sharing a work item stay independent and cancelled deliveries never auto-reactivate',()=>{
+ const issue={...responsibility.items[0],workItemId:'33',nativeCompleted:false,localTaskIds:['a','b','cancelled']};
+ const source={...responsibility,items:[issue],workbenchItems:[],localAssociated:[]};
+ const cards=viewModel.groupTaskEntries(buildTaskEntries(buildWorkspaceConsoleView({...dashboard,tasks:[task('a','doing',['33']),task('b','todo',['33']),task('cancelled','cancelled',['33'])]},source)));
+ assert.deepEqual(cards.map(card=>card.key).sort(),['local:a','local:b','local:cancelled']);
+ assert.equal(viewModel.taskEntryLane(cards.find(card=>card.key==='local:cancelled')),'completed');
+ const onlyCancelled=viewModel.groupTaskEntries(buildTaskEntries(buildWorkspaceConsoleView({...dashboard,tasks:[task('cancelled','cancelled',['33'])]},source)));
+ assert(onlyCancelled.some(card=>card.key==='project:33'));assert.equal(onlyCancelled.find(card=>card.key==='local:cancelled').task.status,'cancelled');
+});
+
+test('an unbound matching numeric reference is not used to suppress a native card',()=>{
+ const issue={...responsibility.items[0],workItemId:'33',localTaskIds:[]};
+ const cards=viewModel.groupTaskEntries(buildTaskEntries(buildWorkspaceConsoleView({...dashboard,tasks:[task('delivery','doing',['33'])]},{...responsibility,items:[issue],workbenchItems:[],localAssociated:[]})));
+ assert.deepEqual(cards.map(card=>card.key).sort(),['local:delivery','project:33']);
+});
+
+test('shared nodes are background, and an unrelated current child never reopens historical parent-linked deliveries',()=>{
+ const p={...parent('11','u',[{...child('22',true),localTaskIds:['history']},child('23')]),
+   myNodes:[{id:'n',phase:'current',ownerCount:5}],localTaskIds:['history']};
+ const history=task('history','done',['11','22']);
+ const cards=viewModel.groupTaskEntries(buildTaskEntries(buildWorkspaceConsoleView({...dashboard,tasks:[history]},workbenchReport([p]))));
+ assert.equal(viewModel.taskEntryLane(cards.find(card=>card.key==='local:history')),'completed');
+ const pending=cards.find(card=>card.key==='group:11');assert.deepEqual(pending.members.map(member=>member.key),['subtask:11:23']);
+ assert.equal(viewModel.taskEntryLane(pending),'unstarted');
+ const sharedOnly={...parent('44','u'),myNodes:[{id:'n',phase:'current',ownerCount:3}]};
+ const report=workbenchReport([sharedOnly]);
+ assert.equal(viewModel.workbenchPersonalState(sharedOnly),'shared');
+ assert.deepEqual(buildTaskEntries(buildWorkspaceConsoleView({...dashboard,tasks:[]},report)),[]);
+ assert.deepEqual(viewModel.trackedOpenFeishuItems(report).map(item=>item.item.workItemId),['44']);
+ const childOnly={...parent('55','u',[child('66')]),myNodes:[],localTaskIds:['history']};
+ const separate=viewModel.groupTaskEntries(buildTaskEntries(buildWorkspaceConsoleView({...dashboard,tasks:[history]},workbenchReport([childOnly]))));
+ assert.equal(viewModel.taskEntryLane(separate.find(card=>card.key==='local:history')),'completed');
+ assert.deepEqual(separate.find(card=>card.key==='group:55').members.map(member=>member.key),['subtask:55:66']);
+});
+
+test('unfinished local work stays active when native work ended, belongs to others, is shared or is only future participation',()=>{
+ const cases=[
+  {...parent('11','other'),flowFinished:true,myNodes:[],localTaskIds:['delivery']},
+  {...parent('11','other'),myNodes:[],localTaskIds:['delivery']},
+  {...parent('11','u'),myNodes:[{id:'n',phase:'current',ownerCount:4}],localTaskIds:['delivery']},
+  {...parent('11','u'),myNodes:[{id:'n',phase:'upcoming',ownerCount:1}],localTaskIds:['delivery']},
+ ];
+ for(const native of cases){
+  const local=task('delivery','doing',['11']);
+  const cards=viewModel.groupTaskEntries(buildTaskEntries(buildWorkspaceConsoleView({...dashboard,tasks:[local]},workbenchReport([native]))));
+  const delivery=cards.find(card=>card.key==='local:delivery');
+  assert(delivery);assert.equal(viewModel.taskEntryLane(delivery),'doing');assert.equal(delivery.task.status,'doing');
+ }
+});
+
+test('base and role ownership alone establish participation without claiming completion',()=>{
+ const p={...parent('11','creator'),roleOwnerUserKeys:['u'],myNodes:[]};
+ assert.equal(viewModel.workbenchParticipationLabel(p,'u'),'本人参与');
+ assert.equal(viewModel.workbenchPersonalState(p),'unknown');
+ assert.equal(viewModel.workbenchPersonalState(p,'state_responsibility'),'current');
+ assert.deepEqual(viewModel.participatedOpenFeishuItems(workbenchReport([p])),[]);
+});
+
+test('personal completed, future, current and inconsistent child evidence use native phases',()=>{
+ const p={...parent('11','u'),myNodes:[{id:'old',phase:'completed'}]};
+ assert.equal(viewModel.workbenchPersonalState(p),'completed');
+ assert.equal(viewModel.workbenchPersonalState({...p,myNodes:[...p.myNodes,{id:'next',phase:'upcoming'}]}),'future');
+ assert.equal(viewModel.workbenchPersonalState({...p,myNodes:[...p.myNodes,{id:'now',phase:'current'}]},undefined,[task('done','done',['11'])]),'current');
+ assert.equal(viewModel.workbenchPersonalState({...p,mySubtasks:[child('22',false,'completed')]}),'unknown');
+ assert.equal(viewModel.workbenchPersonalState({...p,mySubtasks:[child('22',true,'completed')]}),'completed');
+});
+
+test('only native archive and finished flags close the whole workflow',()=>{
+ const p=parent('11','u',[],'done');
+ assert.equal(viewModel.workbenchFlowEnded(p),false);
+ assert.equal(viewModel.workbenchParentStatusLabel(p),'流程进行中');
+ assert.equal(viewModel.workbenchFlowEnded({...p,flowFinished:true}),true);
+ assert.equal(viewModel.workbenchParentStatusLabel({...p,isArchivedState:true}),'已归档');
+});
+
+test('directory numbers never create task associations or responsibility membership',()=>{
+ const local={...task('local','doing'),taskDirectory:'D:/tasks/9001000011',taskDocumentPath:'D:/tasks/9001000011/task.md'};
+ const issue={...responsibility.items[0],workItemId:'9001000011',localTaskIds:[]};
+ const report={...responsibility,items:[issue],localAssociated:[],workbenchItems:[]};
+ const view=buildWorkspaceConsoleView({...dashboard,tasks:[local]},report);
+ assert.deepEqual(projectItemsForTask(local,report),[]);
+ assert.deepEqual(buildTaskEntries(view,'local').map(e=>e.key),['local:local']);
+ assert.deepEqual(buildTaskEntries(view,'uncertain'),[]);
+ assert.deepEqual(buildTaskEntries(view,'feishu').map(e=>e.key),['project:9001000011']);
+});
+
+test('failed explicit verification remains visible in uncertain deliveries',()=>{
+ const report={...responsibility,items:[],workbenchItems:[],localAssociated:[{workItemId:'33',localTaskIds:['a'],verified:false,error:'unresolved'}]};
+ const view=buildWorkspaceConsoleView({...dashboard,tasks:[task('a','waiting',['33'])]},report);
+ assert.deepEqual(buildTaskEntries(view,'uncertain').map(e=>e.key),['local:a']);
+});
+
+test('supplemental details do not invent personal participation',()=>{
+ const report=workbenchReport([{...parent('11','u'),participated:false}]);
+ const view=buildWorkspaceConsoleView({...dashboard,tasks:[task('a','doing',['11'])]},report);
+ assert.deepEqual(buildTaskEntries(view).map(e=>e.key),['local:a']);
+ assert.deepEqual(viewModel.trackedOpenFeishuItems(report),[]);
+});
+
+test('completed personal native work stays visible despite an active or paused local round',()=>{
+ const p={...parent('11','u',[child('22',true,'completed')]),myNodes:[{id:'n1',phase:'completed'}]};
+ for(const status of ['doing','paused','waiting','done']){
+  const locals=[task('local',status,['11','22'])];
+  assert.equal(viewModel.workbenchPersonalState(p,undefined,locals),'completed');
+  assert.deepEqual(viewModel.participatedOpenFeishuItems(workbenchReport([p]),locals).map(e=>e.item.workItemId),['11']);
+ }
 });

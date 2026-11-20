@@ -680,7 +680,7 @@ export function useRelayWebSocket() {
     return false;
   }, [reconnect]);
 
-  const send = useCallback(async (sessionId: string, content: string, messageId?: string, attachments?: SendAttachmentDto[], onConfirmationState?: (state: 'verifying') => void, engine?: EngineId, enginePreferences?: EnginePreferencesDto, workspaceTaskId?: string, replyToAsyncQuestionId?: string): Promise<void> => {
+  const send = useCallback(async (sessionId: string, content: string, messageId?: string, attachments?: SendAttachmentDto[], onConfirmationState?: (state: 'verifying') => void, engine?: EngineId, enginePreferences?: EnginePreferencesDto, workspaceTaskId?: string, replyToAsyncQuestionId?: string, workspaceId?:string): Promise<void> => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       const previousStatus = useChatStore.getState().sessions.find((session) => session.id === sessionId)?.status || 'idle';
       const state = useChatStore.getState();
@@ -715,6 +715,7 @@ export function useRelayWebSocket() {
         }
         if (enginePreferences) payload.enginePreferences = enginePreferences;
         if (workspaceTaskId) payload.workspaceTaskId = workspaceTaskId;
+        if (workspaceTaskId && workspaceId) payload.workspaceId = workspaceId;
         if (replyToAsyncQuestionId) payload.replyToAsyncQuestionId = replyToAsyncQuestionId;
         if (attachments?.length) payload.attachments = attachments;
         const confirmation = pendingSendManagerRef.current.wait(confirmedMessageId, {

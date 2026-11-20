@@ -1,6 +1,29 @@
 import type { RunMetrics } from './run-metrics.js';
 
 export interface WorkspaceRunProjection {
+  taskContext?:{directory:string;title:string|null;association:'registered'|'unregistered'|'ambiguous'};
+  testResult?:{framework:'junit';total:number;failures:number;errorTypes:string[]}|null;
+  operation?: { title: string; objects: string[]; scope: string[]; source: 'descriptor' | 'plan' | 'intent'; plannedBusinessWrite: boolean | null } | null;
+  displayName?: string | null;
+  failureReason?: string | null;
+  collectedAt?: string | null;
+  businessResult?: {
+    source: 'progress' | 'summary' | 'status';
+    status: string | null;
+    complete: boolean | null;
+    businessWrite: boolean | null;
+    stopReason: string | null;
+    object: string | null;
+    rowsPerSecond: number | null;
+    rowLimit: number | null;
+    limitPercent: number | null;
+    etaSeconds: number | null;
+    verified?: boolean | null;
+    preflightPassed?: boolean | null;
+    businessWrites?: number | null;
+    formalSpWrites?: number | null;
+    phase?: string | null;
+  } | null;
   runId: string;
   status: string;
   taskId: string | null;
@@ -53,11 +76,12 @@ function formatDuration(seconds: number): string {
 }
 
 export function projectRunRecord(raw: Record<string, unknown>, runId: string, taskId: string | null, evidenceFiles: string[], metadata?: Record<string, unknown> | null): WorkspaceRunProjection {
-  const startedAt = stringValue(raw, 'job_started_at', 'started_at', 'created_at');
-  const finishedAt = stringValue(raw, 'job_finished_at', 'finished_at', 'ended_at', 'updated_at');
+  const startedAt = stringValue(raw, 'job_started_at', 'started_at', 'created_at') ?? stringValue(metadata ?? {}, 'started_at');
   const status = stringValue(raw, 'status', 'state') ?? 'unknown';
-  const mode = stringValue(raw, 'mode');
-  const target = stringValue(raw, 'target', 'task_name');
+  // updated_at is also a running heartbeat, not proof of completion.
+  const finishedAt = stringValue(raw, 'job_finished_at', 'finished_at', 'ended_at');
+  const mode = stringValue(raw, 'mode') ?? stringValue(metadata ?? {}, 'mode');
+  const target = stringValue(raw, 'target', 'task_name') ?? stringValue(metadata ?? {}, 'task_name');
   const exitCode = numberValue(raw, 'exit_code');
   const insertedRows = numberValue(raw, 'inserted_rows');
   const updatedRows = numberValue(raw, 'updated_rows');
@@ -72,5 +96,9 @@ export function projectRunRecord(raw: Record<string, unknown>, runId: string, ta
   if (!summaryParts.length && exitCode !== null) summaryParts.push(`退出码 ${exitCode}`);
   if (exitCode !== null && duration !== null) summaryParts.push(`用时 ${formatDuration(duration)}`);
   if (!summaryParts.length && duration !== null) summaryParts.push(`用时 ${formatDuration(duration)}`);
-  return { runId, taskId, source: 'task-runner', status, mode, target, startedAt, finishedAt, durationSeconds: duration, exitCode, committed, insertedRows, updatedRows, summary: summaryParts.join(' · ') || '暂无结果摘要', evidenceFiles, verification, executionLocation: metadata?.location === 'local' ? 'local' : null };
+  const notification = metadata?.notification && typeof metadata.notification === 'object' ? metadata.notification as Record<string, unknown> : {};
+  const displayName = stringValue(raw, 'display_name') ?? stringValue(metadata ?? {}, 'display_name') ?? stringValue(notification, 'display_name');
+  const failureReason = stringValue(raw, 'lost_reason', 'failure_reason');
+  return { runId, taskId, source: 'task-runner', status, mode, target, startedAt, finishedAt, durationSeconds: duration, exitCode, committed, insertedRows, updatedRows, summary: summaryParts.join(' · ') || '暂无结果摘要', evidenceFiles, verification, executionLocation: metadata?.location === 'local' ? 'local' : null,
+    ...(displayName ? { displayName: displayName.slice(0, 240) } : {}), ...(failureReason ? { failureReason: failureReason.slice(0, 500) } : {}) };
 }

@@ -28,6 +28,21 @@ function legacy(filename:string){
 }
 const digest=(filename:string)=>createHash('sha256').update(fs.readFileSync(filename)).digest('hex');
 
+test('published Native v1 upgrades workspace links with one verified backup and no repeated migration',async()=>{
+  const f=fixture();
+  try{
+    const first=await initializeLocalStorage(f.filename);const identity=first.storeId;await first.owner.release();
+    const db=new DatabaseSync(f.filename);
+    db.exec('DROP TABLE workspace_console_links; DELETE FROM _relay_storage_migrations WHERE version=2;');
+    db.exec(schema.match(/CREATE TABLE workspace_console_links \([\s\S]*?\n\s*\);/)![0]);db.close();
+    const upgraded=await initializeLocalStorage(f.filename);
+    assert.equal(upgraded.action,'migrated');assert.equal(upgraded.storeId,identity);assert.equal(upgraded.backups.length,1);
+    await upgraded.owner.release();
+    const repeated=await initializeLocalStorage(f.filename);
+    try{assert.equal(repeated.action,'current');assert.deepEqual(repeated.backups,[]);}finally{await repeated.owner.release();}
+  }finally{f.cleanup();}
+});
+
 for (const format of ['legacy', 'native'] as const) test(`${format} startup upgrades old audit actions, preserves history and permits membership writes`, async () => {
   const f = fixture();
   try {
@@ -183,7 +198,7 @@ test('unknown Native version refuses startup without backups or data replacement
   const f=fixture();
   try{
     const first=await initializeLocalStorage(f.filename);await first.owner.release();
-    const db=new DatabaseSync(f.filename);db.exec('UPDATE _relay_storage_migrations SET version=999');db.close();
+    const db=new DatabaseSync(f.filename);db.exec('UPDATE _relay_storage_migrations SET version=version+999');db.close();
     const before=digest(f.filename);
     await assert.rejects(initializeLocalStorage(f.filename));
     assert.equal(digest(f.filename),before);

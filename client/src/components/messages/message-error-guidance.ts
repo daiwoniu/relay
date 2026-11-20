@@ -27,6 +27,8 @@ const CONNECTION_CLOSED = (engine: string) => (options: MessageErrorGuidanceOpti
   retryOrUnsafe(options, `${engine} 连接在任务完成前已断开。`, '请检查引擎状态后重新发送。');
 
 const KNOWN_CODES: Record<string, KnownGuidance> = {
+  FEISHU_SOURCE_UNAVAILABLE: guide('飞书接口本次读取失败，任务报表未能更新。', '请根据原始异常核对飞书连接、访问权限或网络；读取恢复后重试。已有快照会继续保留。'),
+  FEISHU_SOURCE_INVALID: guide('飞书返回数据未通过校验，任务报表未能更新。', '已有快照会继续保留。请提供发生时间和原始异常，以便核对接口格式及责任证据。'),
   TURN_START_PREPARATION_FAILED: guide(
     'Relay 在启动本轮任务前准备失败。消息已保存，但本轮尚未发送给 AI 引擎。',
     '请在服务维护中检查所选引擎的状态，恢复可用后重新发送。如果引擎正常仍出现此提示，请提供发生时间和错误码，以便排查 Relay 日志。',

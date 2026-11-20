@@ -22,6 +22,7 @@ import { downloadPreviewFile } from './file-preview-download';
 import { useTheme } from '../../hooks/useTheme';
 import RightPanelContent, { getFileName } from './RightPanelContent';
 import { shouldUseHtmlVisualization } from './file-preview-lines';
+import { resolveCodexFileReferencePathResult } from '../messages/codex-file-directives';
 import {
   RIGHT_PANEL_MAX_WIDTH,
   RIGHT_PANEL_MIN_WIDTH,
@@ -159,7 +160,10 @@ export default function RightPanel({ tabs, activeTabId, panelVisible, width, onC
   }, [width]);
 
   useEffect(() => {
-    if (!panelVisible) setIsMaximized(false);
+    if (!panelVisible) {
+      setIsMaximized(false);
+      setSettingsOpen(false);
+    }
   }, [panelVisible]);
 
   useEffect(() => {
@@ -293,6 +297,16 @@ export default function RightPanel({ tabs, activeTabId, panelVisible, width, onC
     const report=preserve?()=>false:tracker.captureResult({feature:'file_preview',action:'refresh',surface:'preview_toolbar'});
     cancelDownload(tab.id);
     const sourcePath = tab.sourcePath || tab.title;
+    // Tabs must retain their original absolute path, even after switching projects.
+    const resolution = resolveCodexFileReferencePathResult(sourcePath);
+    if (!resolution.ok) {
+      report('error');
+      updateRightPanelTab(tab.id, {
+        loading: false, previewError: resolution.reason,
+        fileMetadataLoading: false, fileMetadataError: resolution.reason,
+      });
+      return;
+    }
     if (!preserve) setHtmlPreviewSize({ tabId: tab.id, height: 320 });
     const request = filePreviewRequestManager.begin(tab.id, { retainAccessToken: true, retainObjectUrls: preserve });
     if (preserve) setUpdatingTabs(state => ({ ...state, [tab.id]: request.generation }));

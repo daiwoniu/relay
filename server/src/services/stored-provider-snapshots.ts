@@ -4,9 +4,12 @@ import { CodexAccountSnapshotDtoSchema,WorkspaceConsoleResponsibilityDtoSchema,t
 import { canonicalJson,parseStoragePrincipal,StorageContractError } from '../storage/command-boundary.js';
 import { executeStoredCommand } from '../storage/command-outcome.js';
 import type { CoreCommandName,CoreCommandInputs,CoreStoragePort,StorageCommandEnvelope,StoragePrincipal,ProviderSnapshotSource,ProviderSnapshotValue } from '../storage/contracts.js';
+import { parseFeishuTarget } from '../workspace-console/task-reference.js';
+import { ServiceError } from './errors.js';
 type Principal=Extract<StoragePrincipal,{kind:'user'}>;
-const identitySchema=z.object({projectKey:z.string().min(1).max(128),userKey:z.string().min(1).max(128)}).strict();
+const identitySchema=z.object({projectKey:z.string().min(1).max(128),userKey:z.string().min(1).max(128),scope:z.string().regex(/^[a-f0-9]{64}$/).optional()}).strict();
 type Identity=z.infer<typeof identitySchema>;
+const responsibilityKey=(value:Identity)=>`${value.scope?value.scope+':':''}${value.projectKey}:${value.userKey}`;
 const officialKey=(value:CodexAccountSnapshotDto)=>value.email&&value.authMode!=='unknown'?`${value.authMode}:${value.email.trim().toLowerCase()}`:null;
 /** Native-only cache facade. The injected readers are provider/file operations, never legacy DB services. */
 export class StoredProviderSnapshots{
@@ -33,11 +36,12 @@ export class StoredProviderSnapshots{
   async hasResponsibilityWorkItem(raw:Principal,id:string):Promise<boolean>{
     const actor=this.actor(raw);await this.authorize(actor);
     const expected=identitySchema.parse(await this.options.responsibilityIdentity());
-    const stored=await this.read(actor,'responsibility',`${expected.projectKey}:${expected.userKey}`);
+    const stored=await this.read(actor,'responsibility',responsibilityKey(expected));
     if(!stored)return false;
     if(canonicalJson(expected)!==canonicalJson(identitySchema.parse(await this.options.responsibilityIdentity())))throw new StorageContractError('CONFLICT');
     const value=WorkspaceConsoleResponsibilityDtoSchema.parse(stored.value);
-    return value.items.some(item=>item.workItemId===id)||value.workbenchItems.some(item=>item.workItemId===id||item.mySubtasks.some(child=>child.id===id));
+    const target=parseFeishuTarget(id)??{kind:'work_item',id,parentId:id};
+    return target.kind==='work_item'?value.items.some(item=>item.workItemId===target.id)||value.workbenchItems.some(item=>item.workItemId===target.id):value.workbenchItems.some(item=>item.workItemId===target.parentId&&item.mySubtasks.some(child=>child.id===target.id));
   }
   private async begin(principal:Principal,source:ProviderSnapshotSource,identityKey?:string){
     const result=await this.command(principal,'cache.beginSnapshot',{source,...(identityKey?{identityKey}:{})});if(result.state!=='committed')throw new StorageContractError(result.state==='rejected'?result.code:'STORAGE_UNAVAILABLE');return result.value.version;
@@ -50,15 +54,16 @@ export class StoredProviderSnapshots{
     this.recentOfficial={value,version,epoch:this.officialEpoch,until:value.sourceMeta?.state==='failed_snapshot'?Number.POSITIVE_INFINITY:now+30*60000};return value;
   }
   responsibility(raw:Principal,force=false){const actor=this.actor(raw);return this.track(canonicalJson([actor,'responsibility',force]),async()=>{
-    await this.authorize(actor);const expected=identitySchema.parse(await this.options.responsibilityIdentity()),key=`${expected.projectKey}:${expected.userKey}`;
+    await this.authorize(actor);const expected=identitySchema.parse(await this.options.responsibilityIdentity()),key=responsibilityKey(expected);
     const previous=await this.read(actor,'responsibility',key);
     const current=async()=>{if(canonicalJson(identitySchema.parse(await this.options.responsibilityIdentity()),1024)!==canonicalJson(expected,1024))throw new StorageContractError('CONFLICT');await this.authorize(actor);};
     if(previous&&!force){await current();return{...WorkspaceConsoleResponsibilityDtoSchema.parse(previous.value),servedFromCache:true,sourceMeta:{state:'snapshot' as const,lastSuccessAt:previous.savedAt,lastAttemptAt:null,error:null}};}
     const version=await this.begin(actor,'responsibility',key),attempt=this.options.now?.()??Date.now();let value;
     try{value=WorkspaceConsoleResponsibilityDtoSchema.parse(await this.options.loadResponsibility(expected));await current();if(value.sourceUserKey!==expected.userKey)throw new StorageContractError('CONFLICT');}
     catch(error){await current();if(error instanceof StorageContractError&&error.code==='CONFLICT')throw error;
-      const stored=await this.read(actor,'responsibility',key);if(!stored)throw new StorageContractError('STORAGE_UNAVAILABLE');
-      return{...WorkspaceConsoleResponsibilityDtoSchema.parse(stored.value),servedFromCache:true,stale:true,error:'责任报告来源读取失败',sourceMeta:{state:'failed_snapshot' as const,lastSuccessAt:stored.savedAt,lastAttemptAt:attempt,error:'责任报告来源读取失败'}};
+      const stored=await this.read(actor,'responsibility',key);if(!stored){if(error instanceof ServiceError)throw error;throw new StorageContractError('STORAGE_UNAVAILABLE');}
+      const message=error instanceof ServiceError?error.message:'责任报告来源读取失败';
+      return{...WorkspaceConsoleResponsibilityDtoSchema.parse(stored.value),servedFromCache:true,stale:true,error:message,sourceMeta:{state:'failed_snapshot' as const,lastSuccessAt:stored.savedAt,lastAttemptAt:attempt,error:message}};
     }
     const success=WorkspaceConsoleResponsibilityDtoSchema.parse({...value,servedFromCache:false,stale:false,error:null,sourceMeta:{state:'live',lastSuccessAt:value.fetchedAt,lastAttemptAt:attempt,error:null}});
     const result=await this.save(actor,'responsibility',key,version,success),stored=await this.read(actor,'responsibility',key);await current();

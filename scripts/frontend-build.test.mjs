@@ -204,13 +204,31 @@ test('仅修改测试不改变产物指纹，也不重复打包', () => {
 test('共用环境解析及其类型变化使前端构建指纹失效',()=>{
   const root=createRoot();
   try{
-    for(const name of ['client-environment.mjs','client-environment.d.mts','analytics-source.mjs','analytics-source.d.mts']){
+    for(const name of ['client-environment.mjs','client-environment.d.mts','analytics-source.mjs','analytics-source.d.mts','relay-config.mjs','relay-config.d.mts','kv-config.mjs','kv-config.d.mts']){
       const before=computeFrontendFingerprint(root);
       fs.writeFileSync(path.join(root,'scripts','lib',name),'export {};');
       assert.notEqual(computeFrontendFingerprint(root),before,name);
     }
     const before=computeFrontendFingerprint(root);fs.mkdirSync(path.join(root,'config'),{recursive:true});fs.writeFileSync(path.join(root,'config','relay.conf'),'PUBLIC_ALLOWED_ADDRESSES=relay.example:443');assert.notEqual(computeFrontendFingerprint(root),before,'source alias configuration');
   }finally{fs.rmSync(root,{recursive:true,force:true});}
+});
+
+test('relay local override creation, changes and removal invalidate the build; feature secrets do not', () => {
+  const root = createRoot();
+  try {
+    fs.mkdirSync(path.join(root, 'config'), { recursive: true });
+    const before = computeFrontendFingerprint(root);
+    const local = path.join(root, 'config', 'relay.local.conf');
+    fs.writeFileSync(local, 'PUBLIC_ALLOWED_ADDRESSES=example.com');
+    const added = computeFrontendFingerprint(root);
+    assert.notEqual(added, before);
+    fs.writeFileSync(local, 'PUBLIC_ALLOWED_ADDRESSES=');
+    assert.notEqual(computeFrontendFingerprint(root), added);
+    fs.unlinkSync(local);
+    assert.equal(computeFrontendFingerprint(root), before);
+    fs.writeFileSync(path.join(root, 'config', 'feishu.local.conf'), 'APP_SECRET=private');
+    assert.equal(computeFrontendFingerprint(root), before);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
 test('预算脚本、策略与基线变更仅复核旧产物，不能跳过门禁或重新打包', () => {

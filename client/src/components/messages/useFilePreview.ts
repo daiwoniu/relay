@@ -6,6 +6,7 @@ import { useChatStore } from '../../stores/chat';
 import { buildFileMetadataUpdate, buildFilePreviewUpdate, disposeFilePreviewUpdate, getFilePreviewObjectUrl, EMPTY_FILE_PREVIEW_MODES } from '../layout/file-preview-state';
 import { filePreviewRequestManager } from '../layout/file-preview-request-manager';
 import type { HtmlPreviewMode } from '../../stores/chat';
+import { resolveFilePreviewPath } from './file-preview-path';
 
 interface FilePreviewOptions {
   preferredMode?: HtmlPreviewMode;
@@ -16,11 +17,13 @@ function isHtmlFilePath(filePath: string): boolean {
   return /\.html?$/i.test(filePath.split(/[?#]/, 1)[0]);
 }
 
-export function useFilePreview() {
+export function useFilePreview(projectPath?: string) {
   const openRightPanel = useChatStore((state) => state.openRightPanel);
   const updateRightPanelTab = useChatStore((state) => state.updateRightPanelTab);
 
   return useCallback(async (filePath: string, options: FilePreviewOptions = {}) => {
+    const resolution = resolveFilePreviewPath(filePath, useChatStore.getState(), projectPath);
+    if (resolution.ok) filePath = resolution.path;
     const preferredMode = options.preferredMode ?? 'source';
     const existing = useChatStore.getState().rightPanelTabs.find((tab) => tab.title === filePath);
     const tabId = openRightPanel({
@@ -31,8 +34,8 @@ export function useFilePreview() {
       forceAccessAvailable: false,
       fileAccessToken: undefined,
       fileMetadata: undefined,
-      fileMetadataLoading: true,
-      fileMetadataError: undefined,
+      fileMetadataLoading: resolution.ok,
+      fileMetadataError: resolution.ok ? undefined : resolution.reason,
       htmlPreviewMode: isHtmlFilePath(filePath)
         ? existing?.htmlPreviewMode ?? preferredMode
         : undefined,
@@ -43,12 +46,13 @@ export function useFilePreview() {
     });
     const request = filePreviewRequestManager.begin(tabId);
     const report=tracker.captureResult({feature:'file_preview',action:'load',surface:'message_file'});
-    void buildFileMetadataUpdate(filePath, undefined, request.signal).then((metadataUpdate) => {
+    if (resolution.ok) void buildFileMetadataUpdate(filePath, undefined, request.signal).then((metadataUpdate) => {
       if (filePreviewRequestManager.isCurrent(tabId, request.generation)) {
         updateRightPanelTab(tabId, metadataUpdate);
       }
     }).catch(() => undefined);
     try {
+      if (!resolution.ok) throw new Error(resolution.reason);
       const data = await readFile(filePath, undefined, { signal: request.signal });
       const update = await buildFilePreviewUpdate(data, filePath, undefined, request.signal);
       if (!filePreviewRequestManager.isCurrent(tabId, request.generation)
@@ -92,5 +96,5 @@ export function useFilePreview() {
         });
       }
     }
-  }, [openRightPanel, updateRightPanelTab]);
+  }, [openRightPanel, updateRightPanelTab, projectPath]);
 }

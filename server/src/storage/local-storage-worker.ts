@@ -3,7 +3,7 @@ import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { DatabaseSync, backup } from 'node:sqlite';
 import { parentPort, workerData } from 'node:worker_threads';
-import { applyInitialNativeMigration, assertNativeMigration } from './native-migrations.js';
+import { applyInitialNativeMigration, applyWorkspaceNativeMigration, assertNativeMigration } from './native-migrations.js';
 import { assertWorkerWriter } from './worker-writer-fence.js';
 import { auditRowProjection } from './database-audit.js';
 import { applyNewsMigration, newsMigrationRequired } from '../news/storage/native-news-migrations.js';
@@ -30,7 +30,8 @@ function contents(db: DatabaseSync) {
   const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND substr(name,1,7)<>'_relay_' ORDER BY name").all();
   for (const table of tables) {
     const name = String(table.name);
-    const columns = db.prepare(`PRAGMA table_info(${quote(name)})`).all().map(row => String(row.name));
+    const columns = db.prepare(`PRAGMA table_info(${quote(name)})`).all().map(row => String(row.name))
+      .filter(column=>name!=='workspace_console_links'||!['workspace_id','connection_scope','target_ref'].includes(column));
     const projection = auditRowProjection(columns);
     hash.update(JSON.stringify([name, columns]));
     const statement = db.prepare(`SELECT ${projection.select} FROM ${quote(name)} ORDER BY ${projection.order}`);
@@ -101,11 +102,17 @@ async function initialize() {
   let newsInitialized = false;
   try {
     if (has(db, '_relay_storage_meta')) {
-      assertNativeMigration(db);
+      assertNativeMigration(db,true);
       const meta = db.prepare('SELECT store_id,format_version,news_initialized FROM _relay_storage_meta WHERE singleton=1').get();
-      if (meta?.format_version !== 1 || typeof meta.store_id !== 'string' || !/^[a-zA-Z0-9:._-]{1,128}$/.test(meta.store_id))
-        throw Error('STORAGE_VERSION_UNSUPPORTED');
-      storeId = meta.store_id; action = 'current';
+      if (meta?.format_version !== 1 || typeof meta.store_id !== 'string' || !/^[a-zA-Z0-9:._-]{1,128}$/.test(meta.store_id)) throw Error('STORAGE_VERSION_UNSUPPORTED');
+      let upgraded=false;
+      if (!db.prepare('SELECT 1 FROM _relay_storage_migrations WHERE version=2').get()) {
+        check(db); const before=contents(db); await makeBackup(db,filename,backups,before);
+        transaction(db,()=>applyWorkspaceNativeMigration(db),before);
+        upgraded=true;
+      }
+      assertNativeMigration(db);
+      storeId = meta.store_id; action = upgraded?'migrated':'current';
       newsInitialized = meta.news_initialized === 1;
     } else {
       storeId = randomUUID(); action = workerData.fresh ? 'created' : 'migrated';

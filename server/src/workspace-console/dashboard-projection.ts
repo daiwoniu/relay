@@ -3,6 +3,8 @@ import type { TaskRegistryProjection, TaskRegistryTask } from './task-registry-r
 import type { WorkspaceRunProjection } from './run-projection.js';
 import type { SessionCardProjection } from './session-projection.js';
 import { FIXED_WORKSPACE_PATH } from './workspace-snapshot.js';
+import { WORKSPACE_ID } from './workspace-config.js';
+import type { ActivityEvidence } from './activity-duration.js';
 
 // Leave room for the command envelope inside the storage transport's 8 MiB limit.
 export const WORKSPACE_DASHBOARD_MAX_BYTES = 7 * 1024 * 1024;
@@ -11,8 +13,10 @@ export interface DashboardTask extends TaskRegistryTask {
   runIds: string[];
   sessionIds: string[];
   observedDurationSeconds: number | null;
+  activityEvidence?: ActivityEvidence;
 }
 export interface WorkspaceDashboard {
+  workspaceId?: string;
   workspacePath: string;
   capturedAt: number;
   registryGeneratedAt: string | null;
@@ -38,11 +42,13 @@ export function buildWorkspaceDashboard(
   errors: string[] = [],
   sourceAvailable: WorkspaceDashboard['sourceAvailable'] = { registry: true, runs: true, sessions: true, links: true, activity: true },
   observedDurations: Map<string, number> = new Map(),
+  activityEvidence: Map<string, ActivityEvidence> = new Map(),
 ): WorkspaceDashboard {
   const taskIds = new Set(registry.tasks.map((task) => task.id));
   const validSessions = sessions.filter((session) => session.projectPath.toLowerCase() === FIXED_WORKSPACE_PATH.toLowerCase());
   const sessionById = new Map(validSessions.map((session) => [session.sessionId, session]));
   const explicit = links.filter((link) => link.workspace_path.toLowerCase() === FIXED_WORKSPACE_PATH.toLowerCase()
+    && (link.workspace_id===undefined || link.workspace_id===WORKSPACE_ID)
     && link.relation_source === 'explicit' && link.confidence === 'high'
     && taskIds.has(link.task_id) && link.session_id && sessionById.has(link.session_id));
   const linkedSessionIds = new Set([...explicit.map((link) => link.session_id),...validSessions.filter(session=>session.feishuWorkItemIds?.length).map(session=>session.sessionId)]);
@@ -51,9 +57,10 @@ export function buildWorkspaceDashboard(
     runIds: runs.filter((run) => run.taskId === task.id).map((run) => run.runId),
     sessionIds: [...new Set(explicit.filter((link) => link.task_id === task.id).map((link) => link.session_id!))],
     observedDurationSeconds: observedDurations.get(task.id) ?? null,
+    ...(activityEvidence.has(task.id) ? { activityEvidence: activityEvidence.get(task.id)! } : {}),
   }));
   return {
-    workspacePath: FIXED_WORKSPACE_PATH, capturedAt, registryGeneratedAt: registry.generatedAt,
+    workspaceId:WORKSPACE_ID,workspacePath: FIXED_WORKSPACE_PATH, capturedAt, registryGeneratedAt: registry.generatedAt,
     counts: { total: tasks.length, completed: tasks.filter((task) => completedStatuses.has(task.status ?? '')).length,
       active: tasks.filter((task) => !completedStatuses.has(task.status ?? '')).length, runs: runs.length, sessions: validSessions.length },
     tasks, runs, unmatchedRuns: runs.filter((run) => !run.taskId || !taskIds.has(run.taskId)),

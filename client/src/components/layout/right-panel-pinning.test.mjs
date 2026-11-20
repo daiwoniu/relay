@@ -33,14 +33,14 @@ test('移动端可返回会话并保留文件标签，清空动作仍释放全�
   assert.match(panel, /label="返回会话并保留预览文件"/);
   assert.match(panel, /onClick=\{onHidePanel\}/);
   assert.match(panel, /onHidePanel=\{hideRightPanel\}/);
-  assert.match(store, /hideRightPanel: \(\) => set\(\{ panelVisible: false \}\)/);
+  assert.match(store, /hideRightPanel: \(\) => \{[^\n]*set\(\{ panelVisible: false \}\);\}/);
   assert.match(panel, /label="清空预览文件并关闭面板"[\s\S]*onClick=\{onCloseAllTabs\}/);
 });
 
 test('固定状态在清空预览或切换会话时重置', () => {
   assert.match(store, /rightPanelPinned: false/);
   assert.match(store, /closeAllRightPanelTabs: \(\) => \{[\s\S]*set\(\{ rightPanelTabs: \[\],[^}]*rightPanelPinned: false/);
-  assert.match(store, /toggleRightPanelPinned: \(\) => set\(\(state\) => \(\{ rightPanelPinned: !state\.rightPanelPinned \}\)\)/);
+  assert.match(store, /toggleRightPanelPinned: \(\) => \{[^\n]*set\(\(state\) => \(\{ rightPanelPinned: !state\.rightPanelPinned \}\)\);\}/);
   assert.match(store, /set\(\{ activeSessionId: id,[^}]*rightPanelPinned: false \}\)/);
 });
 
@@ -77,7 +77,7 @@ test('文件预览行号在横向滚动时固定并保持不可选择', () => {
 
 test('桌面预览支持主题自适应的四角最大化与还原且最大化时隐藏拖拽手柄', () => {
   assert.match(panel, /const \[isMaximized, setIsMaximized\] = useState\(false\)/);
-  assert.match(panel, /isMobile \|\| isMaximized \? '100%' : `\$\{width\}px`/);
+  assert.match(panel, /isMobile \|\| isMaximized \? '100%' : `\$\{width \+ \(settingsOpen \? 290 : 0\)\}px`/);
   assert.match(panel, /isOpen && !isMobile && !isMaximized/);
   assert.match(panel, /\{!isMobile && \(/);
   assert.match(panel, /label=\{isMaximized \? '还原预览面板' : '最大化预览面板'\}/);
@@ -89,6 +89,6 @@ test('桌面预览支持主题自适应的四角最大化与还原且最大化�
 });
 
 test('最大化状态按 Escape 先还原并在面板关闭后重置', () => {
-  assert.match(panel, /if \(!panelVisible\) setIsMaximized\(false\)/);
+  assert.match(panel, /if \(!panelVisible\) \{\s*setIsMaximized\(false\)/);
   assert.match(panel, /if \(isMaximized\) \{\s*setIsMaximized\(false\);\s*return;/s);
 });

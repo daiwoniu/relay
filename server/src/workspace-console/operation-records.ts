@@ -1,18 +1,10 @@
-import { execFile } from 'node:child_process';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { promisify } from 'node:util';
 import { z } from 'zod';
 import type { Actor } from '../auth/authorization.js';
 import { WorkspaceOperationRecordsDtoSchema } from '../contracts/dto.js';
 import { ServiceError } from '../services/errors.js';
-import { projectPythonExecutable } from './responsibility-report-source.js';
-import { FIXED_WORKSPACE_PATH } from './workspace-snapshot.js';
-import { requireWorkspaceFile } from './workspace-config.js';
+import { configuredFeishuClient } from '../integrations/feishu/connection.js';
+import { readOperationPage } from '../integrations/feishu/operations.js';
 
-const execFileAsync = promisify(execFile);
-const skillPath = path.join(FIXED_WORKSPACE_PATH, 'ai', 'skills', 'operate-feishu-project-openapi');
-const scriptPath = fileURLToPath(new URL('../../scripts/feishu-operation-records.py', import.meta.url));
 const pageSchema = z.object({ events: z.array(z.object({ at: z.number().int().nonnegative(), module: z.string(),
   operation: z.string(), childId: z.string().nullable(), property: z.string().nullable() }).strict()).max(1000),
   hasMore: z.boolean(), cursor: z.string().nullable() }).strict();
@@ -39,11 +31,8 @@ const label = (event: RawPage['events'][number]): string => {
 
 type Runner = (args: string[]) => Promise<RawPage>;
 async function defaultRunner(args: string[]): Promise<RawPage> {
-  const executable = requireWorkspaceFile(FIXED_WORKSPACE_PATH, path.relative(FIXED_WORKSPACE_PATH, projectPythonExecutable(FIXED_WORKSPACE_PATH)));
-  requireWorkspaceFile(FIXED_WORKSPACE_PATH, 'ai', 'skills', 'operate-feishu-project-openapi', 'config', 'feishu-project-openapi.local.json');
-  const { stdout } = await execFileAsync(executable, [scriptPath, '--skill', skillPath, ...args],
-    { timeout: 20_000, maxBuffer: 256 * 1024, windowsHide: true });
-  return pageSchema.parse(JSON.parse(stdout));
+  const value = (key: string) => args[args.indexOf(key) + 1];
+  return readOperationPage(configuredFeishuClient(), value('--parent'), Number(value('--start')), Number(value('--end')), args.includes('--cursor') ? value('--cursor') : undefined);
 }
 
 export class OperationRecordsService {
@@ -77,7 +66,8 @@ export class OperationRecordsService {
       throw new ServiceError(400, '操作记录查询参数无效', 'WORKSPACE_OPERATION_INVALID');
     const start = Math.max(0, anchorTime - 30 * 86_400_000);
     const end = anchorTime + 86_400_000;
-    const key = `${actor.userId}:${parentId}:${start}:${cursor ?? ''}`;
+    const scope = this.runner === defaultRunner ? configuredFeishuClient().config.scope : 'injected';
+    const key = `${scope}:${actor.userId}:${parentId}:${start}:${end}:${cursor ?? ''}`;
     const cached = this.cache.get(key);
     if (!force && cached && this.now() - cached.at < 10 * 60_000) return cached.value;
     const inflight = this.pending.get(key);

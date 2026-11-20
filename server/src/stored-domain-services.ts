@@ -103,7 +103,7 @@ export function createStoredDomainServices(scope:StoredApplicationScope,dependen
   },changed:async(sessionId,projectId)=>{await changed('project',projectId);await changed('session',sessionId);}}));
   const repair=new StoredMessageRepair({...base,loadSnapshots:values=>source.loadSnapshots(values),maintenanceBusy:dependencies.maintenanceBusy,changed:id=>changed('session',id)});
   const sender=own(new StoredSend({...base,graph,attachments,registry:dependencies.registry,getCatalog:dependencies.resources.getCatalog,assertAdmission:dependencies.assertAdmission,attachmentAvailability:dependencies.attachmentAvailability,
-    workspaceTaskLink:async(actor,command)=>command.workspaceTaskId?workspace.prepareFirstSendLink(actor,command.workspaceTaskId,command.sessionId):undefined}));
+    workspaceTaskLink:async(actor,command)=>command.workspaceTaskId?workspace.prepareFirstSendLink(actor,command.workspaceTaskId,command.sessionId,command.workspaceId):undefined}));
   const commands=own(new StoredFrontendCommands({...base,graph,sender}));
   const resources=dependencies.registry.list().flatMap(adapter=>{const value=adapter.concurrency?.resolveResource({sessionId:'default',projectId:'default'});return value?[{resourceKey:value.resourceKey,engineId:adapter.id,label:value.label}]:[];});
   const publishCapacity=async(resourceKey:string)=>{
@@ -115,7 +115,7 @@ export function createStoredDomainServices(scope:StoredApplicationScope,dependen
   const assertNotDeleting=()=>{/* Native commands enforce deletion fences transactionally. */};
   const http:Omit<StoredHttpApplicationOptions,'port'|'storeId'|'generation'|'graph'|'ready'>={auth:dependencies.auth,codexDebugInfo:dependencies.codexDebugInfo,reads:{refreshSessionArchiveState:()=>archive.refresh()},writes:{...dependencies.resources,assertNotDeleting,changed,softDelete},
     uploads:{service:uploads},uploadReads:{service:uploadReads},draftCleanup:{service:draftCleanup},archivedCleanup:{service:archivedCleanup},downloads:{service:downloads},filesystem:{service:filesystem},themeAssets:{service:theme},
-    unarchive:{service:unarchive,assertNotDeleting},fork:{service:fork,assertNotDeleting},shares:{service:shares},publicShares:dependencies.publicShares,trash:{service:trash,purge},repair:{service:repair},workspace:{service:workspace,snapshots},accountResources:{snapshots,localUsage,creditReset},system:dependencies.system,
+    unarchive:{service:unarchive,assertNotDeleting},fork:{service:fork,assertNotDeleting},shares:{service:shares},publicShares:dependencies.publicShares,trash:{service:trash,purge},repair:{service:repair},workspace:{service:workspace,snapshots:{responsibility:async(actor,force,taskId)=>workspace.composeResponsibility(await snapshots.responsibility(actor,force),taskId)}},accountResources:{snapshots,localUsage,creditReset},system:dependencies.system,
     hosting,news:{service:news},chinaDay:{...dependencies.chinaDay,cache:chinaDayCache},concurrency:{resources,changed:async key=>{await publishCapacity(key);void graph.scheduler.drain(key).catch(()=>undefined);}}};
   return{http,sender,commands,attachments,publishCapacity,recover:async()=>{await hosting.initialize();await news.initialize();await dependencies.codexLifecycle?.start();const result=await startup.recover();if(result.blockedCount)dependencies.diagnostic('NATIVE_STARTUP_WORK_BLOCKED',result.blockedCount);},resume:async()=>{await news.resume();await startup.resume();}};
 }

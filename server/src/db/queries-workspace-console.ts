@@ -1,6 +1,10 @@
 import { getDB, type SQLiteDB } from './index.js';
+import { WORKSPACE_ID, WORKSPACE_ROOT } from '../workspace-console/workspace-config.js';
 
 export interface WorkspaceLink {
+  workspace_id?: string;
+  connection_scope?: string;
+  target_ref?: string;
   id: string;
   workspace_path: string;
   task_id: string;
@@ -14,7 +18,7 @@ export interface WorkspaceLink {
   updated_at: number;
 }
 
-type LinkDb = Pick<SQLiteDB, 'run' | 'saveToFile' | 'raw' | 'restoreFromBytes'>;
+type LinkDb = Pick<SQLiteDB, 'get' | 'run' | 'saveToFile' | 'raw' | 'restoreFromBytes'>;
 
 export function listWorkspaceLinksInDatabase(db: Pick<SQLiteDB, 'all'>, workspacePath: string, taskId?: string): WorkspaceLink[] {
   const sql = taskId
@@ -39,7 +43,14 @@ export function insertWorkspaceLinkInDatabase(db: LinkDb, link: WorkspaceLink): 
   }
 }
 
-export function insertWorkspaceLinkInOpenTransaction(db: Pick<SQLiteDB, 'run'>, link: WorkspaceLink): void {
+export function insertWorkspaceLinkInOpenTransaction(db: Pick<SQLiteDB, 'run' | 'get'>, link: WorkspaceLink): void {
+  if(db.get("SELECT 1 FROM pragma_table_info('workspace_console_links') WHERE name='workspace_id'")){
+    db.run(`INSERT INTO workspace_console_links(id,workspace_id,workspace_path,task_id,session_id,connection_scope,target_ref,feishu_work_item_id,run_id,relation_source,confidence,last_verified_at,created_at,updated_at)
+      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(workspace_id,workspace_path,task_id,session_id,connection_scope,target_ref,feishu_work_item_id,run_id)
+      DO UPDATE SET relation_source=excluded.relation_source,confidence=excluded.confidence,last_verified_at=excluded.last_verified_at,updated_at=excluded.updated_at`,
+      [link.id,link.workspace_id??(link.workspace_path.toLowerCase()===WORKSPACE_ROOT.toLowerCase()?WORKSPACE_ID:''),link.workspace_path,link.task_id,link.session_id??'',link.connection_scope??'',link.target_ref??'',link.feishu_work_item_id??'',link.run_id??'',link.relation_source,link.confidence,link.last_verified_at,link.created_at,link.updated_at]);
+    return;
+  }
   db.run(
     `INSERT INTO workspace_console_links
       (id, workspace_path, task_id, session_id, feishu_work_item_id, run_id, relation_source, confidence, last_verified_at, created_at, updated_at)

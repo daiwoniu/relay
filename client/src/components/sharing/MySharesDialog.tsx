@@ -7,6 +7,7 @@ import type { ShareListItemDto } from '../../generated/relay-contracts';
 import { deleteShare, getShareUrl, listShares, revokeShare } from '../../api/shares';
 import { copyToClipboard } from '../../utils/clipboard';
 import PanelShell from '../ui/PanelShell';
+import UserMenuIcon from '../icons/UserMenuIcon';
 import { getSharePagination, presentShareManagementItem, SHARE_PAGE_SIZE } from './share-management';
 import { getShareScopePresentation } from './share-scope';
 import { engineLabel } from '../../engine/catalog';
@@ -66,7 +67,7 @@ export default function MySharesDialog({ open, onClose, mobile = false }: { open
   const pagination = getSharePagination(total, page);
 
   return (
-    <PanelShell analyticsFeature="share" open={open} onClose={onClose} mobile={mobile} title="我的分享" description="管理已创建的只读分享快照" titleId="my-shares-title" size="content" bodyClassName="p-4 sm:p-5" footer={total > SHARE_PAGE_SIZE ? <ListPagination
+    <PanelShell analyticsFeature="share" open={open} onClose={onClose} mobile={mobile} title="我的分享" icon={<UserMenuIcon type="share" />} description="管理已创建的只读分享快照" titleId="my-shares-title" size="content" bodyClassName="p-4 sm:p-5" footer={total > SHARE_PAGE_SIZE ? <ListPagination
         start={pagination.start}
         end={pagination.end}
         total={total}

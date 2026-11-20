@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { Hono } from 'hono';
 import { fixture } from '../storage/storage-fixture.test-support.js';
 import { StorageWorkerClient } from '../storage/worker-client.js';
+import { WORKSPACE_ID, WORKSPACE_CONNECTION_SCOPE } from './workspace-context.js';
 import type { CoreCommand,CoreStoragePort,StoragePrincipal } from '../storage/contracts.js';
 import { StoredWorkspaceConsole } from './stored-workspace-console.js';
 import { createStoredWorkspaceConsoleRouter } from '../routes/stored-workspace-console.js';
@@ -13,6 +14,11 @@ import type { TaskRegistryProjection } from './task-registry-reader.js';
 import { hashSessionToken } from '../auth/session.js';
 import { WorkspaceConsoleDashboardDtoSchema } from '../contracts/index.js';
 import { requireWorkspaceRoot } from './workspace-config.js';
+import { readWorkspaceRuns } from './workspace-runs-reader.js';
+import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { feishuReadBatch } from '../integrations/feishu/read-batch.js';
 const project='11111111-1111-4111-8111-111111111111',session='22222222-2222-4222-8222-222222222222',draft='33333333-3333-4333-8333-333333333333',foreign='44444444-4444-4444-8444-444444444444';
 const token=(id:string)=>`synthetic-workspace-${id}`,principal=(id='admin')=>({kind:'user' as const,userId:id,authSessionHash:hashSessionToken(token(id))});
 const registry=(title='Task'):TaskRegistryProjection=>({schemaVersion:1,generatedAt:'2026-11-06',tasks:[{id:'task-one',title,description:null,status:'active',taskPath:null,taskDocumentPath:null,horizon:null,nextAction:null,waitingOn:null,statusBasis:null,verification:null,lastVerifiedAt:null,startedAt:null,completedAt:null,feishuWorkItemIds:[]}]});
@@ -45,7 +51,7 @@ test('missing optional configuration shows an actionable notice in Native workbe
     assert.equal(dashboard.status,200);
     const body=await dashboard.json();
     assert.equal(body.sourceAvailable.registry,false);
-    assert.match(body.errors.join(' '),/workspace-console\.local\.conf.*workspace_root/);
+    assert.match(body.errors.join(' '),/workbench\.local\.conf.*WORKSPACE_ROOT/);
     const report=await app.request('/api/workspace-console/responsibility',{headers:p.headers()});
     assert.equal(report.status,422);
     assert.match(JSON.stringify(await report.json()),/WORKSPACE_CONFIG_REQUIRED/);
@@ -53,14 +59,46 @@ test('missing optional configuration shows an actionable notice in Native workbe
   }finally{await p.cleanup();}
 });
 
+test('authenticated responsibility HTTP reads own separate Feishu reuse scopes',async()=>{
+  const p=await prepared();try{
+    const owner={},scopes:unknown[]=[];
+    const app=new Hono().route('/api/workspace-console',createStoredWorkspaceConsoleRouter({port:p.port,service:p.make(),snapshots:{responsibility:async()=>{
+      const scope=feishuReadBatch(owner);assert(scope);scopes.push(scope);
+      throw new Error('synthetic provider failure');
+    }}}));
+    await app.request('/api/workspace-console/responsibility?refresh=1',{headers:p.headers()});
+    await app.request('/api/workspace-console/responsibility?refresh=1',{headers:p.headers()});
+    assert.equal(scopes.length,2);assert.notEqual(scopes[0],scopes[1]);assert.equal(feishuReadBatch(owner),undefined);
+    await app.request('/api/workspace-console/responsibility',{headers:p.headers('owner')});
+    assert.equal(scopes.length,2,'a denied user must not enter the provider read scope');
+  }finally{await p.cleanup();}
+});
+
+test('refresh stores and returns remote executions with no display name through the real reader', async () => {
+  const p = await prepared();
+  const root = await mkdtemp(path.join(tmpdir(), 'relay-refresh-runs-'));
+  try {
+    const directory = path.join(root, 'tasks/task-one/remote');
+    await mkdir(directory, { recursive: true });
+    await writeFile(path.join(directory, 'runs-registry.json'), JSON.stringify({ runs: [{ location: 'remote', run_id: 'remote-job', status: 'running' }] }));
+    const service = p.make({ listRuns: () => readWorkspaceRuns(root) });
+    const app = p.app(service);
+    for (const query of ['?refresh=1', '']) {
+      const response = await app.request(`/api/workspace-console/dashboard${query}`, { headers: p.headers() });
+      assert.equal(response.status, 200);
+      const body = await response.json();
+      assert.equal(body.runs[0].runId, 'remote-job');
+      assert.equal(body.runs[0].displayName, null);
+    }
+  } finally { await p.cleanup(); await rm(root, { recursive: true, force: true }); }
+});
+
 test('Feishu first-send validates the cached source and current projections retain only live associated sessions',async()=>{
   const p=await prepared();try{
-    const service=p.make({hasFeishuWorkItem:async(_actor,id)=>id==='9001000015'});
-    assert.deepEqual(await service.prepareFirstSendLink(principal(),'feishu:9001000015',draft),{taskId:'feishu:9001000015',workspacePath:FIXED_WORKSPACE_PATH});
+    const service=p.make({hasFeishuWorkItem:async(_actor,id)=>id==='feishu:9001000015'});
+    assert.deepEqual(await service.prepareFirstSendLink(principal(),'feishu:9001000015',draft),{taskId:'feishu:9001000015',workspacePath:FIXED_WORKSPACE_PATH,workspaceId:WORKSPACE_ID,targetRef:'feishu:9001000015',connectionScope:WORKSPACE_CONNECTION_SCOPE});
     await assert.rejects(service.prepareFirstSendLink(principal(),'feishu:999',draft),{code:'NOT_FOUND'});
-    await assert.rejects(service.link(principal(),'feishu:9001000015',session,randomUUID(),true),{code:'NOT_FOUND'});
-    await assert.rejects(service.link(principal(),'feishu:9001000015',session,randomUUID(),false),{code:'NOT_FOUND'});
-    await p.ok({name:'workspace.linkSession',input:{linkId:randomUUID(),taskId:'feishu:9001000015',sessionId:session}});
+    await service.link(principal(),'feishu:9001000015',session,randomUUID(),true);
     assert.equal(p.f.scalar('SELECT feishu_work_item_id FROM workspace_console_links'),'9001000015');
     const fresh=await service.getDashboard(principal(),true);
     assert.deepEqual(fresh.sessions[0]!.feishuWorkItemIds,['9001000015']);assert.equal(fresh.unlinkedSessions.length,0);
@@ -72,11 +110,11 @@ test('Feishu first-send validates the cached source and current projections reta
   }finally{await p.cleanup();}
 });
 
-test('legacy Feishu launch context restores its exact association without guessing a title or a later mention',async()=>{
+test('legacy Feishu launch text alone does not establish a verified connection association',async()=>{
   const p=await prepared();try{
     const service=p.make();
     p.f.mutate("UPDATE messages SET content='请处理飞书工作项「Synthetic」（ID：9001000015）。先核查飞书工作项与工作区实际状态，再确定下一步。' WHERE id='workspace-message'");
-    assert.deepEqual((await service.getDashboard(principal(),true)).sessions[0]!.feishuWorkItemIds,['9001000015']);
+    assert.deepEqual((await service.getDashboard(principal(),true)).sessions[0]!.feishuWorkItemIds,[]);
     p.f.mutate("UPDATE messages SET content='讨论飞书工作项 Synthetic，ID：9001000015' WHERE id='workspace-message'");
     assert.deepEqual((await service.getDashboard(principal())).sessions[0]!.feishuWorkItemIds,[]);
     p.f.mutate(`INSERT INTO messages(id,session_id,role,content,created_at) VALUES('later-mention','${session}','user','请处理飞书工作项「Synthetic」（ID：9001000015）。先核查飞书工作项与工作区实际状态，再确定下一步。',2)`);
@@ -84,9 +122,38 @@ test('legacy Feishu launch context restores its exact association without guessi
   }finally{await p.cleanup();}
 });
 
+test('one session can retain multiple exact targets; unbinding and deletion never remove other task relations', async () => {
+  const p=await prepared();
+  try {
+    const service=p.make({hasFeishuWorkItem:async()=>true,allowLocalFeishuLinks:true});
+    await service.link(principal(),'task-one',session,randomUUID(),true,'feishu:1000000001');
+    await service.link(principal(),'task-one',session,randomUUID(),true,'feishu:1000000002');
+    assert.equal(p.f.scalar('SELECT count(*) FROM workspace_console_links'),2);
+    await service.link(principal(),'task-one',session,randomUUID(),false,'feishu:1000000001');
+    assert.equal(p.f.scalar('SELECT count(*) FROM workspace_console_links'),1);
+    assert.equal(p.f.scalar('SELECT target_ref FROM workspace_console_links'),'feishu:1000000002');
+    assert.equal((await service.getDashboard(principal(),true)).tasks[0].sessionIds.length,1);
+    p.f.mutate(`UPDATE sessions SET deleted_at=1 WHERE id='${session}'`);
+    assert.equal((await service.getDashboard(principal())).sessions.length,0);
+    assert.equal(p.f.scalar('SELECT count(*) FROM workspace_console_links'),1);
+    p.f.mutate(`UPDATE sessions SET deleted_at=NULL WHERE id='${session}'`);
+    assert.equal((await service.getDashboard(principal())).tasks[0].sessionIds.length,1);
+  } finally {await p.cleanup();}
+});
+
+test('unbound workbench rejects joint local/Feishu associations but permits independent targets',async()=>{
+  const p=await prepared();try{
+    const service=p.make({hasFeishuWorkItem:async()=>true});
+    await assert.rejects(service.link(principal(),'task-one',session,randomUUID(),true,'feishu:1000000001'),{code:'INVALID_ARGUMENT'});
+    await service.link(principal(),'task-one',session,randomUUID(),true);
+    await service.link(principal(),'feishu:1000000001',session,randomUUID(),true);
+    assert.equal(p.f.scalar('SELECT count(*) FROM workspace_console_links'),2);
+  }finally{await p.cleanup();}
+});
+
 test('first-send task link requires a current admin, existing registry task and an empty fixed-workspace session',async()=>{
   const p=await prepared();try{
-    const service=p.make();assert.deepEqual(await service.prepareFirstSendLink(principal(),'task-one',draft),{taskId:'task-one',workspacePath:FIXED_WORKSPACE_PATH});
+    const service=p.make();assert.deepEqual(await service.prepareFirstSendLink(principal(),'task-one',draft),{taskId:'task-one',workspacePath:FIXED_WORKSPACE_PATH,workspaceId:WORKSPACE_ID});
     await assert.rejects(service.prepareFirstSendLink(principal('owner'),'task-one',draft),{code:'FORBIDDEN'});
     await assert.rejects(service.prepareFirstSendLink(principal(),'missing-task',draft),{code:'NOT_FOUND'});
     await assert.rejects(service.prepareFirstSendLink(principal(),'task-one',foreign),{code:'NOT_FOUND'});
@@ -196,10 +263,10 @@ test('workspace HTTP authenticates admin, validates strict scope, Origin and ret
 test('workspace state and cached JSON use explicit bounds without changing oversized stored data',async()=>{
   const p=await prepared();try{
     const oversized=WORKSPACE_DASHBOARD_MAX_BYTES+2;
-    p.f.mutate(`INSERT INTO workspace_snapshots VALUES('dashboard','admin:${FIXED_WORKSPACE_PATH}',1,replace(hex(zeroblob(${oversized/2})),'0','x'),1)`);
+    p.f.mutate(`INSERT INTO workspace_snapshots VALUES('dashboard','admin:${WORKSPACE_ID}:${FIXED_WORKSPACE_PATH}',1,replace(hex(zeroblob(${oversized/2})),'0','x'),1)`);
     await assert.rejects(p.port.readWorkspaceDashboard({principal:principal()}),{code:'PAYLOAD_TOO_LARGE'});assert.equal(p.f.scalar('SELECT length(data_json) FROM workspace_snapshots'),oversized);
-    p.f.mutate(`WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<1001) INSERT INTO workspace_console_links(id,workspace_path,task_id,session_id,feishu_work_item_id,run_id,relation_source,confidence,created_at,updated_at)
-      SELECT 'bounded-'||i,'${FIXED_WORKSPACE_PATH}','bounded-task-'||i,'${session}','','','explicit','high',1,1 FROM n`);
+    p.f.mutate(`WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<1001) INSERT INTO workspace_console_links(id,workspace_id,workspace_path,task_id,session_id,feishu_work_item_id,run_id,relation_source,confidence,created_at,updated_at)
+      SELECT 'bounded-'||i,'${WORKSPACE_ID}','${FIXED_WORKSPACE_PATH}','bounded-task-'||i,'${session}','','','explicit','high',1,1 FROM n`);
     await assert.rejects(p.port.readWorkspaceState({principal:principal()}),{code:'PAYLOAD_TOO_LARGE'});assert.equal(p.f.scalar('SELECT count(*) FROM workspace_console_links'),1001);
   }finally{await p.cleanup();}
 });
@@ -224,5 +291,29 @@ test('cached source scope cannot be supplied by a browser or changed through the
   const p=await prepared();try{const ticket=await p.ok({name:'workspace.beginSnapshot',input:{}}),value={...p.snapshot(),workspacePath:'D:/injected-workspace'};
     const result=await p.exec({name:'workspace.saveSnapshot',input:{version:ticket.version,value}});assert.equal(result.state,'rejected');if(result.state==='rejected')assert.equal(result.code,'INVALID_ARGUMENT');
     assert.equal(p.f.scalar('SELECT count(*) FROM workspace_snapshots'),0);
+  }finally{await p.cleanup();}
+});
+
+test('a joint delivery target from a previous Feishu connection remains a candidate and cannot resume a session',async()=>{
+  const p=await prepared();try{
+    const old=WORKSPACE_CONNECTION_SCOPE==='a'.repeat(64)?'b'.repeat(64):'a'.repeat(64);
+    p.f.mutate(`INSERT INTO workspace_console_links(id,workspace_id,workspace_path,task_id,session_id,target_ref,connection_scope,relation_source,confidence,created_at,updated_at)
+      VALUES('old-connection','${WORKSPACE_ID}','${FIXED_WORKSPACE_PATH}','task-one','${session}','feishu:123','${old}','explicit','high',1,1)`);
+    const state=await p.port.readWorkspaceState({principal:principal()});
+    assert.equal(state.links[0].relation_source,'candidate');
+    assert.deepEqual(state.sessions[0].workspaceTargets,[]);
+    const dashboard=await p.make().getDashboard(principal(),true);
+    assert.deepEqual(dashboard.tasks[0].sessionIds,[]);
+  }finally{await p.cleanup();}
+});
+
+test('duplicate nullable legacy links project one historical target without rewriting stored evidence',async()=>{
+  const p=await prepared();try{
+    for(const id of ['legacy-1','legacy-2'])p.f.mutate(`INSERT INTO workspace_console_links(id,workspace_id,workspace_path,task_id,session_id,feishu_work_item_id,run_id,relation_source,confidence,created_at,updated_at)
+      VALUES('${id}','${WORKSPACE_ID}','${FIXED_WORKSPACE_PATH}','task-one','${session}',NULL,NULL,'explicit','high',1,1)`);
+    const state=await p.port.readWorkspaceState({principal:principal()});
+    assert.equal(state.links.length,2);
+    assert.deepEqual(state.sessions[0].workspaceTargets,[{taskId:'task-one',targetRef:''}]);
+    assert.equal(p.f.scalar('SELECT count(*) FROM workspace_console_links'),2);
   }finally{await p.cleanup();}
 });

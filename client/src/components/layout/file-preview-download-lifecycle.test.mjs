@@ -71,10 +71,10 @@ function harness(t) {
     return null;
   };
   let latestTree;
-  const render = () => {
+  const render = (panelVisible = true) => {
     cursor = 0;
     latestTree = compiled.exports.default({ tabs: store.rightPanelTabs, activeTabId: store.rightPanelTabs[0]?.id ?? null,
-      panelVisible: true, width: 500, onClose() {}, onSelectTab() {},
+      panelVisible, width: 500, onClose() {}, onSelectTab() {},
       onCloseTab(id) { store.rightPanelTabs = store.rightPanelTabs.filter(item => item.id !== id); requests.dispose(id); },
     });
     for (const effect of effects.splice(0)) effect();
@@ -91,6 +91,20 @@ function harness(t) {
   const dialog = () => find(latestTree, node => node.props?.title === '文件下载失败' && node.props?.confirmLabel === '知道了');
   return { tab, requests, pending, saved, render, settle, dialog, store, preferences, escape: () => windowListeners.get('keydown')?.({ key: 'Escape' }) };
 }
+
+test('closing and reopening the preview collapses settings while preserving the file', t => {
+  const h = harness(t);
+  h.render().onOpenSettings();
+  assert.equal(h.render().settingsOpen, true);
+  h.render(false);
+  const reopened = h.render(true);
+  assert.equal(reopened.settingsOpen, false);
+  assert.equal(reopened.settingsPanel, undefined);
+  assert.equal(reopened.activeTab.id, h.tab.id);
+  assert.equal(h.tab.content, 'original preview');
+  reopened.onOpenSettings();
+  assert.equal(h.render().settingsOpen, true);
+});
 
 test('settings apply to the active file without blanking it and stale refresh cannot overwrite a newer result', async t => {
   const h = harness(t);

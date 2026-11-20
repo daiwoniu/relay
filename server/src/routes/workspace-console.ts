@@ -5,6 +5,7 @@ import { getRequestActor, type Actor, type RelayEnv } from '../auth/authorizatio
 import { respondServiceError } from './service-error.js';
 import { WorkspaceConsoleService } from '../workspace-console/workspace-console-service.js';
 import { OperationRecordsService } from '../workspace-console/operation-records.js';
+import { withFeishuReadBatch } from '../integrations/feishu/read-batch.js';
 
 export function createWorkspaceConsoleRouter(options: {
   service?: Pick<WorkspaceConsoleService, 'getResponsibility' | 'getDashboard' | 'linkSession' | 'unlinkSession'>;
@@ -31,7 +32,7 @@ export function createWorkspaceConsoleRouter(options: {
     const startedAt = performance.now();
     try {
       c.header('Cache-Control', 'private, no-store');
-      const report = WorkspaceConsoleResponsibilityDtoSchema.parse(await service.getResponsibility(currentActor, { force }));
+      const report = WorkspaceConsoleResponsibilityDtoSchema.parse(await withFeishuReadBatch(()=>service.getResponsibility(currentActor, { force })));
       console.info(`[WorkspaceResponsibility] request=${JSON.stringify({ trigger, force, elapsedMs: Math.round(performance.now() - startedAt), servedFromCache: report.servedFromCache === true, stale: report.stale })}`);
       return c.json(report);
     } catch (error) {

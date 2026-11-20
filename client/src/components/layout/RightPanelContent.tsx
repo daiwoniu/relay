@@ -5,9 +5,12 @@ import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
 import type { RightPanelTab } from '../../stores/chat';
 import Tooltip from '../ui/Tooltip';
+import ContextMenu, { type ContextMenuItem } from '../ui/ContextMenu';
+import { useAuth } from '../../auth/AuthContext';
 import IconActionButton from '../ui/IconActionButton';
 import Modal from '../ui/Modal';
 import FileTypeIcon from '../messages/FileTypeIcon';
+import PageHostingIcon from '../icons/PageHostingIcon';
 import ProgressiveCodePreview from './ProgressiveCodePreview';
 import { formatGitDiffHunkHeader } from './git-diff-hunk';
 import { readFileGitDiff, type FileGitDiffResult } from '../../api/filesystem';
@@ -29,6 +32,11 @@ import {
   getFileMetadataTypeLabel,
 } from './file-preview-metadata';
 
+const PREVIEW_ACTION_ICON_PATHS: Record<string, string> = {
+  refresh: 'M13 6a5.2 5.2 0 10.2 3M13 2.5V6H9.5',
+  open: 'M9 2.5h4.5V7M13 3 7 9M6 3H3.5a1 1 0 0 0-1 1v8.5a1 1 0 0 0 1 1H12a1 1 0 0 0 1-1V10',
+  download: 'M8 2v8m0 0L5 7m3 3l3-3M3 13h10',
+};
 const PdfDocumentPreview = lazy(() => import('./PdfDocumentPreview'));
 const WordDocumentPreview = lazy(() => import('./WordDocumentPreview'));
 const SpreadsheetPreview = lazy(() => import('./SpreadsheetPreview'));
@@ -174,6 +182,16 @@ export default function RightPanelContent({
   onRequestHtmlScripts,
   setMobileInfo,
 }: RightPanelContentProps) {
+  const { user } = useAuth();
+  const [moreMenu, setMoreMenu] = useState<{tabId:string;rect:DOMRect}|null>(null);
+  const [expandedActions, setExpandedActions] = useState(false);
+  const contextRef = useRef<HTMLDivElement>(null);
+  const pathInputRef = useRef<HTMLInputElement>(null);
+  const pathMeasureRef = useRef<HTMLSpanElement>(null);
+  const actionsRef = useRef<HTMLDivElement>(null);
+  const extraActionsRef = useRef<HTMLDivElement>(null);
+  const moreButtonRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => setMoreMenu(null), [activeTabId, activeTab?.id, settingsOpen]);
   const hasTabs = tabs.length > 0;
   const tabsScrollRef = useRef<HTMLDivElement>(null);
   const selectedTabRef = useRef<HTMLDivElement>(null);
@@ -209,6 +227,39 @@ export default function RightPanelContent({
     return () => URL.revokeObjectURL(url);
   }, [standaloneDocument]);
   const standaloneUrl = standalonePreview.document === standaloneDocument ? standalonePreview.url : '';
+  const canAddHosting = user?.role==='admin' && /\.html?$/i.test(activeTab?.sourcePath||activeTab?.title||'') && !activeTab?.previewError && !activeTab?.forceAccessAvailable;
+  const extraActions: ContextMenuItem[] = activeTab ? [
+    {id:'refresh',label:'刷新文件',onSelect:()=>onRefresh(activeTab)},
+    ...(standaloneUrl?[{id:'open',label:'在新标签页打开 HTML',onSelect:()=>{window.open(standaloneUrl,'_blank','noopener,noreferrer');}}]:[]),
+    ...(!activeTab.forceAccessAvailable?[{id:'download',label:downloading?'正在下载文件':'下载文件',disabled:downloading||activeTab.loading,onSelect:()=>onDownload(activeTab)}]:[]),
+    ...(canAddHosting?[{id:'hosting',label:'添加托管',onSelect:()=>{window.dispatchEvent(new CustomEvent('relay:open-page-hosting',{detail:{path:activeTab.sourcePath||activeTab.title}}));}}]:[]),
+  ].map(action=>({...action,icon:action.id==='hosting'?<PageHostingIcon size={15}/>:<svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d={PREVIEW_ACTION_ICON_PATHS[action.id]} stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/></svg>})) : [];
+  useLayoutEffect(() => {
+    const row=contextRef.current, input=pathInputRef.current, text=pathMeasureRef.current;
+    const actions=actionsRef.current, extra=extraActionsRef.current;
+    if(!row||!input||!text||!actions||!extra) return;
+    const measure=()=>{
+      const rowStyle=getComputedStyle(row), inputStyle=getComputedStyle(input);
+      text.style.font=inputStyle.font;
+      text.style.letterSpacing=inputStyle.letterSpacing;
+      const pixels=(value:string)=>parseFloat(value)||0;
+      const available=row.clientWidth-pixels(rowStyle.paddingLeft)-pixels(rowStyle.paddingRight);
+      const pathWidth=text.getBoundingClientRect().width+pixels(inputStyle.paddingLeft)+pixels(inputStyle.paddingRight)+pixels(inputStyle.borderLeftWidth)+pixels(inputStyle.borderRightWidth);
+      // Always compare the full toolbar, even while extras are collapsed, to avoid resize oscillation.
+      const moreWidth=moreButtonRef.current?.getBoundingClientRect().width;
+      const fullActionsWidth=actions.getBoundingClientRect().width+(moreWidth===undefined?0:extra.getBoundingClientRect().width-moreWidth);
+      const fits=pathWidth+fullActionsWidth+pixels(rowStyle.columnGap)+2<=available;
+      setExpandedActions(fits);
+      if(fits) setMoreMenu(null);
+    };
+    measure();
+    const resize=new ResizeObserver(measure);
+    for(const element of [row,actions,extra,text])resize.observe(element);
+    const theme=new MutationObserver(measure);
+    theme.observe(document.documentElement,{attributes:true,attributeFilter:['class','style','data-text-scale','data-theme']});
+    document.fonts?.addEventListener('loadingdone',measure);
+    return()=>{resize.disconnect();theme.disconnect();document.fonts?.removeEventListener('loadingdone',measure);};
+  },[activeTab?.id,activeTab?.title,activeTab?.loading,activeTab?.forceAccessAvailable,settingsOpen,isMobile,standaloneUrl,canAddHosting]);
   const codeMarkdown = useMemo(
     () => largeCodePreview ? '' : activeTab?.language ? buildCodePreviewMarkdown(activeTab.content, activeTab.language) : '',
     [activeTab?.content, activeTab?.language, largeCodePreview],
@@ -377,33 +428,27 @@ export default function RightPanelContent({
           <PreviewState tone="loading" title="正在读取文件" description="文件准备好后会自动显示。" />
         ) : (
           <>
-            <div className="workspace-preview-context theme-region-section">
+            <div ref={contextRef} className="workspace-preview-context theme-region-section">
               <div className="workspace-preview-identity">
                 <Tooltip overflowOnly content={activeTab.title} disabled={isMobile} placement="bottom" className="workspace-preview-path-hint">
-                <input type="text" readOnly value={activeTab.title} onFocus={(event) => event.currentTarget.select()} className="workspace-preview-path" aria-label="文件路径" />
+                <input ref={pathInputRef} type="text" readOnly value={activeTab.title} onFocus={(event) => event.currentTarget.select()} className="workspace-preview-path" aria-label="文件路径" />
                 </Tooltip>
+                <span ref={pathMeasureRef} className="workspace-preview-path-measure" aria-hidden="true">{activeTab.title}</span>
               </div>
-              <div className="workspace-preview-file-actions">
-              {standaloneUrl && (
-                <Tooltip content="在新标签页打开 HTML" disabled={isMobile} placement="bottom">
-                  <a href={standaloneUrl} target="_blank" rel="noopener noreferrer" aria-label="在新标签页打开 HTML" className={`inline-flex shrink-0 items-center justify-center rounded-lg text-[var(--color-text-tertiary)] hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus-ring)] ${isMobile ? 'h-10 w-10' : 'h-7 w-7'}`}>
-                    <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M9 2.5h4.5V7M13 3 7 9M6 3H3.5a1 1 0 0 0-1 1v8.5a1 1 0 0 0 1 1H12a1 1 0 0 0 1-1V10" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" /></svg>
-                  </a>
-                </Tooltip>
-              )}
-              <IconActionButton label="刷新文件" variant="neutral" tooltip={!isMobile} onClick={() => onRefresh(activeTab)}>
-                <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M13 6a5.2 5.2 0 10.2 3M13 2.5V6H9.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" /></svg>
+              <div ref={actionsRef} className="workspace-preview-file-actions">
+              <IconActionButton label={copiedPath ? '路径已复制' : '复制文件路径'} variant="neutral" tooltip={!isMobile} onClick={() => onCopyPath(activeTab.sourcePath || activeTab.title)} className={isMobile ? 'h-10 w-10' : 'h-7 w-7'}>
+                {copiedPath ? <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 8.5l3 3 7-7" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg> : <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="5" y="5" width="8" height="8" rx="1.5" stroke="currentColor" strokeWidth="1.3"/><path d="M3 10V4.5A1.5 1.5 0 014.5 3H10" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"/></svg>}
               </IconActionButton>
-              <IconActionButton label={copiedPath ? '路径已复制' : '复制文件路径'} variant="neutral" tooltip={!isMobile} onClick={() => onCopyPath(activeTab.title)} className={isMobile ? 'h-10 w-10' : 'h-7 w-7'}>
-                {copiedPath ? (
-                  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 8.5l3 3 7-7" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
-                ) : (
-                  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="5" y="5" width="8" height="8" rx="1.5" stroke="currentColor" strokeWidth="1.3"/><path d="M3 10V4.5A1.5 1.5 0 014.5 3H10" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"/></svg>
-                )}
+              <IconActionButton label="文件信息" variant="neutral" tooltip={!isMobile} onClick={() => setMobileInfo('file-info')} className={isMobile ? 'h-10 w-10' : 'h-7 w-7'}>
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true" data-icon="file-metadata-info"><circle cx="8" cy="8" r="5.5" stroke="currentColor" strokeWidth="1.3"/><path d="M8 7v4M8 4.8v.2" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/></svg>
               </IconActionButton>
-                <IconActionButton label="文件信息" variant="neutral" tooltip={!isMobile} onClick={() => setMobileInfo('file-info')} className={isMobile ? 'h-10 w-10' : 'h-7 w-7'}>
-                  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true" data-icon="file-metadata-info"><circle cx="8" cy="8" r="5.5" stroke="currentColor" strokeWidth="1.3"/><path d="M8 7v4M8 4.8v.2" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/></svg>
-                </IconActionButton>
+              <div ref={extraActionsRef} className={`workspace-preview-extra-actions${expandedActions?'':' is-measuring'}`} aria-hidden={!expandedActions} inert={!expandedActions}>
+                {extraActions.map(action=><IconActionButton key={action.id} label={action.label} disabled={action.disabled} variant="neutral" tooltip={expandedActions&&!isMobile} onClick={()=>void action.onSelect()}>
+                  {action.icon}
+                </IconActionButton>)}
+              </div>
+              {!expandedActions&&<button ref={moreButtonRef} type="button" aria-label="更多文件操作" aria-haspopup="menu" aria-expanded={moreMenu?.tabId===activeTab.id} className={isMobile ? 'h-10 w-10 rounded-lg hover:bg-[var(--color-surface-hover)]' : 'h-7 w-7 rounded-lg hover:bg-[var(--color-surface-hover)]'} onClick={event=>setMoreMenu(moreMenu?null:{tabId:activeTab.id,rect:event.currentTarget.getBoundingClientRect()})}>⋯</button>}
+              {!expandedActions&&moreMenu?.tabId===activeTab.id&&<ContextMenu open anchorRect={moreMenu.rect} mobile={isMobile} label="更多文件操作" onClose={()=>setMoreMenu(null)} items={extraActions} />}
               {activeTab.forceAccessAvailable ? (
                 <div className="flex shrink-0 items-center gap-1">
                   {isMobile && (
@@ -417,11 +462,7 @@ export default function RightPanelContent({
                     </button>
                   </Tooltip>
                 </div>
-              ) : (
-                <IconActionButton label={downloading ? '正在下载文件' : '下载文件'} disabled={downloading || activeTab.loading} aria-busy={downloading} variant="neutral" tooltip={!isMobile} onClick={() => onDownload(activeTab)} className={isMobile ? 'h-10 w-10' : 'h-7 w-7'}>
-                  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 2v8m0 0L5 7m3 3l3-3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/><path d="M3 13h10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
-                </IconActionButton>
-              )}
+              ) : null}
               </div>
             </div>
             {previewModeControl}

@@ -181,6 +181,19 @@ export default function Sidebar({
   const [accountSettingsOpen, setAccountSettingsOpen] = useState(false);
   const [accountManagementOpen, setAccountManagementOpen] = useState(false);
   const [pageHostingOpen, setPageHostingOpen] = useState(false);
+  const [hostingRequest, setHostingRequest] = useState<{path:string;requestId:number}|null>(null);
+  useEffect(() => {
+    const openHosting = (event: Event) => {
+      if (user?.role !== 'admin') return;
+      const path = (event as CustomEvent<{path?:string}>).detail?.path;
+      if (!path) return;
+      restoreMinimizedPanel('page-hosting-title');
+      setHostingRequest({path,requestId:Date.now()});
+      setPageHostingOpen(true);
+    };
+    window.addEventListener('relay:open-page-hosting', openHosting);
+    return () => window.removeEventListener('relay:open-page-hosting', openHosting);
+  }, [user?.role]);
   const [userResourceDialogOpen, setUserResourceDialogOpen] = useState(false);
   const [selectedResourceUser, setSelectedResourceUser] = useState<PublicUserDto | null>(null);
   const [uploadsProjects, setUploadsProjects] = useState<Project[]>([]);
@@ -1297,7 +1310,7 @@ export default function Sidebar({
         <EngineMaintenanceDialog engineId={selectedMaintenanceEngine} open={engineMaintenanceOpen} onClose={() => setEngineMaintenanceOpen(false)} />
         <SettingsCenterDialog open={accountSettingsOpen} onClose={() => setAccountSettingsOpen(false)} mobile={isMobile} />
         {user?.role === 'admin' && <AccountManagementDialog open={accountManagementOpen} onClose={() => setAccountManagementOpen(false)} mobile={isMobile} />}
-        {user?.role === 'admin' && pageHostingOpen && <Suspense fallback={null}><PageHostingPanel onClose={() => setPageHostingOpen(false)} mobile={isMobile} /></Suspense>}
+        {user?.role === 'admin' && pageHostingOpen && <Suspense fallback={null}><PageHostingPanel importRequest={hostingRequest} onClose={() => {setPageHostingOpen(false);setHostingRequest(null);}} mobile={isMobile} /></Suspense>}
         {user?.role === 'admin' && <UserResourceDialog open={userResourceDialogOpen} onClose={() => setUserResourceDialogOpen(false)} mobile={isMobile} currentUser={user} selectedType={resourceViewType} selectedUserId={ownerFilterId} onSelect={selectUserResourceView} />}
         {uploadsProjects.map((project) => <ProjectUploadsDialog key={project.id} project={project} onClose={() => setUploadsProjects((current) => current.filter((item) => item.id !== project.id))} />)}
         {membersProjects.map((project) => <ProjectMembersDialog key={project.id} project={project} onClose={() => setMembersProjects((current) => current.filter((item) => item.id !== project.id))} onProjectUpdated={(updated) => { setMembersProjects((current) => current.map((item) => item.id === updated.id ? updated : item)); setProjects(projects.map((item) => item.id === updated.id ? updated : item)); }} />)}

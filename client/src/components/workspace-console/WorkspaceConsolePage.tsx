@@ -1,11 +1,22 @@
-import { formatClockTime, formatDateTime } from '../../utils/date-display.ts';
+import { formatDateTime } from '../../utils/date-display.ts';
 import { useFeatureView,featureAction,useSearchCommit,localAction } from '../../analytics/features';
 import Tooltip from '../ui/Tooltip';
 import FailureNotice from '../ui/FailureNotice';
 import { isWorkbenchItemOwner, workbenchParticipationLabel } from './workspace-console-view-model';
 import WorkspaceResponsibilityNotice from './WorkspaceResponsibilityNotice';
-import { trackedOpenFeishuItems, isPersonalProjectComplete, taskEntryConflict, workbenchFlowEnded } from './workspace-console-view-model';
-import { localTaskStatusLabel, taskEntryProgressAt, workbenchActionCompleted, type TaskDisplayEntry } from './workspace-console-view-model';
+import FeishuIdentity from './FeishuIdentity';
+import { workItemCurrentNodeLines, workItemCurrentNodeNames, localLedgerLabel } from './workspace-console-view-model';
+import DeliveryFeishuNotice from './DeliveryFeishuNotice';
+import MatterTaskCard from './MatterTaskCard';
+import NewBadge from './NewBadge';
+import {snapshotTaskIdentityKeys,retainNewTaskKeys} from './workspace-console-view-model';
+import type {CardRelation} from './task-card-model';
+import {invalidateWorkspaceDashboard} from './workspace-console-cache';
+import { unifyTaskEntries, trackingItemsForMatters, selectMatterEntries,workbenchTaskLanes,isWorkbenchTaskVisible } from './workspace-matters';
+import RunRow from './WorkspaceRunRow';
+import { describeRunScope } from './run-presentation';
+import { trackedOpenFeishuItems, isPersonalProjectComplete, taskEntryConflict, workbenchFlowEnded, feishuWorkItemStatusLabel } from './workspace-console-view-model';
+import { localTaskStatusLabel, localTaskLane as localTaskLaneForDisplay, taskEntryProgressAt, workbenchActionCompleted, type TaskDisplayEntry } from './workspace-console-view-model';
 import { progressRecency, withDashboardProgress } from './workspace-task-progress';
 import { Fragment, lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { getWorkspaceConsoleDashboard, getWorkspaceConsoleResponsibility, getWorkspaceOperationRecords } from '../../api/workspace-console';
@@ -15,18 +26,22 @@ import { useChatStore } from '../../stores/chat';
 import { useChinaDayGreeting } from '../../hooks/useChinaDayGreeting';
 import { useFilePreview } from '../messages/useFilePreview';
 import { coalesceWorkspaceRequest, loadWorkspaceDashboard, readWorkspaceConsoleCache, rememberResponsibility } from './workspace-console-cache';
-import { buildExecutionCards, buildTaskEntries, buildWorkspaceConsoleView, currentNodeResponsibilityLabel, distributeFocusEntries, feishuLinksForTask, feishuRelationshipLabel, feishuTypeName, feishuUrlForWorkItem, filterTaskEntries, filterTaskLanesByStatus, focusColumnCount, formatFocusCurrent, formatSessionActivity, groupTaskEntries, groupTaskEntriesByLane, isFinishedProjectIssue, latestTaskRecordAt, localLedgersForParent, newTaskEntryKeys, prioritizeTaskEntries, projectItemsForTask, projectTaskCardDetails, runsForTask, selectFocusEntries, selectGroupPrimaryEntry, selectTaskAction, sortDetailLocalTasks, sortDetailSubtasks, splitDetailLocalTasks, taskDisplayEntryFinishedAt, taskDisplayEntryIsNew, taskDisplayEntryUpdatedAt, taskEntryFilterStatuses, taskEntryLane, taskEntryStatusLabel, taskEntryUpdatedAt, workbenchChildNeedsAttention, workbenchParentStatusLabel, workbenchSubtaskNodeLabel, workbenchSubtaskStatusLabel, type ObservationCard, type TaskAssociationFilter, type TaskEntry, type TaskGroup, type TaskLane } from './workspace-console-view-model';
+import { buildExecutionCards, buildTaskEntries, buildWorkspaceConsoleView, currentNodeResponsibilityLabel, distributeFocusEntries, feishuUrlForWorkItem, filterTaskEntries, focusColumnCount, formatSessionActivity, groupTaskEntriesByLane, taskRecordCounts, isFinishedProjectIssue, latestTaskRecordAt, localLedgersForParent, newTaskEntryKeys, prioritizeTaskEntries, projectItemsForTask, projectTaskCardDetails, runsForTask, selectFocusEntries, sortDetailLocalTasks, sortDetailSubtasks, taskDisplayEntryIsNew, taskEntryLane, taskEntryStatusLabel, workbenchChildNeedsAttention, workbenchSubtaskNodeLabel, workbenchSubtaskStatusLabel, type ObservationCard, type TaskAssociationFilter, type TaskEntry, type TaskGroup, type TaskLane } from './workspace-console-view-model';
 import WorkspaceTaskPanel from './WorkspaceTaskPanel';
 import WorkspaceSourceTimes from './WorkspaceSourceTimes';
+import WorkspaceHelpBadge from './WorkspaceHelpBadge';
+import {buildSummaryStatusIndex,summaryStatusOptions,filterLanesBySummary} from './workspace-summary-filter';
+import {readWorkspaceRefreshTimes,rememberWorkspaceRefreshTime,trackSuccessfulWorkspaceRefresh,type WorkspaceRefreshTimes} from './workspace-source-times';
 import { stateFlowResponsibilityLabel } from './workspace-console-view-model';
 import WorkspaceCodexResourceCard from './WorkspaceCodexResourceCard';
-import { describeRun, describeRunCategory, describeRunListMetrics, describeRunMetrics, describeRunMode, describeRunResult, formatRunDuration } from './run-presentation';
+import { describeRun, describeRunCategory, describeRunMetrics, describeRunMode, describeRunResult, describeRunProgress, runMatchesFilter, type RunFilter, formatRunDuration } from './run-presentation';
 import { useWorkspaceTaskLauncher } from './useWorkspaceTaskLauncher';
-import { mergeWorkspaceSessionAssociations, resolveFeishuWorkItemPrimaryAction } from './workspace-task-launch';
+import { mergeWorkspaceSessionAssociations, resolveFeishuWorkItemPrimaryAction,resolveWorkspaceTaskPrimaryAction } from './workspace-task-launch';
+import WorkspaceSessionPanel from './WorkspaceSessionPanel';
 import { loadWorkbenchDetailSnapshot, loadTaskDetailSnapshot, runForTaskDetail, type WorkbenchDetailSelection } from './workspace-task-detail';
 import { taskStatusPresentation } from './task-status';
 import { personalIssueCompletionNotice } from './workspace-console-view-model';
-import { primaryFeishuWorkItemId } from './workspace-task-identity';
+import { taskFeishuContext, personalSubtaskSummary, trackedParticipationLabel, taskPrimaryFiles, feishuSubtaskUrl as subtaskUrl } from './workspace-console-view-model';
 import { loadWorkbenchTheme, saveWorkbenchTheme, WORKBENCH_THEME_OPTIONS, type WorkbenchTheme } from './workspace-console-theme';
 import { buildWorkbenchDayHeader } from './workbench-day-header';
 import { CACHE_TTL_MS, RESPONSIBILITY_CACHE_TTL_MS } from './workspace-console-cache';
@@ -52,22 +67,12 @@ const formatSummaryTime = (value: string | number | null | undefined) => value
   ? formatDateTime(value)
   : '未登记';
 const formatRefreshSeconds = (elapsedMs: number) => `${(Math.max(0, elapsedMs) / 1000).toFixed(1)} 秒`;
-const statusText = (status: string | null) => taskStatusPresentation(status).label;
 const responsibilityText = (value: ProjectItem['actionability']) => ({ current: '当前需我处理', state_responsibility: '负责流程流转', upcoming: '后续需我处理' })[value];
 const responsibilityExplanation = (value: ProjectItem['actionability']) => ({ current: '当前流程节点有你的待处理责任。', state_responsibility: '你在工作项的状态流转中承担责任，不代表当前节点需要你操作。', upcoming: '后续流程节点有你的待处理责任。' })[value];
-const subtaskUrl = (parent: WorkbenchItem, subtask: WorkbenchItem['mySubtasks'][number]): string | null => {
-  if (!parent.url) return null;
-  try {
-    const url = new URL(parent.url);
-    url.searchParams.set('activeStateId', subtask.nodeId);
-    url.searchParams.set('subTaskId', subtask.id);
-    return url.toString();
-  } catch { return null; }
-};
 const taskLaneOrder: Array<{ key: TaskLane; title: string; note: string; titleTone: string; headerTone: string }> = [
-  { key: 'doing', title: '处理中', note: '已开始未收口，含等待、阻塞及暂停', titleTone: 'text-cyan-200', headerTone: 'border-cyan-300/15 bg-cyan-300/[0.07]' },
-  { key: 'unstarted', title: '待处理／待确认', note: '含本地未开启、待复核、等待及飞书后续或待核对项', titleTone: 'text-amber-200', headerTone: 'border-amber-300/15 bg-amber-300/[0.07]' },
-  { key: 'completed', title: '已完成／已结束', note: '含本轮个人已完成、流程结束、关闭及取消', titleTone: 'text-emerald-200', headerTone: 'border-emerald-300/15 bg-emerald-300/[0.07]' },
+  { key: 'doing', title: '进行中', note: '已开始且仍需推进的工作', titleTone: 'text-cyan-200', headerTone: 'border-cyan-300/15 bg-cyan-300/[0.07]' },
+  { key: 'unstarted', title: '等待中', note: '待处理、待确认，以及等待或暂停的工作', titleTone: 'text-amber-200', headerTone: 'border-amber-300/15 bg-amber-300/[0.07]' },
+  { key: 'completed', title: '已结束', note: '仅含本地台账 · 按任务目录更新时间从新到旧', titleTone: 'text-emerald-200', headerTone: 'border-emerald-300/15 bg-emerald-300/[0.07]' },
 ];
 
 function PersonalCompletionNotice({ item, tasks = [] }: { item: ProjectItem; tasks?: readonly Task[] }) {
@@ -83,7 +88,8 @@ const loadResponsibility = (userId: string, force = false,
   return value;
 }, force);
 
-const taskKeysStorageKey = (userId: string) => `relay:workspace-console:task-keys:v2:${userId}`;
+const taskKeysStorageKey = (userId: string) => `relay:workspace-console:task-keys:v3:${userId}`;
+const workspaceRefreshStorage=()=>{try{return window.sessionStorage;}catch{return null;}};
 const readTaskKeys = (userId: string): string[] | null => {
   try {
     const raw = window.sessionStorage.getItem(taskKeysStorageKey(userId));
@@ -105,8 +111,10 @@ export default function WorkspaceConsolePage() {
   const relaySessions = useChatStore((state) => state.sessions);
   const setSidebarOpen = useChatStore((state) => state.setSidebarOpen);
   const initialCache = useMemo(() => readWorkspaceConsoleCache(userId), [userId]);
+  const initialRefreshTimes=useMemo(()=>readWorkspaceRefreshTimes(workspaceRefreshStorage(),userId),[userId]);
+  const [sourceRefreshTimes,setSourceRefreshTimes]=useState({userId,times:initialRefreshTimes});
   const openFilePreview = useFilePreview();
-  const { continueSession, launchTask, executePrimary, launchFeishuWorkItem } = useWorkspaceTaskLauncher();
+  const { continueSession, launchTask, executePrimary, launchFeishuWorkItem,continueTaskSession } = useWorkspaceTaskLauncher();
   const [dashboard, setDashboard] = useState<WorkspaceConsoleDashboardDto | null>(initialCache.dashboard);
   const [responsibility, setResponsibility] = useState<WorkspaceConsoleResponsibilityDto | null>(initialCache.responsibility);
   const [dashboardError, setDashboardError] = useState<string | null>(null);
@@ -124,8 +132,18 @@ export default function WorkspaceConsolePage() {
   const observationGeneration = useRef(0);
   const localRefresh = useMemo(() => createWorkspaceRefreshTracker(), [userId]);
   const projectRefresh = useMemo(() => createWorkspaceRefreshTracker(), [userId]);
-  const readDashboard = (force = false) => localRefresh.track(loadDashboard(userId, force));
-  const readResponsibility = (force = false, trigger: 'open' | 'auto' | 'retry' | 'manual' = 'open') => projectRefresh.track(loadResponsibility(userId, force, trigger));
+  const rememberSourceRefresh=(source:keyof WorkspaceRefreshTimes,startedAt:number)=>{
+    if(currentUserId.current!==userId)return;
+    const times=rememberWorkspaceRefreshTime(workspaceRefreshStorage(),userId,source,startedAt);
+    setSourceRefreshTimes(current=>{
+      const previous=current.userId===userId?current.times:initialRefreshTimes;
+      return {userId,times:{local:Math.max(previous.local??0,times.local??0)||null,project:Math.max(previous.project??0,times.project??0)||null}};
+    });
+  };
+  const readDashboard = (force = false) => localRefresh.track(trackSuccessfulWorkspaceRefresh(()=>loadDashboard(userId, force),
+    value=>(force||value.sourceMeta?.state==='live')&&value.errors.length===0&&value.sourceMeta?.state!=='failed_snapshot'&&value.sourceMeta?.state!=='unavailable',at=>rememberSourceRefresh('local',at)));
+  const readResponsibility = (force = false, trigger: 'open' | 'auto' | 'retry' | 'manual' = 'open') => projectRefresh.track(trackSuccessfulWorkspaceRefresh(()=>loadResponsibility(userId, force, trigger),
+    value=>(force||value.sourceMeta?.state==='live')&&!value.stale&&!value.error&&value.sourceMeta?.state!=='failed_snapshot'&&value.sourceMeta?.state!=='unavailable',at=>rememberSourceRefresh('project',at)));
   const currentUserId = useRef(userId);
   currentUserId.current = userId;
   const projectLoadingRef = useRef(projectLoading);
@@ -359,6 +377,7 @@ export default function WorkspaceConsolePage() {
     if (localLoadingRef.current || projectLoadingRef.current) return;
     const localRequested = scope !== 'project';
     const projectRequested = scope !== 'local';
+    setHighlightedTasks({userId,keys:new Set()});
     if (projectRequested) setProjectNoticeDismissed(false);
     const startedAt = performance.now();
     setRefreshTiming({ startedAt, observedAt: startedAt, localMs: null, projectMs: null,
@@ -428,7 +447,6 @@ export default function WorkspaceConsolePage() {
   };
 
   const model = useMemo(() => buildWorkspaceConsoleView(dashboard, responsibility), [dashboard, responsibility]);
-  const trackedItems = useMemo(() => trackedOpenFeishuItems(responsibility, model.tasks), [responsibility, model]);
   const observation = useMemo(() => buildExecutionCards(dashboard, observationSnapshots), [dashboard, observationSnapshots]);
   const snapshotReady = !localLoading && !projectLoading && !dashboardError && !projectError
     && dashboard?.sourceAvailable.registry === true && !!responsibility && responsibility.stale === false && !responsibility.error;
@@ -436,7 +454,6 @@ export default function WorkspaceConsolePage() {
   const projectRefreshFailed = !!projectError || !responsibility || responsibility.sourceMeta?.state === 'failed_snapshot' || !!responsibility.stale || !!responsibility.error;
   const hasLocalData = dashboard?.sourceAvailable.registry === true;
   const hasProjectData = !!responsibility;
-  const displayingOldData = (hasLocalData && localRefreshFailed) || (hasProjectData && projectRefreshFailed);
   const localRefreshPartial = !localRefreshFailed && (dashboard?.errors.length ?? 0) > 0;
   const refreshBannerTone = (refreshTiming?.localRequested && localLoading) || (refreshTiming?.projectRequested && projectLoading && refreshTiming.projectMs === null)
     ? 'border-cyan-300/30 bg-cyan-300/[0.12]'
@@ -447,7 +464,9 @@ export default function WorkspaceConsolePage() {
         : 'border-emerald-300/40 bg-emerald-400/[0.18]';
   const comparisonReady = snapshotReady;
   const allEntries = useMemo(() => buildTaskEntries(model, 'all'), [model]);
-  const focusEntries = useMemo(() => selectFocusEntries(groupTaskEntries(allEntries), now.getTime()), [allEntries, now]);
+  const allMatters = useMemo(() => unifyTaskEntries(allEntries, responsibility), [allEntries, responsibility]);
+  const trackedItems = useMemo(() => trackingItemsForMatters(responsibility,model.tasks,allMatters), [responsibility, model.tasks, allMatters]);
+  const focusEntries = useMemo(() => selectFocusEntries(allMatters, now.getTime()), [allMatters, now]);
   const focusColumns = useMemo(() => distributeFocusEntries(focusEntries, focusColumnCount(focusViewportWidth, focusEntries.length),
     (entry) => focusCardHeights[entry.key] ?? 240), [focusEntries, focusViewportWidth, focusCardHeights]);
   useLayoutEffect(() => {
@@ -465,32 +484,40 @@ export default function WorkspaceConsolePage() {
     cards.forEach((card) => observer.observe(card));
     return () => observer.disconnect();
   }, [focusColumns]);
-  const totalTaskCount = allEntries.length;
-  const feishuTaskCount = allEntries.filter((entry) => entry.kind === 'parent' || entry.kind === 'subtask' || entry.kind === 'project').length;
-  const compactTaskCounts = hasLocalData && hasProjectData
-    && totalTaskCount === (dashboard?.counts.total ?? 0) + feishuTaskCount;
+  const recordCounts = { ...taskRecordCounts(allEntries), cards: allMatters.filter(isWorkbenchTaskVisible).length };
   useEffect(() => {
     if (!snapshotReady) return;
     const compared = lastComparedSources.current;
     if (compared?.userId === userId && compared.dashboard === dashboard && compared.responsibility === responsibility) return;
     lastComparedSources.current = { userId, dashboard, responsibility };
     const previous = taskKeyBaseline.current?.userId === userId ? taskKeyBaseline.current.keys : readTaskKeys(userId);
-    const keys = allEntries.map((entry) => entry.key);
-    setHighlightedTasks({ userId, keys: new Set(newTaskEntryKeys(previous, allEntries)) });
-    taskKeyBaseline.current = { userId, keys };
-    try { window.sessionStorage.setItem(taskKeysStorageKey(userId), JSON.stringify(keys)); } catch { /* Session storage may be disabled. */ }
+    const keys = snapshotTaskIdentityKeys(allEntries,responsibility);
+    setHighlightedTasks(current=>({userId,keys:retainNewTaskKeys(current.userId===userId?current.keys:new Set(),previous,keys)}));
+    const knownKeys=[...new Set([...(previous??[]),...keys])];
+    taskKeyBaseline.current = { userId, keys:knownKeys };
+    try { window.sessionStorage.setItem(taskKeysStorageKey(userId), JSON.stringify(knownKeys)); } catch { /* Session storage may be disabled. */ }
   }, [allEntries, snapshotReady, dashboard, responsibility, userId]);
   const newTaskKeys = highlightedTasks.userId === userId ? highlightedTasks.keys : new Set<string>();
   const entries = useMemo(() => (associationFilter !== 'local' && associationFilter !== 'uncertain') || comparisonReady
     ? buildTaskEntries(model, associationFilter) : [], [model, associationFilter, comparisonReady]);
-  const displayEntries = useMemo(() => groupTaskEntries(entries), [entries]);
+  const displayEntries = useMemo(() => selectMatterEntries(allMatters, entries), [allMatters, entries]);
   const visibleEntries = useMemo(() => prioritizeTaskEntries(filterTaskEntries(displayEntries, 'all', search), newTaskKeys), [displayEntries, search, newTaskKeys]);
+  const summaryStatusIndex = useMemo(() => buildSummaryStatusIndex(displayEntries, responsibility), [displayEntries, responsibility]);
   const laneStatusOptions = useMemo(() => {
-    const lanes = groupTaskEntriesByLane(displayEntries);
-    const optionsFor = (lane: TaskLane) => [...new Set(lanes[lane].flatMap(taskEntryFilterStatuses))].sort((a, b) => a.localeCompare(b, 'zh-CN'));
+    const lanes = workbenchTaskLanes(visibleEntries);
+    const optionsFor = (lane: TaskLane) => summaryStatusOptions(lanes[lane], summaryStatusIndex);
     return { unstarted: optionsFor('unstarted'), doing: optionsFor('doing'), completed: optionsFor('completed') };
-  }, [displayEntries]);
-  const taskLanes = useMemo(() => filterTaskLanesByStatus(groupTaskEntriesByLane(visibleEntries), laneStatusFilters), [visibleEntries, laneStatusFilters]);
+  }, [visibleEntries, summaryStatusIndex]);
+  useEffect(() => {
+    setLaneStatusFilters(current => {
+      const next = {...current};
+      for (const lane of ['doing','unstarted','completed'] as const) {
+        if (next[lane] && !laneStatusOptions[lane].some(option => option.label === next[lane])) next[lane] = '';
+      }
+      return next.doing === current.doing && next.unstarted === current.unstarted && next.completed === current.completed ? current : next;
+    });
+  }, [laneStatusOptions]);
+  const taskLanes = useMemo(() => filterLanesBySummary(workbenchTaskLanes(visibleEntries), laneStatusFilters, summaryStatusIndex), [visibleEntries, laneStatusFilters, summaryStatusIndex]);
   useEffect(() => {
     setCompletedVisibleCount(10);
     if (completedScrollRef.current) completedScrollRef.current.scrollTop = 0;
@@ -510,8 +537,7 @@ export default function WorkspaceConsolePage() {
     return [...view.responsibility.current, ...view.responsibility.stateResponsibility, ...view.responsibility.upcoming]
       .find((item) => item.workItemId === detailSelection.id) ?? null;
   }, [task, detailSelection, activeDetail, taskDashboard, detailResponsibility, model]);
-  const projectLocalTasks = project ? sortDetailLocalTasks(taskDashboard?.tasks.filter((item) => project.localTaskIds.includes(item.id)
-    || item.feishuWorkItemIds.includes(project.workItemId)) ?? []) : [];
+  const projectLocalTasks = project ? sortDetailLocalTasks(taskDashboard?.tasks.filter((item) => project.localTaskIds.includes(item.id)) ?? []) : [];
   const workbenchParent = detailSelection?.kind === 'parent' || detailSelection?.kind === 'group' ? detailResponsibility?.workbenchItems.find((item) => item.workItemId === detailSelection.id) :
     detailSelection?.kind === 'subtask' ? detailResponsibility?.workbenchItems.find((item) => item.mySubtasks.some((child) => `${item.workItemId}:${child.id}` === detailSelection.id)) : null;
   const operationParentId = project?.workItemId ?? workbenchParent?.workItemId ?? null;
@@ -520,11 +546,6 @@ export default function WorkspaceConsolePage() {
   const operationSelectionKey = detailSelection ? `${detailSelection.kind}:${detailSelection.id}` : null;
   const activeOperations = operationParentId && operationAnchor && activities[operationParentId]?.anchor === operationAnchor
     ? activities[operationParentId].value : null;
-  const activityForParent = (id: string, updatedAt: string | null | undefined) => {
-    const cached = activities[id];
-    return cached?.anchor === (updatedAt ?? responsibility?.generatedAt) && Date.now() - cached.fetchedAt < 10 * 60_000
-      ? cached.value : null;
-  };
   useEffect(() => {
     const generation = ++activityGeneration.current;
     if (!operationSelectionKey) { forceOperationRefresh.current = false; requestedOperationSelection.current = null; setActivityLoading(false); setActivityError(null); return; }
@@ -596,8 +617,12 @@ export default function WorkspaceConsolePage() {
   const relatedGroupIssues = workbenchParent ? detailResponsibility?.items.filter((item) => item.typeName === '缺陷'
     && item.linkedStoryIds?.length === 1 && item.linkedStoryIds[0] === workbenchParent.workItemId
     && !detailResponsibility.workbenchItems.some((parent) => parent.workItemId === item.workItemId && parent.mySubtasks.length > 0)) ?? [] : [];
-  const subtaskLocalTasks = workbenchSubtask ? sortDetailLocalTasks(taskDashboard?.tasks.filter((item) => item.feishuWorkItemIds.includes(workbenchSubtask.id)) ?? []) : [];
+  const subtaskLocalTasks = workbenchSubtask ? sortDetailLocalTasks(taskDashboard?.tasks.filter((item) => workbenchSubtask.localTaskIds?.includes(item.id)) ?? []) : [];
   const parentLocalTasks = workbenchParent ? localLedgersForParent(workbenchParent, taskDashboard?.tasks ?? []) : [];
+  const detailMatter = useMemo(() => workbenchParent ? unifyTaskEntries(buildTaskEntries(buildWorkspaceConsoleView(taskDashboard,detailResponsibility)),detailResponsibility)
+    .find((entry): entry is TaskGroup => entry.kind==='group'&&entry.parent.workItemId===workbenchParent.workItemId) : null,[taskDashboard,detailResponsibility,workbenchParent]);
+  const matterLocalTasks = detailMatter ? sortDetailLocalTasks(detailMatter.members.flatMap(entry=>entry.kind==='local'?[entry.task]:[])) : parentLocalTasks;
+  const matterRuns = taskDashboard?.runs.filter(run=>run.taskId&&(workbenchSubtask?subtaskLocalTasks:matterLocalTasks).some(task=>task.id===run.taskId)) ?? [];
   const childOperationTimes = new Map(workbenchParent?.mySubtasks.flatMap((child) => {
     const at = lastChildOperation(activeOperations, child.id);
     return at ? [[child.id, at] as const] : [];
@@ -608,24 +633,34 @@ export default function WorkspaceConsolePage() {
   };
   const sortedParentChildren = workbenchParent ? sortDetailSubtasks(workbenchParent, taskDashboard?.tasks ?? [], childOperationTimes) : [];
   const parentChildrenNeedingAttention = sortedParentChildren.filter((child) => workbenchChildNeedsAttention(child,
-    taskDashboard?.tasks.filter((local) => local.feishuWorkItemIds.includes(child.id)) ?? [])) ?? [];
+    taskDashboard?.tasks.filter((local) => child.localTaskIds?.includes(local.id)) ?? [])) ?? [];
   const finishedParentChildren = sortedParentChildren.filter((child) => !parentChildrenNeedingAttention.includes(child));
   const projectDetails = project ? projectTaskCardDetails(project) : null;
+  const projectNativeParent = project ? detailResponsibility?.workbenchItems.find(item=>item.workItemId===project.workItemId) : undefined;
   const run = selectedRun ? runForTaskDetail(selectedRun, selectedRun.source === 'observation' ? observationSnapshots.runs ?? dashboard : dashboard,
     selectedRun.source === 'observation' ? null : detailSnapshot?.taskId ? { taskId: detailSnapshot.taskId, dashboard: detailSnapshot.dashboard } : null) : null;
   const runSource = selectedRun?.source === 'observation' ? observationSnapshots.runs ?? dashboard : detailSnapshot?.dashboard ?? dashboard;
   const runTask = run?.taskId ? runSource?.tasks.find((item) => item.id === run.taskId) ?? null : null;
   const projectForTask = task ? projectItemsForTask(task, detailResponsibility) : [];
-  const taskFeishuLinks = task ? feishuLinksForTask(task, detailResponsibility) : [];
-  const taskFeishuIds = task ? [...new Set([...task.feishuWorkItemIds, ...projectForTask.map((item) => item.workItemId)])] : [];
+  const taskContextItems = task ? taskFeishuContext(task,detailResponsibility) : [];
   const taskRuns = task && taskDashboard ? runsForTask(taskDashboard, task) : [];
+  const taskFiles = task ? taskPrimaryFiles(task,taskRuns) : [];
   const taskSessions = task ? taskDashboard?.sessions.filter((item) => task.sessionIds.includes(item.sessionId)) ?? [] : [];
   const openDetail = (selection: WorkbenchDetailSelection) => {featureAction('workbench','details','workbench'); detailRefreshGeneration.current += 1; setDetailSelection(selection); setDetailSnapshot(null); setRefreshingDetail(false); setDetailRefreshError(null); };
   const closeDetail = (keepSnapshot = false) => { detailRefreshGeneration.current += 1; setDetailSelection(null); setRefreshingDetail(false); setDetailRefreshError(null); if (!keepSnapshot) setDetailSnapshot(null); };
   const openTask = (taskId: string, source?: WorkspaceConsoleDashboardDto) => {
     const selection: WorkbenchDetailSelection = { kind: 'local', id: taskId };
     openDetail(selection);
-    if (source) setDetailSnapshot({ selection, taskId, dashboard: source, responsibility });
+    const selectedDashboard=source??dashboard;
+    if (selectedDashboard) setDetailSnapshot({ selection, taskId, dashboard: selectedDashboard, responsibility });
+    if(selectedDashboard?.tasks.find(task=>task.id===taskId)?.feishuWorkItemIds.length){
+      const generation=detailRefreshGeneration.current;
+      setRefreshingDetail(true);
+      void getWorkspaceConsoleResponsibility(undefined,false,'detail',taskId).then(value=>{
+        if(generation===detailRefreshGeneration.current)setDetailSnapshot({selection,taskId,dashboard:selectedDashboard,responsibility:value});
+      }).catch(cause=>{if(generation===detailRefreshGeneration.current)setDetailRefreshError(cause instanceof Error?cause.message:String(cause));})
+        .finally(()=>{if(generation===detailRefreshGeneration.current)setRefreshingDetail(false);});
+    }
   };
   const openProject = (workItemId: string) => openDetail({ kind: 'project', id: workItemId });
   const openWorkbenchEntry = (entry: WorkbenchEntry) => openDetail(entry.kind === 'parent'
@@ -638,7 +673,7 @@ export default function WorkspaceConsolePage() {
     setDetailRefreshError(null);
     try {
       const snapshot = await loadWorkbenchDetailSnapshot(selection, () => getWorkspaceConsoleDashboard(undefined, selection.kind === 'local'),
-        (force) => getWorkspaceConsoleResponsibility(undefined, force, 'detail'), detailResponsibility);
+        (force) => getWorkspaceConsoleResponsibility(undefined, force, 'detail',selection.kind==='local'?selection.id:undefined), detailResponsibility);
       if (detailRefreshGeneration.current === generation) setDetailSnapshot(snapshot);
     } catch (cause) {
       if (detailRefreshGeneration.current === generation) setDetailRefreshError(cause instanceof Error ? cause.message : String(cause));
@@ -661,26 +696,36 @@ export default function WorkspaceConsolePage() {
       if (detailRefreshGeneration.current === generation) setRefreshingDetail(false);
     }
   };
-  const startTask = (item: Task, source = dashboard) => { if (source) setActionError(executePrimary(item, source)); };
-  const startProjectItem = (item: ProjectItem, source = dashboard) => {
+  const startTask = (item: Task, source = dashboard) => { if (source) {if(resolveWorkspaceTaskPrimaryAction(item,source.sessions).kind==='choose'){openTask(item.id,source);return;}setActionError(executePrimary(item, source));} };
+  const startProjectItem = (item: ProjectItem, source = dashboard,forceNew=false) => {
+    if(!forceNew&&resolveFeishuWorkItemPrimaryAction(item.workItemId,source).kind==='choose'){openProject(item.workItemId);return;}
     const { current, next } = projectTaskCardDetails(item);
-    setActionError(launchFeishuWorkItem({ workItemId: item.workItemId, title: item.title, url: feishuUrlForWorkItem(item), current, next }, source,isPersonalProjectComplete(item)));
+    setActionError(launchFeishuWorkItem({ workItemId: item.workItemId, title: item.title, url: feishuUrlForWorkItem(item), current, next }, source,isPersonalProjectComplete(item),forceNew));
   };
-  const startWorkbenchEntry = (entry: WorkbenchEntry, source = dashboard, followFlow = false) => {
+  const startWorkbenchEntry = (entry: WorkbenchEntry, source = dashboard, followFlow = false,forceNew=false) => {
     const parent = entry.kind === 'parent' ? entry.item : entry.parent;
     const child = entry.kind === 'subtask' ? entry.subtask : null;
+    const targetRef=child?`feishu-subtask:${parent.workItemId}:${child.id}`:`feishu:${parent.workItemId}`;
+    if(!forceNew&&resolveFeishuWorkItemPrimaryAction(targetRef,source).kind==='choose'){openWorkbenchEntry(entry);return;}
     const ended = workbenchActionCompleted(entry, followFlow);
-    setActionError(launchFeishuWorkItem({ workItemId: child?.id ?? parent.workItemId,
+    setActionError(launchFeishuWorkItem({ workItemId: child?.id ?? parent.workItemId,...(child?{parentId:parent.workItemId}:{}),
       title: child ? `${child.title}｜父项 ${parent.title}` : parent.title,
       url: child ? subtaskUrl(parent, child) : parent.url,
       current: child ? `子任务 ${workbenchSubtaskStatusLabel(child)}；父项 ${parent.workItemId}` : `父项 ${taskEntryStatusLabel(entry)}`,
       next: ended ? `回顾飞书${child ? '子任务' : '父工作项'} ${child?.id ?? parent.workItemId}`
-        : child ? `核对飞书子任务 ${child.id}` : `跟踪父工作项 ${parent.workItemId} 的状态` }, source,ended));
+        : child ? `核对飞书子任务 ${child.id}` : `跟踪父工作项 ${parent.workItemId} 的状态` }, source,ended,forceNew));
   };
-  const actionLabel = (item: Task, source = dashboard) => ({ start: '开始处理', continue: '继续处理', history: '重新处理' })[selectTaskAction(item, source?.sessions ?? [])];
-  const feishuActionLabel = (id: string, completed = false, source = dashboard) => ({start:'开始处理',continue:'继续处理',restart:'重新处理'})[resolveFeishuWorkItemPrimaryAction(id,source,completed).kind];
+  const actionLabel = (item: Task, source = dashboard) => ({ start: '新建会话', continue: '打开关联会话',choose:'选择关联会话',restart:'新建会话' })[resolveWorkspaceTaskPrimaryAction(item, source?.sessions ?? []).kind];
+  const feishuActionLabel = (id: string, completed = false, source = dashboard) => ({start:'新建会话',continue:'打开关联会话',choose:'选择关联会话',restart:'新建会话'})[resolveFeishuWorkItemPrimaryAction(id,source,completed).kind];
   const entryActionLabel = (entry: TaskEntry) => entry.kind==='local' ? actionLabel(entry.task)
-    : feishuActionLabel(entry.kind==='subtask'?entry.subtask.id:entry.item.workItemId,taskEntryLane(entry)==='completed');
+    : feishuActionLabel(entry.kind==='subtask'?`feishu-subtask:${entry.parent.workItemId}:${entry.subtask.id}`:entry.item.workItemId,taskEntryLane(entry)==='completed');
+  const openCardEntry=(entry:TaskEntry)=>entry.kind==='local'?openTask(entry.task.id):entry.kind==='project'?openProject(entry.item.workItemId):entry.kind==='parent'?openTaskGroup({kind:'group',key:`group:${entry.item.workItemId}`,parent:entry.item,members:[entry]}):openWorkbenchEntry(entry);
+  const startCardEntry=(entry:TaskEntry)=>entry.kind==='local'?startTask(entry.task):entry.kind==='project'?startProjectItem(entry.item):startWorkbenchEntry(entry);
+  const relationDraft=(item:CardRelation)=>({workItemId:item.id,...(item.target?.kind==='subtask'?{parentId:item.target.parent.workItemId}:{}),title:item.title,url:item.url,
+    current:'',next:''});
+  const continueCardRelation=(_item:CardRelation,id:string,isCurrent:()=>boolean)=>continueTaskSession(dashboard,id,()=>isCurrent()&&currentUserId.current===userId);
+  const newCardRelation=(item:CardRelation)=>setActionError(item.target?.kind==='local'?dashboard?launchTask(item.target.task,dashboard,undefined,true):'工作区尚未读取成功，请刷新后重试。':launchFeishuWorkItem(relationDraft(item),dashboard,false,true));
+  const renderTaskCard=(entry:Extract<TaskDisplayEntry,{kind:'group'|'local'|'project'}>)=><MatterTaskCard entry={entry} responsibility={responsibility} runs={dashboard?.runs??[]} dashboard={dashboard} isNew={taskDisplayEntryIsNew(entry,newTaskKeys)} newKeys={newTaskKeys} onContinueRelation={continueCardRelation} onNewRelation={newCardRelation} onOpen={()=>entry.kind==='group'?openTaskGroup(entry):openCardEntry(entry)} onOpenEntry={openCardEntry} onStart={startCardEntry} actionLabel={entryActionLabel} onOpenFile={path=>void openFilePreview(path)}/>;
   const chooseWorkbenchTheme = (theme: WorkbenchTheme) => {
     setWorkbenchTheme(theme);
     try { saveWorkbenchTheme(window.localStorage, theme); } catch { /* Storage can be disabled. */ }
@@ -728,18 +773,14 @@ export default function WorkspaceConsolePage() {
               </details>
             </div>
             <div className="workspace-workbench__header-meta space-y-1 text-xs text-slate-400">
-                {compactTaskCounts ? <Tooltip content="本地台账、本人父项和本人子任务各自计数；同一事项可能有多条记录" asChild><p className="workspace-workbench__header-counts">
-                  <span className="font-medium text-slate-300">任务记录 {totalTaskCount} 条</span>
-                  <span className="text-slate-500">台账 {dashboard?.counts.total}{localRefreshFailed ? '（旧数据）' : ''}</span>
-                  <span className="text-slate-500">飞书 {feishuTaskCount}{projectRefreshFailed ? '（旧数据）' : ''}</span>
-                </p></Tooltip> : <div className="workspace-workbench__header-counts">
-                  <Tooltip content="本地台账、本人父项和本人子任务各自计数" asChild><span>任务记录：{taskCountDisplay(hasLocalData || hasProjectData, totalTaskCount, localLoading || projectLoading, displayingOldData)}</span></Tooltip>
-                  <span>本地台账：{taskCountDisplay(hasLocalData, dashboard?.counts.total ?? 0, localLoading, hasLocalData && localRefreshFailed)}</span>
-                  <span>飞书任务：{taskCountDisplay(hasProjectData, feishuTaskCount, projectLoading, hasProjectData && projectRefreshFailed)}</span>
-                </div>}
+                  <div className="workspace-workbench__header-counts">
+                    <span>本地交付：{taskCountDisplay(hasLocalData, recordCounts.deliveries, localLoading, false)}</span>
+                    <span>飞书工作项：{taskCountDisplay(hasProjectData, recordCounts.workItems, projectLoading, false)}</span>
+                    <WorkspaceHelpBadge label="任务计数" content={`本地交付与飞书工作项分别计数，不能相加；飞书工作项去重。本人子任务 ${recordCounts.children} 项，责任节点 ${recordCounts.nodes} 个。`} />
+                  </div>
               </div>
           </div>
-          <WorkspaceSourceTimes dashboard={dashboard} responsibility={responsibility} localFailed={localRefreshFailed && !localLoading} projectFailed={projectRefreshFailed && !projectLoading} localRequestFailed={!!dashboardError} projectRequestFailed={!!projectError} />
+          <WorkspaceSourceTimes dashboard={dashboard} responsibility={responsibility} localFailed={localRefreshFailed && !localLoading} projectFailed={projectRefreshFailed && !projectLoading} localRequestFailed={!!dashboardError} projectRequestFailed={!!projectError} localRefreshAt={(sourceRefreshTimes.userId===userId?sourceRefreshTimes.times:initialRefreshTimes).local} projectRefreshAt={(sourceRefreshTimes.userId===userId?sourceRefreshTimes.times:initialRefreshTimes).project} />
           {refreshTiming && (localLoading || projectLoading || ((!refreshTiming.localRequested || !localRefreshFailed) && (!refreshTiming.projectRequested || !projectRefreshFailed))) && <div className={`workspace-workbench__refresh-banner mt-2 flex w-fit max-w-full items-start gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs ${refreshBannerTone}`}>
             <p role="status" className="min-w-0 break-words">{refreshTiming.localRequested && <>本地台账：{localLoading ? '同步中' : localRefreshFailed ? '失败' : localRefreshPartial ? '部分失败' : '已更新'} · {localLoading ? '已耗时' : '耗时'} {formatRefreshSeconds(refreshTiming.localMs ?? refreshTiming.observedAt - refreshTiming.startedAt)} · </>}任务报表：{refreshTiming.projectRequested
               ? <>{projectLoading && refreshTiming.projectMs === null ? '同步中' : projectRefreshFailed ? '失败' : '已更新'} · {projectLoading && refreshTiming.projectMs === null ? '已耗时' : '耗时'} {formatRefreshSeconds(refreshTiming.projectMs ?? refreshTiming.observedAt - refreshTiming.startedAt)}</>
@@ -751,6 +792,7 @@ export default function WorkspaceConsolePage() {
 
       {(dashboardError || dashboard?.sourceMeta?.state === 'failed_snapshot') && <p role="alert" className="rounded-xl border border-rose-400/30 bg-rose-950/30 p-3 text-sm">{dashboard?.sourceMeta?.lastSuccessAt ? `台账更新失败，显示 ${formatSummaryTime(dashboard.sourceMeta.lastSuccessAt)} 的上次成功数据。` : dashboard ? `台账更新失败，显示上次成功数据。` : '本地台账暂不可用。'} <FailureNotice error={dashboardError || (dashboard?.sourceMeta?.state === 'failed_snapshot' ? dashboard.sourceMeta.error : undefined)} /> <button type="button" onClick={() => refreshSource('local')} className="underline underline-offset-2">重试</button></p>}
       {dashboard?.sourceMeta?.state !== 'failed_snapshot' && dashboard?.errors.map((error) => <p key={error} role="status" className="rounded-xl border border-amber-400/25 bg-amber-950/25 p-3 text-sm"><FailureNotice error={error} /></p>)}
+      {responsibility?.associationMeta && responsibility.associationMeta.state !== 'complete' && <p role="status" className="text-sm text-amber-300">{responsibility.associationMeta.state === 'unbound' ? '本地台账未绑定飞书连接，分别展示两侧数据。' : responsibility.associationMeta.error || '部分台账关联尚未核实。'}</p>}
       {!projectNoticeDismissed && (projectError || responsibility?.sourceMeta?.state === 'failed_snapshot' || responsibility?.stale) && <div className="mt-2 flex w-fit max-w-full items-start gap-1.5 rounded-lg border border-amber-400/25 bg-amber-950/25 px-2.5 py-1.5 text-sm">
         <p role="status" className="min-w-0 break-words">{snapshotNotice('飞书', responsibility?.sourceMeta) ?? (responsibility ? `任务报表本次未完成更新，显示 ${formatSummaryTime(responsibility.fetchedAt)} 的上次成功数据。` : '任务报表暂不可用。')} {(projectError || responsibility?.sourceMeta?.state === 'failed_snapshot') && <FailureNotice error={projectError || (responsibility?.sourceMeta?.state === 'failed_snapshot' ? responsibility.sourceMeta.error : undefined)} />} <button type="button" onClick={() => refreshSource('project')} className="underline underline-offset-2">重试</button></p>
         <Tooltip content="关闭任务报表提示" asChild><button type="button" onClick={() => setProjectNoticeDismissed(true)} aria-label="关闭任务报表提示" className="shrink-0 rounded px-0.5 text-base leading-4 text-slate-400 hover:bg-white/10 hover:text-slate-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-300">×</button></Tooltip>
@@ -759,14 +801,10 @@ export default function WorkspaceConsolePage() {
       <div className="min-w-0 space-y-4">
         {!desktopLayout && <WorkspaceCodexResourceCard key={userId} userId={userId} />}
         <section aria-labelledby="focus-heading" className="workspace-workbench__focus-container min-w-0 rounded-2xl border border-white/10 bg-[#111927] p-4 sm:p-5">
-          <div className="mb-4 flex flex-wrap items-start justify-between gap-2"><h2 id="focus-heading" className="flex flex-wrap items-baseline text-base font-semibold">当前焦点 <span className="ml-2 text-xs font-normal text-slate-400">{focusEntries.length} 个事项</span><span className="mt-1 w-full text-xs font-normal text-slate-500 lg:ml-3 lg:mt-0 lg:w-auto">同一飞书父项归为一个事项，优先显示处理中任务</span></h2><a href="#task-search" className="text-xs text-cyan-300 hover:underline">查看全部任务 ↓</a></div>
+          <div className="mb-4 flex flex-wrap items-start justify-between gap-2"><h2 id="focus-heading" className="flex flex-wrap items-center text-base font-semibold">当前焦点 <span className="ml-2 text-xs font-normal text-slate-400">{focusEntries.length} 个事项</span><WorkspaceHelpBadge label="当前焦点" content="同一飞书父项归为一个事项，优先显示进行中任务；等待事项靠后，只有暂停工作的事项不占焦点。" /></h2><a href="#task-search" className="text-xs text-cyan-300 hover:underline">查看全部任务 ↓</a></div>
           <div ref={focusScrollRef} aria-label="当前焦点任务" tabIndex={0} className="workspace-workbench__focus-scroll min-w-0">
           <div className="workspace-workbench__focus-columns min-w-0">
-            {focusEntries.length > 0 && focusColumns.map((column, index) => <div key={index} className="workspace-workbench__focus-column">{column.map((entry) => <div key={entry.key} data-focus-key={entry.key} className="workspace-workbench__focus-item">{entry.kind === 'group'
-              ? <TaskGroupCard key={entry.key} group={entry} activity={activityForParent(entry.parent.workItemId, entry.parent.updatedAt)} reportGeneratedAt={responsibility?.generatedAt ?? null} isNew={taskDisplayEntryIsNew(entry, newTaskKeys)} newKeys={newTaskKeys} onOpen={() => openTaskGroup(entry)} onOpenChild={openWorkbenchEntry} onOpenTask={openTask} onOpenProject={openProject} onStartTask={startTask} onStartChild={startWorkbenchEntry} onStartProject={startProjectItem} actionLabel={actionLabel} entryActionLabel={entryActionLabel} onOpenDocument={(filePath) => void openFilePreview(filePath)} prominent />
-              : entry.kind === 'local'
-                ? <FocusTaskCard key={entry.key} task={entry.task} responsibility={responsibility} isNew={taskDisplayEntryIsNew(entry, newTaskKeys)} onOpen={() => openTask(entry.task.id)} onStart={() => startTask(entry.task)} actionLabel={actionLabel(entry.task)} onOpenDocument={(filePath) => void openFilePreview(filePath)} />
-                : <ProjectTaskCard key={entry.key} item={entry.item} actionLabel={entryActionLabel(entry)} reportGeneratedAt={responsibility?.generatedAt ?? null} isNew={taskDisplayEntryIsNew(entry, newTaskKeys)} onOpen={() => openProject(entry.item.workItemId)} onStart={() => startProjectItem(entry.item)} />}</div>)}</div>)}
+            {focusEntries.length > 0 && focusColumns.map((column, index) => <div key={index} className="workspace-workbench__focus-column">{column.map((entry) => <div key={entry.key} data-focus-key={entry.key} className="workspace-workbench__focus-item">{renderTaskCard(entry)}</div>)}</div>)}
             {!localLoading && !projectLoading && focusEntries.length === 0 && <p className="py-6 text-sm text-slate-400">当前没有未完成事项。</p>}
             {localLoading && !dashboard && <p className="py-6 text-sm text-slate-400">正在读取任务台账…</p>}
           </div>
@@ -777,23 +815,22 @@ export default function WorkspaceConsolePage() {
 
         <section id="task-search" aria-labelledby="all-heading" className="workspace-workbench__task-list min-w-0 scroll-mt-3 rounded-2xl border border-white/10 bg-[#111927]">
           <div className="shrink-0 space-y-3 border-b border-white/10 p-4">
-            <h2 id="all-heading" className="font-semibold">任务列表 <span className="ml-1 text-xs font-normal text-slate-400">{visibleTaskCount} / {displayEntries.length} 组或独立项</span></h2>
+            <h2 id="all-heading" className="font-semibold">任务列表 <span className="ml-1 text-xs font-normal text-slate-400">{visibleTaskCount} / {displayEntries.filter(isWorkbenchTaskVisible).length} 项</span><WorkspaceHelpBadge label="任务列表" content={`同一事项的父项、子项和明确关联台账合为一张卡，三个列表互不重复。${taskLaneOrder.map(({title,note})=>`${title}：${note}`).join('；')}。计数为筛选后显示数 / 总数；焦点与底部流转跟踪不另计任务数。`} /></h2>
             <div className="flex min-w-0 flex-col gap-2 sm:flex-row"><select aria-label="任务关联筛选" value={associationFilter} onChange={(event) => { featureAction('workbench','filter','workbench');setAssociationFilter(event.target.value as TaskAssociationFilter); setLaneStatusFilters({ unstarted: '', doing: '', completed: '' }); }} className="w-full shrink-0 rounded-lg border border-white/10 bg-slate-950 px-3 py-2 text-xs text-slate-100 sm:w-52"><option value="all">全部</option><option value="feishu">飞书任务及关联台账</option><option value="local">未关联飞书的台账</option><option value="uncertain">关联待确认的台账</option></select><input aria-label="搜索任务" onBlur={()=>commitSearch(search)} onKeyDown={event=>{if(event.key==='Enter')commitSearch(search);}} value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索标题或 ID" enterKeyHint="search" className="min-w-0 flex-1 rounded-lg border border-white/10 bg-slate-950 px-3 py-2 text-xs text-slate-100" /></div>
-            <div className="flex gap-1.5 lg:hidden" aria-label="任务状态列表">{taskLaneOrder.map(({ key, title }) => <button key={key} type="button" onClick={() => {if(mobileTaskLane!==key)featureAction('workbench','mode','workbench');setMobileTaskLane(key);}} aria-pressed={mobileTaskLane === key} className={`min-w-0 flex-1 rounded-md border px-2 py-1.5 text-xs font-medium ${mobileTaskLane === key ? 'border-cyan-300/40 bg-cyan-300/10 text-cyan-200' : 'border-white/10 text-slate-400'}`}>{key === 'unstarted' ? '待处理' : title} <span className="tabular-nums">{taskLanes[key].length}</span></button>)}</div>
+            <div className="flex gap-1.5 lg:hidden" aria-label="任务状态列表">{taskLaneOrder.map(({ key, title }) => <button key={key} type="button" onClick={() => {if(mobileTaskLane!==key)featureAction('workbench','mode','workbench');setMobileTaskLane(key);}} aria-pressed={mobileTaskLane === key} className={`min-h-10 min-w-0 flex-1 rounded-md border px-2 py-2 text-[13px] font-normal sm:text-sm ${mobileTaskLane === key ? 'border-cyan-300/40 bg-cyan-300/10 text-cyan-200' : 'border-white/10 text-slate-400'}`}>{title} <span className="tabular-nums">{taskLanes[key].length}</span></button>)}</div>
           </div>
            <div className="workspace-workbench__task-lanes grid min-w-0 gap-3 p-3 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,1.15fr)_minmax(260px,0.75fr)]">
             {(associationFilter === 'local' || associationFilter === 'uncertain') && !comparisonReady && <p role="status" className="col-span-full rounded-lg border border-amber-300/20 bg-amber-300/5 p-3 text-xs text-amber-100">需本地台账与飞书工作项均成功读取，才能判断台账关联状态。</p>}
             {associationFilter === 'all' && !localLoading && !projectLoading && entries.length === 0 && !dashboard?.sourceAvailable.registry && !responsibility && <p className="col-span-full p-3 text-sm text-slate-400">任务来源暂不可用。</p>}
              {taskLaneOrder.map(({ key, title, note, titleTone, headerTone }) => <section key={key} id={`task-lane-${key}`} aria-label={`${title}任务`} data-mobile-active={mobileTaskLane === key} className="workspace-workbench__task-lane min-w-0 rounded-xl border border-white/10 bg-slate-950/40 p-2.5 scroll-mt-4">
-              <div className={`mb-3 min-w-0 rounded-lg border px-2.5 py-2 ${headerTone} ${key === 'doing' ? 'workspace-workbench__lane-doing' : ''}`}><div className="flex min-w-0 flex-wrap items-center justify-between gap-2"><h3 className={`text-sm font-semibold ${titleTone}`}>{title} <span className="ml-1 font-normal tabular-nums text-slate-400">{taskLanes[key].length}</span></h3><select aria-label={`${title}状态筛选`} value={laneStatusFilters[key]} onChange={(event) => {featureAction('workbench','filter','workbench');setLaneStatusFilters((current) => ({ ...current, [key]: event.target.value }));}} className="max-w-full rounded-md border border-white/15 bg-slate-950 px-2 py-1 text-xs text-slate-100"><option value="">全部状态</option>{laneStatusOptions[key].map((status) => <option key={status} value={status}>{status}</option>)}</select></div><p className="mt-0.5 text-[11px] text-slate-400">{note}</p></div>
+              <div className={`mb-3 ${laneStatusOptions[key].length > 1 ? 'flex' : 'hidden'} min-w-0 items-center justify-between lg:flex lg:min-h-14 lg:gap-2 lg:rounded-lg lg:border lg:px-2.5 lg:py-2 ${headerTone} ${key === 'doing' ? 'workspace-workbench__lane-doing' : ''}`}>
+                <div className="hidden shrink-0 items-center lg:flex"><h3 className={`whitespace-nowrap text-sm font-semibold ${titleTone}`}>{title} <span className="ml-1 font-normal tabular-nums text-slate-400">{taskLanes[key].length}</span></h3><WorkspaceHelpBadge label={title} content={`${note}。筛选按卡片右上角汇总状态；只有一种状态时不显示筛选。`} /></div>
+                {laneStatusOptions[key].length > 1 && <select aria-label={`${title}状态筛选`} value={laneStatusFilters[key]} onChange={(event) => {featureAction('workbench','filter','workbench');setLaneStatusFilters((current) => ({ ...current, [key]: event.target.value }));}} className="min-h-9 w-full min-w-0 rounded-md border border-white/15 bg-slate-950 px-2 py-1 text-xs text-slate-100 lg:w-auto lg:max-w-40 lg:flex-1"><option value="">全部状态</option>{laneStatusOptions[key].map(({label,count}) => <option key={label} value={label}>{label} · {count} 项</option>)}</select>}
+              </div>
                <div ref={key === 'completed' ? completedScrollRef : undefined} aria-label={`${title}任务卡片`} tabIndex={0} className="workspace-workbench__task-lane-scroll min-w-0 space-y-2">
                  {(key === 'completed' ? taskLanes[key].slice(0, completedVisibleCount) : taskLanes[key]).map((entry, index) => <Fragment key={entry.key}>
                   {key === 'completed' && index % 10 === 0 && <p className="border-b border-white/10 py-2 text-center text-[11px] text-slate-400">第 {index / 10 + 1} 页 · 第 {index + 1}–{Math.min(index + 10, taskLanes.completed.length)} 项</p>}
-                  {entry.kind === 'group'
-                    ? <TaskGroupCard key={entry.key} group={entry} activity={activityForParent(entry.parent.workItemId, entry.parent.updatedAt)} reportGeneratedAt={responsibility?.generatedAt ?? null} isNew={taskDisplayEntryIsNew(entry, newTaskKeys)} newKeys={newTaskKeys} onOpen={() => openTaskGroup(entry)} onOpenChild={openWorkbenchEntry} onOpenTask={openTask} onOpenProject={openProject} onStartTask={startTask} onStartChild={startWorkbenchEntry} onStartProject={startProjectItem} actionLabel={actionLabel} entryActionLabel={entryActionLabel} onOpenDocument={(filePath) => void openFilePreview(filePath)} />
-                  : entry.kind === 'local'
-                     ? <LocalTaskCard key={entry.key} task={entry.task} responsibility={responsibility} compact isNew={taskDisplayEntryIsNew(entry, newTaskKeys)} onOpen={() => openTask(entry.task.id)} onStart={() => startTask(entry.task)} actionLabel={actionLabel(entry.task)} onOpenDocument={(filePath) => void openFilePreview(filePath)} />
-                  : <ProjectTaskCard key={entry.key} item={entry.item} actionLabel={entryActionLabel(entry)} reportGeneratedAt={responsibility?.generatedAt ?? null} isNew={taskDisplayEntryIsNew(entry, newTaskKeys)} onOpen={() => openProject(entry.item.workItemId)} onStart={() => startProjectItem(entry.item)} />}</Fragment>)}
+                  {renderTaskCard(entry)}</Fragment>)}
                 {!localLoading && !projectLoading && taskLanes[key].length === 0 && (associationFilter === 'all' || comparisonReady) && <p className="p-3 text-xs text-slate-500">{search || laneStatusFilters[key] ? '没有匹配任务' : '暂无任务'}</p>}
                 {key === 'completed' && taskLanes.completed.length > 0 && <div className="space-y-2 py-2 text-center">
                   <p role="status" className="text-[11px] text-slate-500">{completedVisibleCount < taskLanes.completed.length ? `已显示 ${completedVisibleCount} / ${taskLanes.completed.length} 项` : `已显示全部 ${taskLanes.completed.length} 项`}</p>
@@ -804,16 +841,17 @@ export default function WorkspaceConsolePage() {
             {(localLoading || projectLoading) && entries.length === 0 && <p className="p-3 text-sm text-slate-400">正在读取任务…</p>}
           </div>
         </section>
-        <details aria-label="我参与的流转中事项" className="min-w-0 rounded-2xl border border-white/10 bg-[#111927] p-4 sm:p-5">
-          <summary className="flex cursor-pointer list-none flex-col items-start gap-1 text-sm font-semibold sm:flex-row sm:items-center sm:justify-between sm:gap-2">
-            <span className="min-w-0 break-words">我参与的流转中事项 <span className="ml-1 font-normal text-slate-400">{trackedItems.length} 项</span></span>
+        <details aria-label="我参与的流转中事项" className="min-w-0 rounded-2xl border border-white/10 bg-[#111927]">
+          <summary className="flex min-h-14 w-full cursor-pointer list-none flex-col items-start gap-1 rounded-2xl p-4 text-sm font-semibold hover:bg-white/[0.04] focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-300 sm:flex-row sm:items-center sm:justify-between sm:gap-2 sm:p-5">
+            <span className="min-w-0 break-words">我参与的流转中事项 <span className="ml-1 font-normal text-slate-400">{trackedItems.length} 项</span><WorkspaceHelpBadge label="我参与的流转中事项" content="本人已完成、共同参与或后续负责，整体仍流转的事项。本人完成的事项可同时保留在已结束列表；此处不另计任务数。当前有待办的事项在主卡查看。" /></span>
             <span className="min-w-0 break-words text-xs font-normal text-slate-500">{responsibility?.generatedAt ? `飞书 ${formatSummaryTime(responsibility.generatedAt)}` : '飞书数据未读取'}{responsibility?.stale && ' · 旧数据'} <span aria-hidden="true">⌄</span></span>
           </summary>
-          <p className="mt-3 text-xs text-slate-500">个人已完成或后续负责、整体仍流转的事项，仅跟踪，不重复计数。</p>
-          <div className="mt-3 space-y-2">
+          <div className="px-4 pb-4 sm:px-5 sm:pb-5">
+          <div className="space-y-2">
             {trackedItems.map((entry) => <div key={`${entry.kind}:${entry.item.workItemId}`} className="min-w-0 rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2.5 text-xs">
               <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-stretch gap-x-3">
                 <div className="min-w-0">
+                  <p className="mb-1 text-[11px] text-slate-500">{trackedParticipationLabel(entry, model.tasks)}</p>
                   <button type="button" onClick={() => openDetail({kind:entry.kind === 'parent' ? 'group' : 'project',id:entry.item.workItemId})} className="min-w-0 break-all text-left font-medium leading-5 text-slate-100 hover:text-cyan-300">{entry.item.typeName || '飞书事项'} · {entry.item.title}</button>
                   <div className="mt-1.5 space-y-1 text-slate-400">
                     <p className="min-w-0 break-words">{entry.kind === 'parent' ? currentNodeResponsibilityLabel(entry.item) : stateFlowResponsibilityLabel(entry.item)}</p>
@@ -824,23 +862,27 @@ export default function WorkspaceConsolePage() {
                 </div>
                 <div className="flex shrink-0 flex-col items-end gap-1.5 whitespace-nowrap py-0.5">
                   {entry.item.url && <a href={entry.item.url} target="_blank" rel="noopener noreferrer" className="text-cyan-300 hover:underline" aria-label={`在飞书打开${entry.item.title}（${entry.item.workItemId}）`} onClick={()=>{localAction('workbench','open_external','workbench')(true);}}>{entry.item.workItemId} ↗</a>}
-                  <Tooltip content="打开会话，带入任务标题和飞书链接，核查最新情况" asChild><button type="button" onClick={() => entry.kind === 'parent'
-                    ? startWorkbenchEntry({kind:'parent',key:`parent:${entry.item.workItemId}`,item:entry.item}, dashboard, true)
-                    : startProjectItem(entry.item)} aria-label={`处理${entry.item.title}`} className="mt-auto rounded-md border border-cyan-300/35 px-2 py-1 font-medium text-cyan-200 hover:bg-cyan-300/10">处理 →</button></Tooltip>
+                  <button type="button" onClick={() => entry.kind === 'parent'
+                    ? startWorkbenchEntry({kind:'parent',key:`parent:${entry.item.workItemId}`,item:entry.item},dashboard,true)
+                    : startProjectItem(entry.item)} aria-label={`处理流转事项：${entry.item.title}`} className="mt-auto rounded-md border border-cyan-300/35 px-2 py-1 font-medium text-cyan-200 hover:bg-cyan-300/10">处理 →</button>
                 </div>
               </div>
             </div>)}
             {trackedItems.length === 0 && <p className="text-xs text-slate-500">{projectLoading ? '正在读取…' : responsibility ? '暂无符合条件的流转事项。' : '飞书数据暂不可用。'}</p>}
           </div>
+          </div>
         </details>
-        <details aria-label="执行记录与会话" className="workspace-workbench__observation min-w-0 rounded-2xl border border-white/10 bg-[#111927] p-4 sm:p-5">
-          <summary className="flex cursor-pointer list-none flex-wrap items-center justify-between gap-2"><span className="text-sm font-semibold">执行记录与会话 <span className="ml-1 text-xs font-normal text-slate-500">展开追溯执行与查找会话</span></span><span className="text-xs text-slate-400">执行 {observation.runs.items.length} · 会话 {observation.sessions.items.length} <span aria-hidden="true">⌄</span></span></summary>
-          <div className="mt-4 grid min-w-0 gap-3 lg:grid-cols-2">
+        <details aria-label="执行记录与会话" className="workspace-workbench__observation min-w-0 rounded-2xl border border-white/10 bg-[#111927]">
+          <summary className="flex min-h-14 w-full cursor-pointer list-none flex-wrap items-center justify-between gap-2 rounded-2xl p-4 hover:bg-white/[0.04] focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-300 sm:p-5"><span className="text-sm font-semibold">执行记录与会话<WorkspaceHelpBadge label="执行记录与会话" content="执行按开始时间倒序，会话按最近活动展示。执行记录反映本机登记的运行情况，任务是否交付与验收仍以所属任务为准。" /></span><span className="text-xs text-slate-400">执行 {observation.runs.items.length} 条 · 会话 {observation.sessions.items.length} 条 <span aria-hidden="true">⌄</span></span></summary>
+          <div className="grid min-w-0 gap-3 px-4 pb-4 sm:px-5 sm:pb-5 lg:grid-cols-2">
             <ObservationSection title="最近执行记录" count={observation.runs.items.length} tone="text-violet-200" empty={observation.runs.available ? '暂无记录' : '来源不可用'} onRefresh={() => void refreshObservation('runs')} refreshing={observationLoading.runs === true} error={observationErrors.runs}>
-              {observation.runs.items.map((item) => <RunRow key={`${item.taskId}:${item.runId}`} run={item} taskTitle={observation.runs.tasks.find((task) => task.id === item.taskId)?.title || (item.taskId ? item.taskId : '未匹配任务')} onOpen={() => setSelectedRun({ runId: item.runId, taskId: item.taskId, source: 'observation' })} />)}
+              {observation.runs.items.map((item) => <RunRow key={`${item.taskId}:${item.runId}`} run={item} taskTitle={observation.runs.tasks.find((task) => task.id === item.taskId)?.title || undefined} onOpen={() => setSelectedRun({ runId: item.runId, taskId: item.taskId, source: 'observation' })} />)}
             </ObservationSection>
             <ObservationSection title="最近会话" count={observation.sessions.items.length} tone="text-cyan-200" empty={observation.sessions.available ? '暂无记录' : '来源不可用'} onRefresh={() => void refreshObservation('sessions')} refreshing={observationLoading.sessions === true} error={observationErrors.sessions}>
-              {observation.sessions.items.map((item) => <a key={item.sessionId} href={item.url} className="block min-w-0 rounded-lg border border-white/10 bg-white/[0.03] p-2.5 hover:border-cyan-300/40"><span className="block break-words text-xs font-medium text-slate-100">{item.title || item.sessionId}</span><Tooltip content={item.updatedAt ? formatTime(item.updatedAt) : undefined} asChild><span className="mt-1 block text-[11px] text-slate-400">{formatSessionActivity(item.updatedAt, Date.now())}{observation.sessions.unlinkedSessionIds.has(item.sessionId) && ' · 未关联任务'}</span></Tooltip></a>)}
+              {observation.sessions.items.map((item) => {
+                const titles=[...new Set(((observationSnapshots.sessions??dashboard)?.tasks??[]).filter(task=>task.sessionIds.includes(item.sessionId)).map(task=>task.title||task.id))];
+                return <a key={item.sessionId} href={item.url} className="block min-w-0 rounded-lg border border-white/10 bg-white/[0.03] p-2.5 hover:border-cyan-300/40"><span className="block break-words text-xs font-medium text-slate-100">{item.title || item.sessionId}</span><Tooltip content={item.updatedAt ? formatTime(item.updatedAt) : undefined} asChild><span className="mt-1 block text-[11px] text-slate-400">{formatSessionActivity(item.updatedAt, Date.now())}</span></Tooltip><Tooltip overflowOnly content={titles.join('、')||undefined} asChild><span className="mt-1 block line-clamp-2 break-words text-[11px] text-slate-500">{titles.length?`曾处理：${titles.slice(0,2).join('、')}${titles.length>2?` 等${titles.length}项`:''}`:observation.sessions.unlinkedSessionIds.has(item.sessionId)?'未关联任务':'已有任务关联历史'}</span></Tooltip></a>;
+              })}
             </ObservationSection>
           </div>
         </details>
@@ -849,24 +891,33 @@ export default function WorkspaceConsolePage() {
     {actionError && <div role="alert" className="fixed bottom-4 left-4 right-4 z-[60] mx-auto flex max-w-xl items-start justify-between gap-3 rounded-xl border border-rose-300/30 bg-slate-900 p-3 text-sm text-rose-200 shadow-xl"><span><FailureNotice error={actionError} /></span><button type="button" onClick={() => setActionError(null)} className="shrink-0 text-xs underline">关闭</button></div>}
     {task && taskDashboard && detailSelection && <Drawer title={task.title || task.id} subtitle={`任务 ID：${task.id}`} onClose={() => closeDetail()} onRefresh={() => void reloadSelectedDetail(detailSelection).catch(() => undefined)} refreshing={refreshingDetail}>
       {detailRefreshError && <p role="alert" className="text-xs text-rose-300">刷新任务失败：<FailureNotice error={detailRefreshError} /></p>}
+      <FeishuContextAlerts items={projectForTask} />
       <WorkspaceResponsibilityNotice responsibility={detailResponsibility} />
-      <Block title="当前状态"><p>{localTaskStatusLabel(task)} · 最近记录 {formatTime(latestTaskRecordAt(task))}</p><TaskProgressNotice entry={{kind:'local',key:task.id,task}} />{(task.waitingOn || task.nextAction) && <p className="break-words">{task.waitingOn ? '等待事项：' : '下一步：'}{task.waitingOn || task.nextAction}</p>}{task.taskDocumentPath && <button type="button" onClick={() => { closeDetail(); void openFilePreview(task.taskDocumentPath!); }} className="text-left text-cyan-300 hover:underline">预览任务说明</button>}</Block>
-      {taskFeishuIds.length > 0 && <Block title={`关联飞书任务 · ${taskFeishuIds.length}`}>{taskFeishuLinks.map((item) => <p key={item.workItemId} className="break-words"><a href={item.url} target="_blank" rel="noreferrer" className="text-cyan-300 hover:underline" onClick={()=>{localAction('workbench','open_external','workbench')(true);}}>{item.title} · {item.workItemId}</a></p>)}{taskFeishuIds.filter((id) => !taskFeishuLinks.some((link) => link.workItemId === id)).map((id) => <p key={id} className="break-words">{id === primaryFeishuWorkItemId(task) && '主任务 · '}{projectForTask.find((item) => item.workItemId === id)?.title ?? '工作项'} · {id}（链接未核验）</p>)}</Block>}
       <WorkspaceTaskPanel task={task} dashboard={taskDashboard} userId={userId} onLaunch={launchTask} onContinue={continueSession} onChanged={() => reloadChangedTask(detailSelection, task.id, detailResponsibility)} />
-      <details className="rounded-xl border border-white/10 bg-white/5 p-3"><summary className="cursor-pointer text-sm font-medium">完整本地台账摘要</summary><div className="mt-3 space-y-2 text-sm text-slate-300"><p className="break-words">任务说明：{task.description || '未登记'}</p><p className="break-words">当前情况：{task.statusBasis || '未登记'}</p>{task.waitingOn && <p className="break-words">等待事项：{task.waitingOn}</p>}<p className="break-words">下一步：{task.nextAction || '未登记'}</p><p>最后核验：{formatTime(task.lastVerifiedAt)}</p>{task.completedAt && <p>完成时间：{formatTime(task.completedAt)}</p>}<p className="break-all">任务路径：{task.taskPath || '未登记'}</p>{task.taskDocumentPath && <p className="break-all">本地任务说明：{task.taskDocumentPath}</p>}</div></details>
+      <Block title="本地交付"><p>{localTaskStatusLabel(task)} · 最近记录 {formatTime(latestTaskRecordAt(task))}</p><TaskProgressNotice entry={{kind:'local',key:task.id,task}} />{!['done','completed','closed','cancelled','canceled'].includes(task.status??'') && (task.waitingOn || task.nextAction) && <p className="break-words">{task.waitingOn ? '等待事项：' : '下一步：'}{task.waitingOn || task.nextAction}</p>}{task.statusBasis&&<p className="line-clamp-3 break-words text-xs text-slate-400">{task.statusBasis}</p>}</Block>
+      {taskFiles.length>0&&<Block title="主要文件"><TaskFileLinks files={taskFiles} onOpen={(path)=>{closeDetail();void openFilePreview(path);}} /></Block>}
+      {taskContextItems.length>0&&<Block title="本地登记的飞书关联"><DeliveryFeishuNotice linkedFeishu={taskContextItems} completed={localTaskLaneForDisplay(task)==='completed'} needsRecheck={false} inDetail /></Block>}
       <Block title={`执行记录 · ${taskRuns.length}`}>
-      <p className="text-xs text-slate-400">区分业务跑数与代码检查；Run 状态不代表任务验收结论。</p>
-        {taskRuns.slice(0, 2).map((item) => <RunRow key={`${item.taskId}:${item.runId}`} run={item} onOpen={() => { closeDetail(true); setSelectedRun({ runId: item.runId, taskId: item.taskId }); }} />)}
-        {taskRuns.length > 2 && <details className="group"><summary className="cursor-pointer text-xs text-cyan-300">查看其余 {taskRuns.length - 2} 条记录</summary><div className="mt-2 space-y-2">{taskRuns.slice(2).map((item) => <RunRow key={`${item.taskId}:${item.runId}`} run={item} onOpen={() => { closeDetail(true); setSelectedRun({ runId: item.runId, taskId: item.taskId }); }} />)}</div></details>}
+        <TaskRunRecords key={task.id} runs={taskRuns} onOpen={(item) => { closeDetail(true); setSelectedRun({ runId: item.runId, taskId: item.taskId }); }} />
       </Block>
-      <Block title={`Relay 会话 · ${taskSessions.length}`}>{taskSessions.map((item) => <a key={item.sessionId} href={item.url} className="block break-words text-cyan-300 hover:underline">{item.title || item.sessionId}</a>)}</Block>
+      {taskSessions.length>0&&<details className="rounded-xl border border-white/10 p-3"><summary className="cursor-pointer text-xs text-slate-400">台账记录的历史会话 · {taskSessions.length}</summary><div className="mt-2 space-y-2">{taskSessions.map(item=><a key={item.sessionId} href={item.url} className="block break-words text-xs text-cyan-300 hover:underline">{item.title||item.sessionId}</a>)}</div></details>}
+      <details className="rounded-xl border border-white/10 bg-white/5 p-3"><summary className="cursor-pointer text-sm font-medium">完整本地台账摘要</summary><div className="mt-3 space-y-2 text-sm text-slate-300"><p className="break-words">任务说明：{task.description || '未登记'}</p><p className="break-words">当前情况：{task.statusBasis || '未登记'}</p>{task.waitingOn && <p className="break-words">等待事项：{task.waitingOn}</p>}<p className="break-words">下一步：{task.nextAction || '未登记'}</p><p>最后核验：{formatTime(task.lastVerifiedAt)}</p>{task.completedAt && <p>完成时间：{formatTime(task.completedAt)}</p>}<p className="break-all">任务路径：{task.taskPath || '未登记'}</p>{task.taskDocumentPath && <p className="break-all">本地任务说明：{task.taskDocumentPath}</p>}</div></details>
+      <details className="rounded-xl border border-white/10 p-3"><summary className="cursor-pointer text-xs text-slate-400">来源与用时核验信息</summary><div className="mt-3 space-y-2">
+      {projectForTask.map(item => <FeishuContext key={item.workItemId} item={item} />)}
+      {task.activityEvidence?.incomplete && <p className="text-xs text-amber-300">活动观测不完整，用时只累计至最后可靠心跳（{task.activityEvidence.state}）。</p>}
+      </div></details>
     </Drawer>}
     {project && projectDetails && detailSelection && <Drawer title={project.title} subtitle={`工作项 ID：${project.workItemId}`} onClose={() => closeDetail()} onRefresh={() => void reloadSelectedDetail(detailSelection).catch(() => undefined)} refreshing={refreshingDetail}>
       {detailRefreshError && <p role="alert" className="text-xs text-rose-300">刷新工作项失败：<FailureNotice error={detailRefreshError} /></p>}
+      <FeishuContextAlerts items={[project]} />
       <WorkspaceResponsibilityNotice responsibility={detailResponsibility} />
-       {!isPersonalProjectComplete(project) && <Block title="任务处理"><p className="text-xs text-slate-400">在固定工作区处理此飞书工作项；开始时带入飞书链接，先核对实际状态。</p><button type="button" onClick={() => startProjectItem(project, taskDashboard)} className="rounded-lg border border-cyan-300/35 px-3 py-2 text-xs font-medium text-cyan-200 hover:bg-cyan-300/10">{feishuActionLabel(project.workItemId,false,taskDashboard)} →</button></Block>}
-       <Block title="飞书工作项"><p>与你的关系：{responsibilityText(project.actionability)} · {project.typeName || '工作项'}</p><p className="text-slate-400">{responsibilityExplanation(project.actionability)}</p><p className="break-words">工作项 ID：{feishuUrlForWorkItem(project) ? <a href={feishuUrlForWorkItem(project)!} target="_blank" rel="noopener noreferrer" className="text-cyan-300 hover:underline" onClick={()=>{localAction('workbench','open_external','workbench')(true);}}>{project.workItemId}</a> : `${project.workItemId}（链接未核验）`}</p><p className="break-words">当前情况：{projectDetails.current}</p><p className="break-words">下一步：{projectDetails.next}</p><p>版本：{project.version || '未登记'}</p>{project.updatedAt && <p>飞书最近更新：{formatTime(project.updatedAt)}</p>}<Tooltip content="飞书责任报表生成时间" asChild><p>最近同步：{formatTime(detailResponsibility?.generatedAt)}</p></Tooltip>{project.personalSubtasks.map((subtask) => <p key={subtask.id} className="break-words">子任务：{subtask.name} · {subtask.passed ? '已完成' : '未完成'} <span className="text-xs text-slate-500">· {childTimeText(subtask.id)}</span></p>)}</Block>
-      {project.statusName && <Block title="飞书状态"><p>{project.statusName}</p></Block>}
+      {taskDashboard && <WorkspaceSessionPanel taskId={`feishu:${project.workItemId}`} targetRef={`feishu:${project.workItemId}`} dashboard={taskDashboard} userId={userId} localTaskIds={project.localTaskIds} onOpen={continueSession} onNew={()=>{startProjectItem(project,taskDashboard,true);return null;}} onChanged={()=>reloadSelectedDetail(detailSelection)} />}
+       <Block title="飞书状态与个人事项"><p className="break-words">{feishuWorkItemStatusLabel(project)}</p><p>{isPersonalProjectComplete(project)?'历史责任关系':'个人责任'}：{responsibilityText(project.actionability)} · {project.typeName || '工作项'}</p>{!isPersonalProjectComplete(project)&&<p className="text-slate-400">{responsibilityExplanation(project.actionability)}</p>}<p className="break-words">工作项 ID：{feishuUrlForWorkItem(project) ? <a href={feishuUrlForWorkItem(project)!} target="_blank" rel="noopener noreferrer" className="text-cyan-300 hover:underline" onClick={()=>{localAction('workbench','open_external','workbench')(true);}}>{project.workItemId}</a> : `${project.workItemId}（链接未核验）`}</p>{!isPersonalProjectComplete(project)&&<><p className="break-words">个人事项：{projectDetails.current}</p><p className="break-words">下一步：{projectDetails.next}</p></>}<p>版本：{project.version || '未登记'}</p>{project.updatedAt && <p>飞书最近更新：{formatTime(project.updatedAt)}</p>}<Tooltip content="飞书责任报表生成时间" asChild><p>最近同步：{formatTime(detailResponsibility?.generatedAt)}</p></Tooltip></Block>
+      {project.personalSubtasks.length>0&&<Block title={`本人子任务 · ${project.personalSubtasks.length}`}>
+        <p className="text-xs text-slate-400">已完成 {project.personalSubtasks.filter(child=>child.passed).length} · 未完成 {project.personalSubtasks.filter(child=>!child.passed).length}<WorkspaceHelpBadge label="本人子任务" content="子任务定位信息以飞书详情为准；飞书与本地台账分别记录状态。" /></p>
+        {project.personalSubtasks.filter(child=>!child.passed).map(child=><ProjectSubtaskRow key={child.id} child={child} parent={projectNativeParent} />)}
+        {project.personalSubtasks.some(child=>child.passed)&&<details><summary className="cursor-pointer text-xs text-slate-400">已完成子任务 · {project.personalSubtasks.filter(child=>child.passed).length}</summary><div className="mt-2 space-y-2">{project.personalSubtasks.filter(child=>child.passed).map(child=><ProjectSubtaskRow key={child.id} child={child} parent={projectNativeParent} />)}</div></details>}
+      </Block>}
       <PersonalCompletionNotice item={project} tasks={taskDashboard?.tasks} />
       {!!project.linkedStoryIds?.length && <Block title="关联需求">{project.linkedStoryIds.map((id) => {
         const story = detailResponsibility?.workbenchItems.find((item) => item.workItemId === id)
@@ -877,43 +928,49 @@ export default function WorkspaceConsolePage() {
         ? <DetailLocalLedgerList tasks={projectLocalTasks} renderRow={(local) => <GroupedLocalRow key={local.id} task={local} onOpen={() => openTask(local.id, taskDashboard ?? undefined)} onStart={() => startTask(local, taskDashboard)} actionLabel={actionLabel(local, taskDashboard)} onOpenDocument={(filePath) => { closeDetail(); void openFilePreview(filePath); }} />} />
         : <p className="text-xs text-slate-400">{project.localTaskIds.length ? '飞书报表记录了本地任务 ID，但当前台账未匹配。' : '当前未关联本地台账任务。'}</p>}</Block>
       <OperationHistory activity={activeOperations} loading={activityLoading} error={activityError} onMore={() => void loadMoreOperations()} onRefresh={() => void refreshOperations()} childTitles={Object.fromEntries(project.personalSubtasks.map((child) => [child.id, child.name]))} />
-      <p className="text-xs text-slate-500">此处仅展示当前账号相关工作项，并非完整飞书待办。</p>
+      <details className="rounded-xl border border-white/10 p-3"><summary className="cursor-pointer text-xs text-slate-400">发布与来源信息</summary><div className="mt-3">
+      <FeishuContext item={project} />
+      </div></details>
     </Drawer>}
     {workbenchParent && detailSelection && <Drawer title={workbenchSubtask?.title ?? workbenchParent.title} subtitle={workbenchSubtask ? `子任务 ID：${workbenchSubtask.id}` : `父工作项 ID：${workbenchParent.workItemId}`} onClose={() => closeDetail()} onRefresh={() => void reloadSelectedDetail(detailSelection).catch(() => undefined)} refreshing={refreshingDetail}>
       {detailRefreshError && <p role="alert" className="text-xs text-rose-300">刷新飞书任务失败：<FailureNotice error={detailRefreshError} /></p>}
+      <FeishuContextAlerts items={[workbenchParent]} />
       <WorkspaceResponsibilityNotice responsibility={detailResponsibility} />
+      {taskDashboard && <WorkspaceSessionPanel taskId={workbenchSubtask?`feishu-subtask:${workbenchParent.workItemId}:${workbenchSubtask.id}`:`feishu:${workbenchParent.workItemId}`} targetRef={workbenchSubtask?`feishu-subtask:${workbenchParent.workItemId}:${workbenchSubtask.id}`:`feishu:${workbenchParent.workItemId}`} dashboard={taskDashboard} userId={userId} localTaskIds={(workbenchSubtask?subtaskLocalTasks:parentLocalTasks).map(task=>task.id)} onOpen={continueSession} onNew={()=>{startWorkbenchEntry(workbenchSubtask?{kind:"subtask",key:workbenchSubtask.id,parent:workbenchParent,subtask:workbenchSubtask,localTasks:subtaskLocalTasks}:{kind:"parent",key:workbenchParent.workItemId,item:workbenchParent},taskDashboard,false,true);return null;}} onChanged={()=>reloadSelectedDetail(detailSelection)} />}
       {workbenchSubtask && <Block title="本人子任务"><p>状态：{workbenchSubtaskStatusLabel(workbenchSubtask)}</p><p>{workbenchSubtaskNodeLabel(workbenchSubtask)}</p><p className="break-words">{subtaskUrl(workbenchParent, workbenchSubtask) ? <a href={subtaskUrl(workbenchParent, workbenchSubtask)!} target="_blank" rel="noopener noreferrer" className="text-cyan-300 hover:underline" onClick={()=>{localAction('workbench','open_external','workbench')(true);}}>{workbenchSubtask.title} · {workbenchSubtask.id}</a> : `${workbenchSubtask.title} · ${workbenchSubtask.id}（链接未核验）`}</p><p className="text-xs text-slate-500">{childTimeText(workbenchSubtask.id)}{workbenchSubtask.finishedAt ? ` · 完成 ${formatTime(workbenchSubtask.finishedAt)}` : ''}</p></Block>}
-      <Block title="飞书父项"><p className="break-words">{workbenchParent.url ? <a href={workbenchParent.url} target="_blank" rel="noopener noreferrer" className="text-cyan-300 hover:underline" onClick={()=>{localAction('workbench','open_external','workbench')(true);}}>{workbenchParent.title} · {workbenchParent.workItemId}</a> : `${workbenchParent.title} · ${workbenchParent.workItemId}（链接未核验）`}</p><p>参与关系：{workbenchParticipationLabel(workbenchParent, detailResponsibility?.sourceUserKey)} · {workbenchParentStatusLabel(workbenchParent)}</p>{workbenchParent.currentNodeNames.length > 0 && <p>当前节点：{workbenchParent.currentNodeNames.join('、')}</p>}<p>父项最近更新：{formatTime(workbenchParent.updatedAt)}</p><Tooltip content="飞书责任报表生成时间" asChild><p>报表同步：{formatTime(detailResponsibility?.generatedAt)}</p></Tooltip>{isWorkbenchItemOwner(workbenchParent, detailResponsibility?.sourceUserKey) && workbenchParent.mySubtasks.length === 0 && parentLocalTasks.length === 0 && taskEntryLane({ kind: 'parent', key: `parent:${workbenchParent.workItemId}`, item: workbenchParent }) !== 'completed' && <button type="button" onClick={() => startWorkbenchEntry({ kind: 'parent', key: `parent:${workbenchParent.workItemId}`, item: workbenchParent },taskDashboard)} className="text-cyan-300 hover:underline">{feishuActionLabel(workbenchParent.workItemId,false,taskDashboard)} →</button>}</Block>
+      <Block title="飞书流程"><p className="break-words">{workbenchParent.url ? <a href={workbenchParent.url} target="_blank" rel="noopener noreferrer" className="text-cyan-300 hover:underline" onClick={()=>{localAction('workbench','open_external','workbench')(true);}}>{workbenchParent.title} · {workbenchParent.workItemId}</a> : `${workbenchParent.title} · ${workbenchParent.workItemId}（链接未核验）`}</p><p>参与关系：{workbenchParticipationLabel(workbenchParent, detailResponsibility?.sourceUserKey)}</p><p>{feishuWorkItemStatusLabel(workbenchParent)}</p>{isWorkbenchItemOwner(workbenchParent, detailResponsibility?.sourceUserKey) && workbenchParent.mySubtasks.length === 0 && parentLocalTasks.length === 0 && taskEntryLane({ kind: 'parent', key: `parent:${workbenchParent.workItemId}`, item: workbenchParent }) !== 'completed' && <button type="button" onClick={() => startWorkbenchEntry({ kind: 'parent', key: `parent:${workbenchParent.workItemId}`, item: workbenchParent },taskDashboard)} className="text-cyan-300 hover:underline">{feishuActionLabel(workbenchParent.workItemId,false,taskDashboard)} →</button>}</Block>
       {(detailSelection.kind === 'group' || detailSelection.kind === 'parent') && <Block title={`我的飞书子任务 · ${workbenchParent.mySubtasks.length}`}>
+        <p className="text-xs text-slate-400">飞书已完成 {personalSubtaskSummary(workbenchParent).completed} · 未完成 {personalSubtaskSummary(workbenchParent).unfinished}<WorkspaceHelpBadge label="子任务状态" content="飞书与本地台账分别记录状态，不自动修改任一来源。" /></p>
         {workbenchParent.mySubtasks.length === 0 && <p className="text-slate-400">当前没有分配给我的子任务</p>}
         {parentChildrenNeedingAttention.map((child) => {
-          const linked = sortDetailLocalTasks(taskDashboard?.tasks.filter((local) => local.feishuWorkItemIds.includes(child.id)) ?? []);
+          const linked = sortDetailLocalTasks(taskDashboard?.tasks.filter((local) => child.localTaskIds?.includes(local.id)) ?? []);
           const url = subtaskUrl(workbenchParent, child);
           return <div key={child.id} className="rounded-lg border border-white/10 p-2.5">
             <div className="flex flex-wrap items-start justify-between gap-2"><p className="break-words font-medium">{url ? <a href={url} target="_blank" rel="noopener noreferrer" className="text-cyan-300 hover:underline" onClick={()=>{localAction('workbench','open_external','workbench')(true);}}>{child.title} · {child.id}</a> : `${child.title} · ${child.id}`}{newTaskKeys.has(`subtask:${workbenchParent.workItemId}:${child.id}`) && !child.passed && <NewBadge className="ml-2" />}</p><span className="rounded bg-cyan-300/10 px-1.5 py-0.5 text-[11px] text-cyan-200">{workbenchSubtaskStatusLabel(child)}</span></div>
             <p>{workbenchSubtaskNodeLabel(child)}</p>
             <p className="text-[11px] text-slate-500">{childTimeText(child.id)}{child.finishedAt ? ` · 完成 ${formatTime(child.finishedAt)}` : ''}</p>
-            <div className="mt-2 border-t border-white/10 pt-2">{linked.length ? <p className="text-xs text-slate-400">关联本地台账 {linked.length} 项，见下方“本地台账”。</p> : <button type="button" onClick={() => startWorkbenchEntry({ kind: 'subtask', key: `subtask:${workbenchParent.workItemId}:${child.id}`, parent: workbenchParent, subtask: child, localTasks: [] },taskDashboard)} className="text-cyan-300 hover:underline">{feishuActionLabel(child.id,taskEntryLane({kind:'subtask',key:child.id,parent:workbenchParent,subtask:child,localTasks:[]})==='completed',taskDashboard)} →</button>}</div>
+            <div className="mt-2 border-t border-white/10 pt-2">{linked.length ? <p className="text-xs text-slate-400">关联本地台账 {linked.length} 项，见下方“本地台账”。</p> : <button type="button" onClick={() => startWorkbenchEntry({ kind: 'subtask', key: `subtask:${workbenchParent.workItemId}:${child.id}`, parent: workbenchParent, subtask: child, localTasks: [] },taskDashboard)} className="text-cyan-300 hover:underline">{feishuActionLabel(`feishu-subtask:${workbenchParent.workItemId}:${child.id}`,taskEntryLane({kind:'subtask',key:child.id,parent:workbenchParent,subtask:child,localTasks:[]})==='completed',taskDashboard)} →</button>}</div>
           </div>;
         })}
         {finishedParentChildren.length > 0 && <details className="rounded-lg border border-white/10 p-2.5"><summary className="cursor-pointer text-xs text-slate-300">已完成子任务 · {finishedParentChildren.length}</summary><div className="mt-2 space-y-3">{finishedParentChildren.map((child) => <div key={child.id} className="break-words text-xs">{subtaskUrl(workbenchParent, child) ? <a href={subtaskUrl(workbenchParent, child)!} target="_blank" rel="noopener noreferrer" className="text-cyan-300 hover:underline" onClick={()=>{localAction('workbench','open_external','workbench')(true);}}>{child.title} · {child.id}</a> : `${child.title} · ${child.id}`}<p className="mt-1 text-[11px] text-slate-500">{childTimeText(child.id)}{child.finishedAt ? ` · 完成 ${formatTime(child.finishedAt)}` : ''}</p></div>)}</div></details>}
       </Block>}
-      {(detailSelection.kind === 'group' || detailSelection.kind === 'parent') && parentLocalTasks.length > 0 && <Block title={`本地台账 · ${parentLocalTasks.length}`}><DetailLocalLedgerList tasks={parentLocalTasks} renderRow={(local) => {
-        const children = workbenchParent.mySubtasks.filter((child) => local.feishuWorkItemIds.includes(child.id));
-        const relationLabel = children.length ? `关联子任务：${children.map((child) => child.title).join('、')}` : '直接关联父项';
+      {matterRuns.length > 0 && <Block title={`执行记录 · ${matterRuns.length}`}><TaskRunRecords runs={matterRuns} onOpen={item=>{closeDetail(true);setSelectedRun({runId:item.runId,taskId:item.taskId});}} /></Block>}
+      {(detailSelection.kind === 'group' || detailSelection.kind === 'parent') && matterLocalTasks.length > 0 && <Block title={`本地台账 · ${matterLocalTasks.length}`}><DetailLocalLedgerList tasks={matterLocalTasks} renderRow={(local) => {
+        const children = workbenchParent.mySubtasks.filter((child) => child.localTaskIds?.includes(local.id));
+        const relationLabel = children.length ? `关联子任务：${children.map((child) => child.title).join('、')}` : local.feishuWorkItemIds.includes(workbenchParent.workItemId) ? '关联父项' : '归属本事项的关联交付';
         return <GroupedLocalRow key={local.id} task={local} relationLabel={relationLabel} onOpen={() => openTask(local.id, taskDashboard ?? undefined)} onStart={() => startTask(local, taskDashboard)} actionLabel={actionLabel(local, taskDashboard)} onOpenDocument={(filePath) => { closeDetail(); void openFilePreview(filePath); }} />;
       }} /></Block>}
-      {(detailSelection.kind === 'group' || detailSelection.kind === 'parent') && relatedGroupIssues.length > 0 && <Block title={`关联缺陷 · ${relatedGroupIssues.length}`}>
-        {relatedGroupIssues.map((issue) => <div key={issue.workItemId} className="rounded-lg border border-white/10 p-2.5">
-          <div className="flex min-w-0 flex-wrap items-start justify-between gap-2"><div className="min-w-0 flex-1"><span className="text-[10px] text-slate-500">飞书缺陷</span><button type="button" onClick={() => openProject(issue.workItemId)} className="block break-words text-left font-medium hover:text-cyan-300">{issue.title}</button></div><span className="shrink-0 text-xs text-slate-400">{issue.statusName ?? '状态未登记'}</span></div>
-          <p className="mt-1 text-xs text-slate-400">{responsibilityText(issue.actionability)} · {issue.url ? <a href={issue.url} target="_blank" rel="noopener noreferrer" className="text-cyan-300 hover:underline" onClick={()=>{localAction('workbench','open_external','workbench')(true);}}>{issue.workItemId}</a> : issue.workItemId}</p>
-        </div>)}
+      {(detailSelection.kind === 'group' || detailSelection.kind === 'parent') && relatedGroupIssues.length > 0 && <Block title={`责任清单内关联缺陷 · ${relatedGroupIssues.length}`} help="仅展示当前账号责任清单中已核实的关联，不代表需求全部缺陷。">
+        <DetailIssueList items={relatedGroupIssues} onOpen={id=>openProject(id)} />
       </Block>}
-      {workbenchSubtask && <Block title={`精确关联的本地台账 · ${subtaskLocalTasks.length}`}>{subtaskLocalTasks.length ? <DetailLocalLedgerList tasks={subtaskLocalTasks} renderRow={(local) => <GroupedLocalRow key={local.id} task={local} childTitle={workbenchSubtask.title} onOpen={() => openTask(local.id, taskDashboard ?? undefined)} onStart={() => startTask(local, taskDashboard)} actionLabel={actionLabel(local, taskDashboard)} onOpenDocument={(filePath) => { closeDetail(); void openFilePreview(filePath); }} />} /> : <><p className="text-slate-400">此子任务尚未登记本地台账。</p><button type="button" onClick={() => startWorkbenchEntry({ kind: 'subtask', key: `subtask:${workbenchParent.workItemId}:${workbenchSubtask.id}`, parent: workbenchParent, subtask: workbenchSubtask, localTasks: [] },taskDashboard)} className="text-cyan-300 hover:underline">{feishuActionLabel(workbenchSubtask.id, taskEntryLane({ kind: 'subtask', key: workbenchSubtask.id, parent: workbenchParent, subtask: workbenchSubtask, localTasks: [] }) === 'completed', taskDashboard)} →</button></>}</Block>}
+      {workbenchSubtask && <Block title={`精确关联的本地台账 · ${subtaskLocalTasks.length}`}>{subtaskLocalTasks.length ? <DetailLocalLedgerList tasks={subtaskLocalTasks} renderRow={(local) => <GroupedLocalRow key={local.id} task={local} childTitle={workbenchSubtask.title} onOpen={() => openTask(local.id, taskDashboard ?? undefined)} onStart={() => startTask(local, taskDashboard)} actionLabel={actionLabel(local, taskDashboard)} onOpenDocument={(filePath) => { closeDetail(); void openFilePreview(filePath); }} />} /> : <><p className="text-slate-400">此子任务尚未登记本地台账。</p><button type="button" onClick={() => startWorkbenchEntry({ kind: 'subtask', key: `subtask:${workbenchParent.workItemId}:${workbenchSubtask.id}`, parent: workbenchParent, subtask: workbenchSubtask, localTasks: [] },taskDashboard)} className="text-cyan-300 hover:underline">{feishuActionLabel(`feishu-subtask:${workbenchParent.workItemId}:${workbenchSubtask.id}`, taskEntryLane({ kind: 'subtask', key: workbenchSubtask.id, parent: workbenchParent, subtask: workbenchSubtask, localTasks: [] }) === 'completed', taskDashboard)} →</button></>}</Block>}
       <OperationHistory activity={activeOperations} loading={activityLoading} error={activityError} onMore={() => void loadMoreOperations()} onRefresh={() => void refreshOperations()} childId={workbenchSubtask?.id} childTitles={Object.fromEntries(workbenchParent.mySubtasks.map((child) => [child.id, child.title]))} />
-      <p className="text-xs text-slate-500">飞书与本地台账状态分别跟踪。</p>
+      <details className="rounded-xl border border-white/10 p-3"><summary className="cursor-pointer text-xs text-slate-400">发布与来源信息</summary><div className="mt-3 space-y-2">
+      <FeishuContext item={workbenchParent} />
+      <p className="text-xs text-slate-500">父项更新 {formatTime(workbenchParent.updatedAt)} · 报表同步 {formatTime(detailResponsibility?.generatedAt)}</p>
+      </div></details>
     </Drawer>}
-    {run && <Drawer title={`${describeRun(run).title} · 执行详情`} onClose={() => setSelectedRun(null)}><RunDetail run={run} taskTitle={runTask?.title || null} onOpenTask={runTask ? () => { setSelectedRun(null); openTask(runTask.id, runSource ?? undefined); } : undefined} onOpenFile={run.detailFilePath ? () => { setSelectedRun(null); void openFilePreview(run.detailFilePath!); } : undefined} /></Drawer>}
+    {run && <Drawer title="执行详情" onClose={() => setSelectedRun(null)}><RunDetail run={run} taskTitle={runTask?.title || null} onOpenTask={runTask ? () => { setSelectedRun(null); openTask(runTask.id, runSource ?? undefined); } : undefined} onOpenFile={run.detailFilePath ? () => { setSelectedRun(null); void openFilePreview(run.detailFilePath!); } : undefined} /></Drawer>}
     {desktopLayout && dayPanel && <Suspense fallback={null}>{dayPanel === 'calendar'
       ? <WorkspaceCalendarPanel today={today} anchorRef={calendarButtonRef} onClose={() => setDayPanel((current) => current === 'calendar' ? null : current)} />
       : <WorkspaceWeatherPanel city={day?.location?.city} today={today} anchorRef={weatherButtonRef} onClose={() => setDayPanel((current) => current === 'weather' ? null : current)} />}</Suspense>}
@@ -927,153 +984,26 @@ function TaskProgressNotice({entry}: {entry: TaskDisplayEntry}) {
   return <Tooltip content={at === null ? '无有效推进时间' : `${formatTime(at)}（任务开始/核验及关联执行，不取父项/会话更新时间）`} asChild><p className={`mt-1 text-[11px] ${stale ? 'text-amber-200' : 'text-slate-500'}`}>{label}</p></Tooltip>;
 }
 
-function LocalStatusBadge({task}: {task:Task}) {
-  return <span className={`shrink-0 rounded px-1.5 py-0.5 text-[11px] ${taskStatusPresentation(task.status).tone}`}>{localTaskStatusLabel(task)}</span>;
-}
-
-function FocusTaskCard({ task, responsibility, isNew = false, onOpen, onStart, actionLabel, onOpenDocument }: { task: Task; responsibility: WorkspaceConsoleResponsibilityDto | null; isNew?: boolean; onOpen: () => void; onStart: () => void; actionLabel: string; onOpenDocument: (filePath: string) => void }) {
-  const projectItems = projectItemsForTask(task, responsibility);
-  const linked = feishuLinksForTask(task, responsibility);
-  const primary = primaryFeishuWorkItemId(task);
-  const documentName = task.taskDocumentPath?.split(/[\\/]/).slice(-1)[0];
-  const recordAt = latestTaskRecordAt(task);
-  return <article data-task-tone={taskEntryLane({ kind: 'local', key: task.id, task })} className="workspace-workbench__task-card flex min-w-0 flex-col gap-3 rounded-xl border border-white/10 bg-white/[0.035] p-4 focus-within:border-cyan-300/50">
-    <div className="flex min-w-0 items-start justify-between gap-3">
-      <div className="min-w-0"><div className="flex min-w-0 items-start gap-1.5"><Tooltip overflowOnly content={task.title || task.id} asChild><button type="button" onClick={onOpen} aria-label={`查看任务详情：${task.title || task.id}`} className="min-w-0 line-clamp-2 break-words text-left text-sm font-semibold leading-5 text-slate-100 hover:text-cyan-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-300">{task.title || task.id}</button></Tooltip>{isNew && <NewBadge />}</div><p className="mt-1 text-[11px] text-slate-500">本地台账</p></div>
-      <LocalStatusBadge task={task} />
-    </div>
-    {linked.length > 0 && <div className="flex min-w-0 flex-wrap gap-x-2 gap-y-1 text-xs text-slate-400">{linked.slice(0, 2).map((item) => <span key={item.workItemId} className="min-w-0 break-words"><span className="text-slate-500">{item.workItemId === primary && '主任务 · '}{feishuRelationshipLabel(item.workItemId, responsibility, item.url)} · </span><a href={item.url} target="_blank" rel="noopener noreferrer" aria-label={`打开飞书任务：${item.title} · ${item.workItemId}`} className="text-cyan-300 hover:underline" onClick={()=>{localAction('workbench','open_external','workbench')(true);}}>{item.workItemId}</a></span>)}{linked.length > 2 && <button type="button" onClick={onOpen} className="text-cyan-300 hover:underline">另 {linked.length - 2} 项</button>}</div>}
-    {!!linked.length && primary && !linked.some((item) => item.workItemId === primary) && <p className="break-words text-xs text-slate-500">主任务 · {primary}（链接未核验）</p>}
-    {!linked.length && !!(projectItems.length || task.feishuWorkItemIds.length) && <p className="text-xs text-slate-500">{(task.feishuWorkItemIds.length ? task.feishuWorkItemIds : projectItems.map((item) => item.workItemId)).slice().sort((a, b) => Number(b === primary) - Number(a === primary)).map((id) => `${id === primary ? '主任务 · ' : ''}${feishuRelationshipLabel(id, responsibility)} · ${id}`).join('；')}（链接未核验）</p>}
-    {(task.nextAction || task.waitingOn) && <Tooltip overflowOnly content={task.waitingOn || task.nextAction || undefined} asChild><p className="line-clamp-3 break-words text-sm leading-5 text-slate-200"><span className="text-slate-500">{task.waitingOn ? '等待：' : '下一步：'}</span>{task.waitingOn || task.nextAction}</p></Tooltip>}
-    <TaskProgressNotice entry={{kind:'local',key:task.id,task}} />
-    {task.taskDocumentPath && <Tooltip content={task.taskDocumentPath} asChild><button type="button" onClick={() => onOpenDocument(task.taskDocumentPath!)} className="self-start text-xs text-cyan-300 hover:underline">预览任务说明 · {documentName}</button></Tooltip>}
-    <div className="mt-auto grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-2 border-t border-white/10 pt-3">
-      <span className="min-w-0 break-words text-[11px] text-slate-500">本地更新 {formatTime(recordAt)}</span>
-      <button type="button" onClick={onStart} className="shrink-0 whitespace-nowrap rounded-lg border border-cyan-300/35 px-2.5 py-1.5 text-xs font-medium text-cyan-200 hover:bg-cyan-300/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-300">{actionLabel} →</button>
-    </div>
-  </article>;
-}
-
-function NewBadge({ className = '' }: { className?: string }) {
-  return <span className={`inline-block shrink-0 rounded-sm border border-rose-400/40 bg-rose-400/10 px-1 py-0 text-[9px] font-semibold leading-3 text-rose-400 ${className}`}>NEW</span>;
-}
-
-function ProjectTaskCard({ item, actionLabel, reportGeneratedAt, isNew = false, onOpen, onStart }: { item: Extract<TaskEntry, { kind: 'project' }>['item']; actionLabel: string; reportGeneratedAt: string | null; isNew?: boolean; onOpen: () => void; onStart: () => void }) {
-  const { current: rawCurrent, next } = projectTaskCardDetails(item);
-  const current = formatFocusCurrent(rawCurrent) || '未登记';
-  const url = feishuUrlForWorkItem(item);
-  const finished = isPersonalProjectComplete(item);
-  return <article data-task-tone={finished ? 'completed' : 'unstarted'} className="workspace-workbench__task-card flex min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-white/10 bg-white/5 p-3 focus-within:border-cyan-300/50">
-    <div className="flex min-w-0 items-start justify-between gap-2"><div className="flex min-w-0 items-start gap-1.5"><Tooltip overflowOnly content={item.title} asChild><button type="button" onClick={onOpen} aria-label={`查看任务详情：${item.title}`} className="min-w-0 line-clamp-2 break-words text-left text-sm font-semibold leading-5 hover:text-cyan-300">{item.title}</button></Tooltip>{isNew && <NewBadge />}</div><Tooltip content={finished ? item.statusName ?? undefined : responsibilityExplanation(item.actionability)} asChild><span className="shrink-0 rounded bg-cyan-300/10 px-1.5 py-0.5 text-[11px] text-cyan-300">{taskEntryStatusLabel({kind:'project',key:item.workItemId,item})}</span></Tooltip></div>
-    <p className="mt-1 text-[11px] text-slate-500">飞书{feishuTypeName(item.typeName, url) ?? '工作项'} · {url ? <a href={url} target="_blank" rel="noopener noreferrer" aria-label={`打开飞书工作项：${item.title} · ${item.workItemId}`} className="text-cyan-300 hover:underline" onClick={()=>{localAction('workbench','open_external','workbench')(true);}}>{item.workItemId}</a> : `${item.workItemId}（链接未核验）`}</p>
-    {item.statusName && <p className="mt-1 text-[11px] text-slate-400">飞书状态：{item.statusName}</p>}
-    {item.personalCompleted && <PersonalCompletionNotice item={item} tasks={item.tasks} />}
-    {(item.tasks.length > 0 || !finished) && <p className="mt-2 text-[11px] font-medium text-amber-200">{item.tasks.length ? `关联本地台账 ${item.tasks.length} 项` : '本地进度未知 · 仅有飞书责任报表'}</p>}
-    {!!item.linkedStoryIds?.length && <p className="mt-1 text-[11px] text-slate-400">关联需求：{item.linkedStoryIds.join('、')}</p>}
-    <div className="mt-2 min-h-0 flex-1 space-y-1.5 text-xs leading-4">
-      <Tooltip overflowOnly content={current} asChild><p className="line-clamp-2 break-words text-slate-300"><span className="text-slate-500">当前：</span>{current}</p></Tooltip>
-      <Tooltip overflowOnly content={next} asChild><p className="line-clamp-2 break-words text-slate-300"><span className="text-slate-500">下一步：</span>{next}</p></Tooltip>
-    </div>
-    <div className="mt-2 grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-2 border-t border-white/10 pt-2">
-      <Tooltip content={item.updatedAt ? '飞书工作项最后更新时间' : '飞书责任报表生成时间'} asChild><span className="min-w-0 break-words text-[11px] text-slate-500">{item.updatedAt ? `飞书更新 ${formatTime(item.updatedAt)}` : `飞书同步 ${formatTime(reportGeneratedAt)}`}</span></Tooltip>
-      {!finished && <button type="button" onClick={onStart} className="shrink-0 whitespace-nowrap rounded-lg border border-cyan-300/35 px-2.5 py-1.5 text-xs font-medium text-cyan-200 hover:bg-cyan-300/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-300">{actionLabel} →</button>}
-    </div>
-  </article>;
-}
-
-function TaskGroupCard({ group, activity, reportGeneratedAt, isNew, newKeys, onOpen, onOpenChild, onOpenTask, onOpenProject, onStartTask, onStartChild, onStartProject, actionLabel, entryActionLabel, onOpenDocument, prominent = false }: {
-  group: TaskGroup; activity?: WorkspaceOperationRecordsDto | null; reportGeneratedAt: string | null; isNew: boolean; newKeys: ReadonlySet<string>; onOpen: () => void;
-  onOpenChild: (entry: WorkbenchEntry) => void; onOpenTask: (id: string) => void; onOpenProject: (id: string) => void;
-  onStartTask: (task: Task) => void; onStartChild: (entry: WorkbenchEntry) => void; onStartProject: (item: ProjectItem) => void;
-  actionLabel: (task: Task) => string; entryActionLabel: (entry: TaskEntry) => string; onOpenDocument: (path: string) => void; prominent?: boolean;
-}) {
-  const { parent, members } = group;
-  const showNew = taskEntryLane(group) !== 'completed';
-  const ownChildren = members.filter((entry): entry is Extract<TaskEntry, { kind: 'subtask' }> => entry.kind === 'subtask');
-  const linkedIssues = members.filter((entry): entry is Extract<TaskEntry, { kind: 'project' }> => entry.kind === 'project' && entry.item.typeName === '缺陷');
-  const locals = members.filter((entry): entry is Extract<TaskEntry, { kind: 'local' }> => entry.kind === 'local').map((entry) => entry.task);
-  const unfinishedLocals = locals.filter((task) => taskEntryLane({ kind: 'local', key: `local:${task.id}`, task }) !== 'completed');
-  const localForChild = (entry: Extract<TaskEntry, { kind: 'subtask' }>) => unfinishedLocals.filter((task) => task.feishuWorkItemIds.includes(entry.subtask.id));
-  const activeChildren = ownChildren.filter((entry) => workbenchChildNeedsAttention(entry.subtask, localForChild(entry)));
-  const visibleChildren = activeChildren.slice(0, prominent ? 2 : 1);
-  const standaloneLocals = unfinishedLocals.filter((task) => !ownChildren.some((entry) => task.feishuWorkItemIds.includes(entry.subtask.id)));
-  const visibleLocals = standaloneLocals.slice(0, prominent ? 2 : 1);
-  const latestFeishuAt = Math.max(0, ...members.filter((entry) => entry.kind !== 'local').map(taskEntryUpdatedAt));
-  const latestLocalAt = Math.max(0, ...unfinishedLocals.map((task) => Date.parse(latestTaskRecordAt(task) ?? '') || 0));
-  const isCompleted = taskEntryLane(group) === 'completed';
-  const conflict = taskEntryConflict(group);
-  const needsReview = !!conflict && taskEntryLane(group) !== 'doing';
-  const futureNodes = parent.myNodes?.filter((node) => node.phase === 'upcoming').map((node) => node.name).filter(Boolean) ?? [];
-  const personalCurrentNodes = parent.myNodes?.filter((node) => node.phase === 'current').map((node) => node.name).filter(Boolean) ?? [];
-  const finishedAt = isCompleted ? taskDisplayEntryFinishedAt(group) : 0;
-  const primaryEntry = selectGroupPrimaryEntry(group);
-  const primaryTask = primaryEntry?.kind === 'local' ? primaryEntry.task : null;
-  const primaryActionLabel = primaryEntry ? entryActionLabel(primaryEntry) : '开始处理';
-  const primaryTitle = primaryTask?.title || primaryTask?.id || (primaryEntry?.kind === 'subtask' ? primaryEntry.subtask.title : primaryEntry?.kind === 'project' ? primaryEntry.item.title : parent.title);
-  const startPrimary = () => {
-    if (!primaryEntry) return;
-    if (primaryEntry.kind === 'local') onStartTask(primaryEntry.task);
-    else if (primaryEntry.kind === 'project') onStartProject(primaryEntry.item);
-    else onStartChild(primaryEntry);
-  };
-  return <article data-task-tone={taskEntryLane(group)} className={`workspace-workbench__task-card workspace-workbench__matter-card min-w-0 rounded-xl border p-3.5 focus-within:border-cyan-300/50 ${prominent ? 'border-cyan-300/20 bg-cyan-300/[0.045]' : 'border-white/10 bg-white/5'}`}>
-    <div className="flex min-w-0 flex-wrap items-start justify-between gap-2">
-      <div className="min-w-0 flex-1"><Tooltip overflowOnly content={parent.title} asChild><button type="button" onClick={onOpen} aria-label={`查看事项详情：${parent.title}`} className="line-clamp-2 break-words text-left text-sm font-semibold leading-5 hover:text-cyan-300">{parent.title}</button></Tooltip><p className="mt-1 text-[11px] text-slate-500">飞书{feishuTypeName(parent.typeName, parent.url) ?? ''}父项 · {parent.url ? <a href={parent.url} target="_blank" rel="noopener noreferrer" aria-label={`打开飞书父项：${parent.title} · ${parent.workItemId}`} className="text-cyan-300 hover:underline" onClick={()=>{localAction('workbench','open_external','workbench')(true);}}>{parent.workItemId}</a> : `${parent.workItemId}（链接未核验）`}</p></div>
-      <span className="rounded bg-cyan-300/10 px-1.5 py-0.5 text-[11px] text-cyan-300">{taskEntryStatusLabel(group)}</span>
-    </div>
-    <p className="mt-2 text-[11px] text-slate-400">{ownChildren.length} 个子任务 · {activeChildren.length} 个待处理 · {unfinishedLocals.length} 份待处理本地台账{linkedIssues.length > 0 && ` · ${linkedIssues.length} 个关联缺陷`}{showNew && isNew && <NewBadge className="ml-2" />}</p>
-    <TaskProgressNotice entry={group} />
-    {!workbenchFlowEnded(parent) && <p className="mt-1 text-[11px] text-slate-500">{currentNodeResponsibilityLabel(parent)}{futureNodes.length > 0 && ` · 后续参与：${futureNodes.join('、')}（未激活）`}</p>}
-    {personalCurrentNodes.length > 0 && unfinishedLocals.some((task) => task.status === 'waiting' || task.status === 'blocked') && <p className="mt-1 text-[11px] text-amber-200">本地等待中，当前责任：{personalCurrentNodes.join('、')}；请核对等待条件。</p>}
-    {conflict && <p className="mt-1 text-[11px] text-amber-200">{conflict}</p>}
-    <div className="mt-2 space-y-2">
-      {visibleChildren.map((entry) => <div key={entry.key} className="workspace-workbench__task-subsection min-w-0 rounded-lg border border-white/10 p-2.5">
-        <div className="flex min-w-0 flex-wrap items-start justify-between gap-2"><div className="min-w-0 flex-1"><button type="button" onClick={() => onOpenChild(entry)} aria-label={`查看子任务详情：${entry.subtask.title}`} className="block break-words text-left text-xs font-medium hover:text-cyan-300">{entry.subtask.title}</button><p className="mt-1 text-[10px] text-slate-500">飞书子任务{showNew && newKeys.has(entry.key) && <span className="text-rose-300"> · NEW</span>} · {subtaskUrl(parent, entry.subtask)
-          ? <a href={subtaskUrl(parent, entry.subtask)!} target="_blank" rel="noopener noreferrer" aria-label={`打开飞书子任务：${entry.subtask.title} · ${entry.subtask.id}`} className="text-cyan-300 hover:underline" onClick={()=>{localAction('workbench','open_external','workbench')(true);}}>{entry.subtask.id}</a>
-          : `${entry.subtask.id}（链接未核验）`}</p></div><span className="text-[11px] text-slate-400">{workbenchSubtaskStatusLabel(entry.subtask)}</span></div>
-        {lastChildOperation(activity, entry.subtask.id) && <p className="mt-1 text-[11px] text-slate-500">子任务近期操作 {formatTime(lastChildOperation(activity, entry.subtask.id))}</p>}
-        {localForChild(entry).length ? <div className="mt-2 space-y-1.5 border-t border-white/10 pt-2">{localForChild(entry).map((task) => <GroupedLocalRow key={task.id} task={task} childTitle={entry.subtask.title} onOpen={() => onOpenTask(task.id)} onStart={() => onStartTask(task)} actionLabel={actionLabel(task)} onOpenDocument={onOpenDocument} showStart={false} />)}</div>
-          : <p className="mt-2 text-[11px] text-slate-500">{locals.some((task) => task.feishuWorkItemIds.includes(entry.subtask.id)) ? '本地台账均已完成，详见详情' : '尚无本地台账'}</p>}
-      </div>)}
-      {visibleLocals.map((task) => <GroupedLocalRow key={task.id} task={task} onOpen={() => onOpenTask(task.id)} onStart={() => onStartTask(task)} actionLabel={actionLabel(task)} onOpenDocument={onOpenDocument} showStart={false} />)}
-      {linkedIssues.map((entry) => <div key={entry.key} className="min-w-0 rounded-lg border border-white/10 p-2.5">
-        <div className="flex min-w-0 flex-wrap items-start justify-between gap-1"><div className="min-w-0 flex-1"><span className="text-[10px] text-slate-500">飞书缺陷 · 关联需求{showNew && taskDisplayEntryIsNew(entry, newKeys) && <span className="text-rose-300"> · NEW</span>}</span><button type="button" onClick={() => onOpenProject(entry.item.workItemId)} className="block break-words text-left text-xs font-medium hover:text-cyan-300">{entry.item.title}</button></div><span className="shrink-0 text-[11px] text-slate-400">{entry.item.statusName ?? '状态未登记'}</span></div>
-        <p className="mt-1 text-[11px] text-slate-400">{responsibilityText(entry.item.actionability)} · {entry.item.url ? <a href={entry.item.url} target="_blank" rel="noopener noreferrer" className="text-cyan-300 hover:underline" onClick={()=>{localAction('workbench','open_external','workbench')(true);}}>{entry.item.workItemId}</a> : `${entry.item.workItemId}（链接未核验）`}</p>
-        {entry.item.personalCompleted && <PersonalCompletionNotice item={entry.item} tasks={entry.item.tasks} />}
-        {!isFinishedProjectIssue(entry.item) && <button type="button" onClick={() => onStartProject(entry.item)} className="mt-1.5 text-[11px] text-cyan-300 hover:underline">处理此缺陷 →</button>}
-      </div>)}
-    </div>
-    <div className="mt-2 grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-2 border-t border-white/10 pt-2">
-      <div className="flex min-w-0 flex-col items-start gap-0.5 break-words text-[11px] text-slate-500">
-        {isCompleted ? <Tooltip content="个人子任务/台账的最晚结束时间，不代表父项流程结束" asChild><span>{finishedAt ? `${workbenchFlowEnded(parent) ? '结束' : '本轮完成'} ${formatTime(finishedAt)}` : '完成时间未登记'}</span></Tooltip> : <>
-          {latestFeishuAt > 0 && <Tooltip content="飞书父工作项的更新时间；可能由其他成员或系统操作产生" asChild><span>飞书父项更新 {formatTime(latestFeishuAt)}</span></Tooltip>}
-          {latestLocalAt > 0 && <Tooltip content="关联本地台账的最后记录时间" asChild><span>本地更新 {formatTime(latestLocalAt)}</span></Tooltip>}
-          {latestFeishuAt === 0 && latestLocalAt === 0 && <Tooltip content="飞书责任报表生成时间" asChild><span>飞书报表同步 {formatTime(reportGeneratedAt)}</span></Tooltip>}
-        </>}
-      </div>
-      <Tooltip content={isCompleted ? '查看本轮已完成工作' : needsReview ? '核对本地与飞书责任差异' : `处理：${primaryTitle}`} asChild><button type="button" onClick={isCompleted || needsReview ? onOpen : startPrimary} disabled={!primaryEntry} className="shrink-0 whitespace-nowrap rounded-lg border border-cyan-300/35 px-2.5 py-1.5 text-xs font-medium text-cyan-200 hover:bg-cyan-300/10 disabled:opacity-50">{isCompleted ? '查看详情' : needsReview ? '核对详情' : primaryActionLabel} →</button></Tooltip>
-    </div>
-  </article>;
-}
-
 function DetailLocalLedgerList({ tasks, renderRow }: { tasks: Task[]; renderRow: (task: Task) => ReactNode }) {
-  const { visible, hidden } = splitDetailLocalTasks(tasks);
+  const sorted = sortDetailLocalTasks(tasks);
+  const unfinished = sorted.filter(task=>localTaskLaneForDisplay(task)!=='completed');
+  const completed = sorted.filter(task=>localTaskLaneForDisplay(task)==='completed');
   return <>
-    {visible.map(renderRow)}
-    {hidden.length > 0 && <details className="group"><summary className="cursor-pointer text-xs text-cyan-300">查看其余 {hidden.length} 条记录</summary><div className="mt-2 space-y-2">{hidden.map(renderRow)}</div></details>}
+    <p className="text-xs text-slate-400">未结束 {unfinished.length} 份 · 已结束 {completed.length} 份（含取消）</p>
+    {unfinished.map(renderRow)}
+    {completed.length > 0 && <details className="group"><summary className="cursor-pointer text-xs text-slate-400">已结束本地交付 · {completed.length}</summary><div className="mt-2 space-y-2">{completed.map(renderRow)}</div></details>}
   </>;
 }
 
-function GroupedLocalRow({ task, childTitle, relationLabel, onOpen, onStart, actionLabel, onOpenDocument, showStart = true }: { task: Task; childTitle?: string; relationLabel?: string; onOpen: () => void; onStart: () => void; actionLabel: string; onOpenDocument: (path: string) => void; showStart?: boolean }) {
+function GroupedLocalRow({ task, childTitle, relationLabel, onOpen, onStart, actionLabel, onOpenDocument, showStart = true, flat = false }: { task: Task; childTitle?: string; relationLabel?: string; onOpen: () => void; onStart: () => void; actionLabel: string; onOpenDocument: (path: string) => void; showStart?: boolean; flat?: boolean }) {
   const recordAt = latestTaskRecordAt(task);
   const recordSource = recordAt === task.lastVerifiedAt ? '核验' : recordAt === task.completedAt ? '完成' : recordAt === task.startedAt ? '开始' : null;
-  return <div className="workspace-workbench__local-row min-w-0 rounded-md border border-white/10 p-2">
+  return <div className={flat ? 'workspace-workbench__relation-item min-w-0' : 'workspace-workbench__local-row min-w-0 rounded-md border border-white/10 p-2'}>
     <div className="flex flex-wrap items-start justify-between gap-1"><div className="min-w-0 flex-1"><span className="text-[10px] text-slate-500">本地台账</span><Tooltip overflowOnly={task.title !== childTitle} content={task.title || task.id} asChild><button type="button" onClick={onOpen} className="block break-words text-left text-xs font-medium text-slate-100 hover:text-cyan-300">{task.title === childTitle ? task.id : task.title || task.id}</button></Tooltip></div><span className="text-[11px] text-slate-400">{localTaskStatusLabel(task)}</span></div>
     {relationLabel && <p className="mt-1 break-words text-[11px] text-slate-500">{relationLabel}</p>}
+    {localTaskLaneForDisplay(task)!=='completed'&&(task.nextAction || task.waitingOn) && <p className="mt-1 line-clamp-2 break-words text-[11px] text-slate-300">{task.waitingOn?'等待：':'下一步：'}{task.waitingOn || task.nextAction}</p>}
     <p className="mt-1 text-[11px] text-slate-500">{recordAt ? `本地最近记录（${recordSource}）：${formatTime(recordAt)}` : '本地更新时间未登记'}</p>
-    {(task.nextAction || task.waitingOn) && <p className="mt-1 line-clamp-2 break-words text-[11px] text-slate-400">{task.waitingOn || task.nextAction}</p>}
-    {(task.taskDocumentPath || showStart) && <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px]">{task.taskDocumentPath && <button type="button" onClick={() => onOpenDocument(task.taskDocumentPath!)} className="text-cyan-300 hover:underline">预览任务说明</button>}{showStart && <button type="button" onClick={onStart} className="text-cyan-300 hover:underline">{actionLabel} →</button>}</div>}
+    {(task.taskDocumentPath || showStart) && <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px]">{task.taskDocumentPath && <button type="button" onClick={() => onOpenDocument(task.taskDocumentPath!)} className="text-cyan-300 hover:underline">预览任务说明</button>}{showStart && <button type="button" onClick={localTaskLaneForDisplay(task)==='completed'?onOpen:onStart} className="text-cyan-300 hover:underline">{localTaskLaneForDisplay(task)==='completed'?'查看详情':actionLabel} →</button>}</div>}
   </div>;
 }
 
@@ -1083,8 +1013,7 @@ function OperationHistory({ activity, loading, error, onMore, onRefresh, childId
 }) {
   const events = (activity?.events ?? []).filter((event) => !childId || event.childId === childId)
     .sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
-  return <Block title={`飞书操作记录 · ${events.length}`}>
-    <p className="text-xs text-slate-500">{activity ? `查询范围：${formatTime(activity.rangeStart)} 至 ${formatTime(activity.rangeEnd)}` : '打开详情后按需读取近期记录'}；仅展示操作类型，不展示字段旧值和新值。</p>
+  return <Block title={`飞书操作记录 · ${events.length}`} help={`${activity ? `查询范围：${formatTime(activity.rangeStart)} 至 ${formatTime(activity.rangeEnd)}` : '打开详情后按需读取近期记录'}；仅展示操作类型，不展示字段旧值和新值。`}>
     {loading && <p className="text-xs text-slate-400">正在读取操作记录…</p>}
     {error && <p role="alert" className="text-xs text-rose-300">操作记录读取失败：<FailureNotice error={error} /></p>}
     {!loading && activity && events.length === 0 && <p className="text-xs text-slate-400">当前查询窗口未查到相关操作。</p>}
@@ -1097,66 +1026,65 @@ function OperationHistory({ activity, loading, error, onMore, onRefresh, childId
   </Block>;
 }
 
-function LocalTaskCard({ task, responsibility, compact = false, isNew = false, onOpen, onStart, actionLabel, onOpenDocument }: { task: Task; responsibility: WorkspaceConsoleResponsibilityDto | null; compact?: boolean; isNew?: boolean; onOpen: () => void; onStart: () => void; actionLabel: string; onOpenDocument: (filePath: string) => void }) {
-  const projectItems = projectItemsForTask(task, responsibility);
-  const linked = feishuLinksForTask(task, responsibility);
-  const primary = primaryFeishuWorkItemId(task);
-  const isCompleted = ['done', 'completed', 'closed', 'cancelled', 'canceled'].includes(task.status ?? '');
-  const endLabel = task.status === 'done' || task.status === 'completed' ? '完成' : '结束';
-  const next = task.completedAt ? `完成于 ${formatTime(task.completedAt)}` : task.nextAction || (isCompleted ? statusText(task.status) : '未登记');
-  const documentName = task.taskDocumentPath?.split(/[\\/]/).slice(-1)[0] || null;
-  return <article data-task-tone={taskEntryLane({ kind: 'local', key: task.id, task })} className={`workspace-workbench__task-card flex min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-white/10 bg-white/5 focus-within:border-cyan-300/50 ${compact ? 'p-3' : 'p-3.5'}`}>
-    <div className="flex min-w-0 items-start justify-between gap-2">
-      <div className="min-w-0"><div className="flex min-w-0 items-start gap-1.5"><Tooltip overflowOnly content={task.title || task.id} asChild><button type="button" onClick={onOpen} aria-label={`查看任务详情：${task.title || task.id}`} className="min-w-0 line-clamp-2 break-words text-left text-sm font-semibold leading-5 hover:text-cyan-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-300">{task.title || task.id}</button></Tooltip>{isNew && <NewBadge />}</div><p className="mt-1 text-[11px] text-slate-500">本地台账</p></div>
-      <LocalStatusBadge task={task} />
-    </div>
-    {linked.length > 0 && <div className="mt-2 flex min-w-0 flex-wrap gap-x-2 gap-y-1 text-[11px]">{linked.slice(0, 2).map((item) => <span key={item.workItemId} className="min-w-0 break-words"><span className="text-slate-500">{item.workItemId === primary && '主任务 · '}{feishuRelationshipLabel(item.workItemId, responsibility, item.url)} · </span><a href={item.url} target="_blank" rel="noopener noreferrer" aria-label={`打开飞书任务：${item.title} · ${item.workItemId}`} className="text-cyan-300 hover:underline" onClick={()=>{localAction('workbench','open_external','workbench')(true);}}>{item.workItemId}</a></span>)}{linked.length > 2 && <button type="button" onClick={onOpen} className="text-cyan-300 hover:underline">另 {linked.length - 2} 项</button>}</div>}
-    {!!linked.length && primary && !linked.some((item) => item.workItemId === primary) && <p className="mt-1 break-words text-[11px] text-slate-500">主任务 · {primary}（链接未核验）</p>}
-    {!linked.length && !!(projectItems.length || task.feishuWorkItemIds.length) && <p className="mt-2 line-clamp-2 break-words text-[11px] text-slate-500">{(task.feishuWorkItemIds.length ? task.feishuWorkItemIds : projectItems.map((item) => item.workItemId)).slice().sort((a, b) => Number(b === primary) - Number(a === primary)).map((id) => `${id === primary ? '主任务 · ' : ''}${feishuRelationshipLabel(id, responsibility)} · ${id}`).join('；')}（链接未核验）</p>}
-    {next !== '未登记' && <Tooltip overflowOnly content={task.waitingOn || next} asChild><p className="mt-2 line-clamp-2 break-words text-xs leading-4 text-slate-300"><span className="text-slate-500">{isCompleted ? '结果：' : task.waitingOn ? '等待：' : '下一步：'}</span>{task.waitingOn || next}</p></Tooltip>}
-    <TaskProgressNotice entry={{kind:'local',key:task.id,task}} />
-    {task.taskDocumentPath && <Tooltip content={task.taskDocumentPath} asChild><button type="button" onClick={() => onOpenDocument(task.taskDocumentPath!)} className="mt-2 self-start text-[11px] text-cyan-300 hover:underline">预览任务说明 · {documentName}</button></Tooltip>}
-    <div className="mt-2 grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-2 border-t border-white/10 pt-2">
-      <span className="min-w-0 break-words text-[11px] text-slate-500">{isCompleted ? task.completedAt ? `${endLabel} ${formatTime(task.completedAt)}` : '结束时间未登记' : `本地更新 ${formatTime(latestTaskRecordAt(task))}`}</span>
-      <button type="button" onClick={onStart} className="shrink-0 whitespace-nowrap rounded-lg border border-cyan-300/35 px-2.5 py-1.5 text-xs font-medium text-cyan-200 hover:bg-cyan-300/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-300">{actionLabel} →</button>
-    </div>
-  </article>;
+function ProjectSubtaskRow({child,parent}:{child:ProjectItem['personalSubtasks'][number];parent:WorkbenchItem|undefined}) {
+  const native=parent?.mySubtasks.find(item=>item.id===child.id);
+  const url=parent&&native?subtaskUrl(parent,native):null;
+  return <div className="break-words text-xs"><p>{child.name} · {child.passed?'已完成':'未完成'}</p><p className="mt-1 text-slate-500">子任务 · {url?<a href={url} target="_blank" rel="noopener noreferrer" className="text-cyan-300 hover:underline" onClick={()=>localAction('workbench','open_external','workbench')(true)}>{child.id}</a>:`${child.id}（定位链接未核实）`}</p></div>;
+}
+
+function DetailIssueList({items,onOpen}:{items:ProjectItem[];onOpen:(id:string)=>void}) {
+  const unfinished=items.filter(item=>!isFinishedProjectIssue(item));
+  const completed=items.filter(isFinishedProjectIssue);
+  const row=(item:ProjectItem)=><div key={item.workItemId} className="min-w-0 rounded-lg border border-white/10 p-2.5">
+    <button type="button" onClick={()=>onOpen(item.workItemId)} className="block break-words text-left text-sm font-medium hover:text-cyan-300">{item.title}</button>
+    <p className="mt-1 break-words text-xs text-slate-400">飞书状态：{item.statusName||'未返回'}</p>
+    <p className="mt-1 break-words text-xs text-slate-500">{isFinishedProjectIssue(item)?'缺陷已结束':responsibilityText(item.actionability)} · {item.url?<a href={item.url} target="_blank" rel="noopener noreferrer" className="text-cyan-300 hover:underline" onClick={()=>localAction('workbench','open_external','workbench')(true)}>{item.workItemId}</a>:`${item.workItemId}（链接未核验）`}</p>
+  </div>;
+  return <><p className="text-xs text-slate-400">未结束或待核实 {unfinished.length} · 已结束 {completed.length}</p>{unfinished.map(row)}{completed.length>0&&<details><summary className="cursor-pointer text-xs text-slate-400">已结束缺陷 · {completed.length}</summary><div className="mt-2 space-y-2">{completed.map(row)}</div></details>}</>;
+}
+
+function TaskFileLinks({files,onOpen}:{files:ReturnType<typeof taskPrimaryFiles>;onOpen:(path:string)=>void}) {
+  return <div aria-label="主要文件预览" className="mt-2 flex min-w-0 flex-wrap gap-x-3 gap-y-1">{files.map(file=><Tooltip key={file.path} content={file.path} asChild><button type="button" onClick={()=>onOpen(file.path)} className="min-w-0 break-all text-left text-[11px] text-cyan-300 hover:underline">{file.label} · {file.path.split(/[\\\\/]/).pop()}</button></Tooltip>)}</div>;
 }
 
 function Drawer({ title, subtitle, onClose, onRefresh, refreshing = false, children }: { title: string; subtitle?: string; onClose: () => void; onRefresh?: () => void; refreshing?: boolean; children: React.ReactNode }) { return <div className="fixed inset-0 z-50 flex justify-end bg-black/60" onClick={onClose}><aside role="dialog" aria-label={title} className="h-[100dvh] w-full min-w-0 overflow-x-hidden overflow-y-auto border-l border-white/10 bg-slate-950 p-4 shadow-2xl sm:max-w-2xl sm:p-6" onClick={(event) => event.stopPropagation()}><div className="flex min-w-0 flex-wrap items-start justify-between gap-3"><div className="min-w-0 flex-1"><h2 className="break-words text-lg font-semibold sm:text-xl">{title}</h2>{subtitle && <p className="mt-1 break-all text-xs text-slate-500">{subtitle}</p>}</div><div className="flex shrink-0 gap-2">{onRefresh && <button type="button" onClick={onRefresh} disabled={refreshing} className="rounded-lg border border-white/15 px-3 py-1.5 text-xs disabled:opacity-50">{refreshing ? '刷新中…' : '刷新'}</button>}<button type="button" onClick={onClose} className="rounded-lg border border-white/15 px-3 py-1.5 text-xs">关闭</button></div></div><div className="mt-5 space-y-4 text-sm">{children}</div></aside></div>; }
-function Block({ title, children }: { title: string; children: React.ReactNode }) { return <section className="min-w-0 space-y-2 overflow-x-hidden rounded-xl border border-white/10 bg-white/5 p-4 text-slate-300"><h3 className="font-medium text-slate-100">{title}</h3>{children}</section>; }
+function FeishuContextAlerts({items}:{items:Array<Pick<WorkbenchItem,'reasons'|'release'|'applicationCoverage'>>}) {
+  const messages=[...new Set(items.flatMap(item=>[
+    ...(item.reasons?.some(reason=>reason!=='unmapped_role')?['部分责任证据待核实，详见来源信息。']:[]),
+    ...(item.release?.error?[`发布信息未核实：${item.release.error}`]:[]),
+    ...(item.release?.conflict?['关联发布字段存在冲突。']:[]),
+    ...(item.applicationCoverage==='partial'?['关联申请信息尚未全部核实。']:[]),
+  ]))];
+  return <>{messages.map(message=><p key={message} role="status" className="break-words text-xs text-amber-200">{message}</p>)}</>;
+}
+
+function FeishuContext({ item }: { item: Pick<WorkbenchItem, 'typeKey' | 'reasons' | 'release' | 'applications' | 'applicationCoverage'> }) {
+  return <div className="space-y-1 text-xs text-slate-400">
+    {item.typeKey && <p>原生类型：{item.typeKey}</p>}
+    {!!item.reasons?.length && <p className="text-amber-300">{item.reasons.every(reason => reason === 'unmapped_role') ? '参与角色名称尚未取得；原生节点、子任务和流程状态分别保留。' : `证据待核实：${item.reasons.map(reason=>reason==='unverified_role_responsibility'?'角色已识别，当前处理责任尚未核实':reason).join('、')}`}</p>}
+    {item.release && <p>发布：{item.release.mode === 'canary' ? '金丝雀' : '普通'} · {item.release.version || '版本未核实'}{item.release.source === 'linked_story' && ' · 来自关联需求'}{item.release.conflict && ' · 发布字段冲突'}{item.release.error && ' · ' + item.release.error}</p>}
+    {item.applicationCoverage && <p>申请覆盖：{{not_configured:'未配置',not_queried:'未查询',complete:'已核实',partial:'部分未核实'}[item.applicationCoverage]}</p>}
+    {item.applications?.map(app => <p key={app.workItemId}>申请：{app.title} · {app.workItemId} · {app.status} · {app.source === 'native_relation' ? '原生关联' : '台账绑定'}{app.finishedAt && ' · 完成 ' + formatTime(app.finishedAt)}{app.reconciliationRequired && ' · 申请已完成，请核对需求发布节点'}{app.unfinishedSubtasks.length > 0 && ' · 未完子任务：' + app.unfinishedSubtasks.map(task => task.name).join('、')}</p>)}
+  </div>;
+}
+
+function Block({ title, help, children }: { title: string; help?: string; children: React.ReactNode }) { return <section className="min-w-0 space-y-2 overflow-x-hidden rounded-xl border border-white/10 bg-white/5 p-4 text-slate-300"><h3 className="font-medium text-slate-100">{title}{help && <WorkspaceHelpBadge label={title} content={help} />}</h3>{children}</section>; }
 function ObservationSection({ title, count, tone, empty, onRefresh, refreshing, error, children }: { title: string; count: number; tone: string; empty: string; onRefresh: () => void; refreshing: boolean; error?: string; children: React.ReactNode }) { return <section aria-label={title} className="min-w-0 rounded-xl border border-white/10 bg-slate-950/35 p-3"><div className="mb-2 flex items-center justify-between gap-2"><h3 className={`text-xs font-semibold ${tone}`}>{title}</h3><div className="flex shrink-0 items-center gap-2"><Tooltip content={`刷新${title}`} asChild><button type="button" onClick={onRefresh} disabled={refreshing} aria-label={`刷新${title}`} className="rounded-md border border-white/15 px-1.5 py-0.5 text-xs text-slate-300 hover:bg-white/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-300 disabled:opacity-50"><span aria-hidden="true">{refreshing ? '刷新中…' : '↻'}</span></button></Tooltip><span className="text-[11px] tabular-nums text-slate-500">{count}</span></div></div>{error && <p role="alert" className="mb-2 text-xs text-rose-300">刷新失败：<FailureNotice error={error} /></p>}<div className="space-y-2">{count ? children : <p className="rounded-lg border border-white/5 p-2.5 text-xs text-slate-500">{empty}</p>}</div></section>; }
-function formatRunCardTime(value: string | null): string {
-  if (!value) return '未记录';
-  const date = new Date(value.replace(' ', 'T'));
-  return formatDateTime(date, { short: true });
+export function TaskRunRecords({ runs, onOpen }: { runs: WorkspaceConsoleRunDto[]; onOpen: (run: WorkspaceConsoleRunDto) => void }) {
+  const [filter, setFilter] = useState<RunFilter>('all');
+  const [expanded, setExpanded] = useState(false);
+  const filtered = runs.filter((run) => runMatchesFilter(run, filter));
+  const options: Array<{ value: RunFilter; label: string }> = [{ value: 'all', label: '全部' }, { value: 'abnormal', label: '异常' }, { value: 'running', label: '执行中' }];
+  return <div className="min-w-0 space-y-2">
+    <p className="text-xs text-slate-400">每条记录代表一次执行；进程正常结束不等于任务验收完成。</p>
+    <div role="group" aria-label="筛选执行记录" className="flex flex-wrap gap-1.5">{options.map(({ value, label }) => <button key={value} type="button" aria-pressed={filter === value} onClick={() => { setFilter(value); setExpanded(false); }} className={`rounded-md border px-2 py-1 text-xs ${filter === value ? 'border-cyan-300/40 bg-cyan-300/10 text-cyan-200' : 'border-white/10 text-slate-400 hover:bg-white/5'}`}>{label} {runs.filter((run) => runMatchesFilter(run, value)).length}</button>)}</div>
+    {(expanded ? filtered : filtered.slice(0, 3)).map((item) => <RunRow key={`${item.taskId}:${item.runId}`} run={item} onOpen={() => onOpen(item)} />)}
+    {!filtered.length && <p className="py-2 text-xs text-slate-500">{runs.length ? '没有符合筛选的执行记录' : '暂无可识别的执行记录'}</p>}
+    {filtered.length > 3 && <button type="button" aria-expanded={expanded} onClick={() => setExpanded(!expanded)} className="text-xs text-cyan-300 hover:underline">{expanded ? '收起，仅看最近 3 条' : `查看其余 ${filtered.length - 3} 条记录`}</button>}
+  </div>;
 }
-function formatRunCardClock(value: string, startedAt: string | null): string {
-  const date = new Date(value.replace(' ', 'T'));
-  if (Number.isNaN(date.getTime())) return '未记录';
-  const started = startedAt ? new Date(startedAt.replace(' ', 'T')) : null;
-  return started && !Number.isNaN(started.getTime()) && date.toDateString() === started.toDateString()
-    ? formatClockTime(date) : formatRunCardTime(value);
-}
-function RunRow({ run, taskTitle, onOpen }: { run: WorkspaceConsoleRunDto; taskTitle?: string; onOpen: () => void }) {
-  const description = describeRun(run);
-  const metrics = describeRunListMetrics(run);
-  const running = description.outcome === '进行中';
-  const statusTone = description.outcome === '失败' ? 'border-rose-300/30 bg-rose-300/10 text-rose-200'
-    : running ? 'border-cyan-300/30 bg-cyan-300/10 text-cyan-200'
-      : ['成功', '完成'].includes(description.outcome) ? 'border-emerald-300/30 bg-emerald-300/10 text-emerald-200' : 'border-white/15 bg-white/5 text-slate-300';
-  const compactOutcome = description.outcome === '仅发现目录，暂无运行结果' ? '无结果' : description.outcome === '最终状态未记录' ? '状态未记' : description.outcome === '结果未记录' ? '未记录' : description.outcome;
-  const location = run.executionLocation === 'remote' ? '服务器' : run.executionLocation === 'local' ? '本机' : '位置未记录';
-  const timestamp = `${location} · 开始 ${formatRunCardTime(run.startedAt)}${running && run.observedAt ? ` · 核查 ${formatRunCardClock(run.observedAt, run.startedAt)}` : run.durationSeconds !== null ? ` · 用时 ${formatRunDuration(run.durationSeconds)}` : ''}`;
-  return <button type="button" onClick={onOpen} className="block w-full min-w-0 rounded-lg border border-white/10 bg-white/[0.03] p-2.5 text-left hover:border-cyan-300/40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-300">
-    <span className="mb-1 block text-[10px] text-slate-500">{describeRunCategory(run)}</span>
-    <span className="flex min-w-0 items-start justify-between gap-2"><span className="min-w-0 whitespace-normal break-words text-xs font-medium text-slate-100">{taskTitle || description.title}</span><span className={`shrink-0 whitespace-nowrap rounded border px-1.5 py-0.5 text-[10px] ${statusTone}`}>{run.source === 'remote-runner' ? `Runner ${compactOutcome}` : compactOutcome}</span></span>
-    <Tooltip overflowOnly={Boolean(taskTitle && taskTitle !== description.title)} content={`${description.title} · ${describeRunMode(run)}`} asChild><span className="mt-1 block truncate text-[11px] text-slate-300">{taskTitle && taskTitle !== description.title && `${description.title} · `}{describeRunMode(run)}</span></Tooltip>
-    {metrics ? <Tooltip overflowOnly content={metrics} asChild><span className="mt-0.5 block truncate text-[11px] text-slate-200">{metrics}</span></Tooltip> : running && run.source === 'remote-runner' ? <span className="mt-0.5 block text-[11px] text-slate-500">本机尚无进度计数</span> : null}
-    <Tooltip overflowOnly content={timestamp} asChild><span className="mt-1 block truncate text-[11px] text-slate-500">{timestamp}</span></Tooltip>
-  </button>;
-}
-function RunDetail({ run, taskTitle, onOpenTask, onOpenFile }: { run: WorkspaceConsoleRunDto; taskTitle: string | null; onOpenTask?: () => void; onOpenFile?: () => void }) {
+
+export function RunDetail({ run, taskTitle, onOpenTask, onOpenFile }: { run: WorkspaceConsoleRunDto; taskTitle: string | null; onOpenTask?: () => void; onOpenFile?: () => void }) {
   const description = describeRun(run);
   const result = describeRunResult(run);
   const metrics = describeRunMetrics(run);
@@ -1166,29 +1094,41 @@ function RunDetail({ run, taskTitle, onOpenTask, onOpenFile }: { run: WorkspaceC
   const visibleConditions = (hasPlannedRepair ? conditions.filter((item) => !item.startsWith('符合修复条件 ')) : conditions).slice(0, 3);
   const extraConditions = conditions.filter((item) => !visibleConditions.includes(item));
   return <>
-    <Block title="执行结果">
-      <p className="font-medium text-slate-100">{run.source === 'remote-runner' ? `Runner ${result.outcome}` : result.outcome}</p>
-      {metrics && <><p className="text-xs text-slate-400">{metrics.sourceLabel}（本机已收集文件）</p>{metrics.totals.map((item) => <p key={item}>{item}</p>)}{conditions.length > 0 && <p className="pt-1 text-xs text-slate-400">条件分类</p>}{visibleConditions.map((item) => <p key={item}>{item}</p>)}{extraConditions.length > 0 && <details className="text-xs"><summary className="cursor-pointer text-cyan-300">展开其余 {extraConditions.length} 项条件</summary><div className="mt-2 space-y-1.5 text-sm text-slate-300">{extraConditions.map((item) => <p key={item}>{item}</p>)}</div></details>}</>}
+    <Block title="本次执行">
+      <p className="break-words font-medium text-slate-100">{description.title}</p>
+      <p className="break-words">所属任务：{onOpenTask ? <button type="button" onClick={onOpenTask} className="text-cyan-300 hover:underline">{taskTitle || run.taskId} →</button> : taskTitle || run.taskContext?.title || (run.taskId ? `未匹配任务（${run.taskId}）` : run.taskContext?.directory||'未记录')}</p>
+      {run.taskContext?.association!=='registered'&&run.taskContext&&<p className="text-xs text-amber-200">任务目录已识别 · {run.taskContext.association==='ambiguous'?'多份台账归属待核实':'尚未登记台账'}</p>}
+      {run.businessResult?.object && <p className="break-words">处理对象：{run.businessResult.object}</p>}
+      <p>{describeRunCategory(run)}{run.mode ? ` · ${describeRunMode(run)}` : ''}</p>
+    </Block>
+    <Block title="本轮结果" help="以下为本机已登记或已收集的执行信息；任务交付与验收以所属任务为准。">
+      <p className="font-medium text-slate-100">运行记录：{result.outcome}</p>
       {result.facts.map((fact) => <p key={fact} className="break-words">{fact}</p>)}
+      {metrics && <><p className="text-xs text-slate-400">{metrics.sourceLabel}（本机已收集文件）</p>{metrics.totals.map((item) => <p key={item}>{item}</p>)}{conditions.length > 0 && <p className="pt-1 text-xs text-slate-400">条件分类</p>}{visibleConditions.map((item) => <p key={item}>{item}</p>)}{extraConditions.length > 0 && <details className="text-xs"><summary className="cursor-pointer text-cyan-300">展开其余 {extraConditions.length} 项条件</summary><div className="mt-2 space-y-1.5 text-sm text-slate-300">{extraConditions.map((item) => <p key={item}>{item}</p>)}</div></details>}</>}
+      {describeRunProgress(run).map((fact) => <p key={fact} className="break-words text-xs text-slate-400">{fact}</p>)}
+      {describeRunScope(run).map((fact) => <p key={fact} className="break-words text-xs text-slate-400">{fact}</p>)}
+      {run.collectedAt && <p className="text-xs text-slate-500">结果收集时间：{formatTime(run.collectedAt)}</p>}
+      {run.source === 'remote-runner' && !run.evidenceFiles.length && <p className="text-xs text-amber-200">本机尚未收集执行结果文件。</p>}
       {onOpenFile && <p className="pt-2"><button type="button" onClick={onOpenFile} className="text-cyan-300 underline-offset-2 hover:underline focus-visible:underline">打开本地执行文件（{run.detailFilePath?.split(/[\\/]/).pop()}）→</button></p>}
     </Block>
     <Block title="执行信息">
-      <p className="break-words">所属任务：{onOpenTask ? <button type="button" onClick={onOpenTask} className="text-cyan-300 hover:underline">{taskTitle || run.taskId} →</button> : taskTitle || (run.taskId ? `未匹配任务（${run.taskId}）` : '未记录')}</p>
-      <p>执行目标：{description.title} · {describeRunMode(run)}</p>
       <p>开始：{run.startedAt ? formatTime(run.startedAt) : '未记录'}</p>
       {run.finishedAt && <p>结束：{formatTime(run.finishedAt)}</p>}
       {run.durationSeconds !== null && <p>用时：{duration}</p>}
       <p>位置：{run.executionLocation === 'local' ? '本机' : run.executionLocation === 'remote' ? '服务器' : '未记录'}</p>
-      {run.executionLocation === 'remote' && <p>最近核查：{run.observedAt ? formatTime(run.observedAt) : '未记录'}</p>}
+      <p>{run.executionLocation === 'remote' ? '最近核查' : '状态更新时间'}：{run.observedAt ? formatTime(run.observedAt) : '未记录'}</p>
     </Block>
     <details className="rounded-xl border border-white/10 bg-white/5 p-4 text-sm text-slate-300"><summary className="cursor-pointer font-medium text-slate-100">排查信息与本地文件</summary><div className="mt-3 space-y-2 break-words">
       {run.serverName && <p>服务器配置：{run.serverName}</p>}
-      {run.target && <p>Runner 任务名：{run.target}</p>}
-      {run.mode && <p>Runner 模式：{run.mode}</p>}
+      {run.target && <p>原始执行目标：{run.target}</p>}
+      <p>原始运行状态：{run.status}</p>
+      {run.businessResult?.status && <p>原始业务状态：{run.businessResult.status}</p>}
+      {run.mode && <p>原始模式：{run.mode}</p>}
       {description.detail && <p>记录摘要：{description.detail}</p>}
       {run.exitCode !== null && <p>进程退出码：{run.exitCode}</p>}
       <p className="break-all">Run ID：{run.runId}</p>
       {run.taskId && <p className="break-all">任务 ID：{run.taskId}</p>}
+      {run.taskContext&&<p className="break-all">任务目录：{run.taskContext.directory}</p>}
       <p className="text-xs text-slate-400">本地文件：{run.evidenceFiles.length ? run.evidenceFiles.join('、') : run.executionLocation === 'remote' ? '尚未收集到本机' : '无'}</p>
     </div></details>
   </>;

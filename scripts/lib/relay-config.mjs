@@ -1,6 +1,6 @@
-import fs from 'node:fs';
 import net from 'node:net';
 import { normalizeClientIp } from './client-ip.mjs';
+import { loadKvConfig, parseKvConfig } from './kv-config.mjs';
 
 const SERVICE_CONFIG_KEYS = [
   'CODEX_HOST',
@@ -14,47 +14,51 @@ const CONFIG_KEYS = new Set([...SERVICE_CONFIG_KEYS, 'PUBLIC_ALLOWED_ADDRESSES',
 const WILDCARD_ADDRESS = '0.0.0.0';
 
 export function loadRelayConfig(filePath) {
-  if (!fs.existsSync(filePath)) throw new Error(`Relay 配置文件不存在：${filePath}`);
-  return parseRelayConfig(fs.readFileSync(filePath, 'utf8'));
+  const { values, sources } = loadKvConfig(filePath, { allowedKeys: CONFIG_KEYS, required: true });
+  return normalizeRelayConfig(values, sources, filePath);
 }
 
 export function parseRelayConfig(content) {
-  const values = new Map();
-  for (const [index, rawLine] of String(content).split(/\r?\n/).entries()) {
-    const line = rawLine.trim();
-    if (!line || line.startsWith('#')) continue;
-    const separator = line.indexOf('=');
-    if (separator <= 0) throw new Error(`Relay 配置第 ${index + 1} 行格式无效，应使用 KEY=VALUE`);
-    const key = line.slice(0, separator).trim();
-    const value = unquote(line.slice(separator + 1).trim());
-    if (!CONFIG_KEYS.has(key)) throw new Error(`未知配置项：${key}`);
-    if (values.has(key)) throw new Error(`重复配置项：${key}`);
-    values.set(key, value);
-  }
+  return normalizeRelayConfig(parseKvConfig(content, { allowedKeys: CONFIG_KEYS, source: 'Relay 配置' }));
+}
 
+function normalizeRelayConfig(values, sources = new Map(), source = 'Relay 配置') {
+  const check = (keys, validate) => {
+    try { return validate(); }
+    catch (error) {
+      const context = keys.map(key => `${sources.get(key) || source} [${key}]`).join(', ');
+      throw new Error(`${context}：${error.message}`);
+    }
+  };
   for (const key of SERVICE_CONFIG_KEYS) {
-    if (!values.has(key)) throw new Error(`缺少配置项：${key}`);
+    if (!values.has(key)) throw new Error(`${source}：缺少配置项：${key}`);
   }
 
-  const codexHost = normalizeCodexHost(values.get('CODEX_HOST'));
-  const codexPort = normalizeCodexPort(values.get('CODEX_PORT'));
+  const codexHost = check(['CODEX_HOST'], () => normalizeCodexHost(values.get('CODEX_HOST')));
+  const codexPort = check(['CODEX_PORT'], () => normalizeCodexPort(values.get('CODEX_PORT')));
   const codexAuthority = net.isIP(codexHost) === 6 ? `[${codexHost}]:${codexPort}` : `${codexHost}:${codexPort}`;
-  const backend = normalizeHttpEndpoint('后端', values.get('BACKEND_LISTEN_HOST'), values.get('BACKEND_LISTEN_PORT'));
-  const frontend = normalizeHttpEndpoint('前端', values.get('FRONTEND_LISTEN_HOST'), values.get('FRONTEND_LISTEN_PORT'));
+  const backend = check(['BACKEND_LISTEN_HOST', 'BACKEND_LISTEN_PORT'], () => normalizeHttpEndpoint('后端', values.get('BACKEND_LISTEN_HOST'), values.get('BACKEND_LISTEN_PORT')));
+  const frontend = check(['FRONTEND_LISTEN_HOST', 'FRONTEND_LISTEN_PORT'], () => normalizeHttpEndpoint('前端', values.get('FRONTEND_LISTEN_HOST'), values.get('FRONTEND_LISTEN_PORT')));
   const servicePorts = [codexPort, backend.port, frontend.port];
-  if (new Set(servicePorts).size !== servicePorts.length) throw new Error('Codex、后端和前端监听端口不能重复');
+  check(['CODEX_PORT', 'BACKEND_LISTEN_PORT', 'FRONTEND_LISTEN_PORT'], () => {
+    if (new Set(servicePorts).size !== servicePorts.length) throw new Error('Codex、后端和前端监听端口不能重复');
+  });
 
   const rawAddresses = values.get('PUBLIC_ALLOWED_ADDRESSES') || '';
   const addressValues = rawAddresses.split(',').map((item) => item.trim()).filter(Boolean);
   const wildcard = addressValues.includes(WILDCARD_ADDRESS);
-  if (wildcard && addressValues.length > 1) throw new Error('0.0.0.0 不能与其他地址混用');
-  const addresses = wildcard ? [] : deduplicateAddresses(addressValues.map(normalizeAddress));
-  const trustedProxyIps = [...new Set((values.get('TRUSTED_PROXY_IPS') || '').split(',').map(value => value.trim()).filter(Boolean).map(value => {
+  const addresses = check(['PUBLIC_ALLOWED_ADDRESSES'], () => {
+    if (wildcard && addressValues.length > 1) throw new Error('0.0.0.0 不能与其他地址混用');
+    return wildcard ? [] : deduplicateAddresses(addressValues.map(normalizeAddress));
+  });
+  const trustedProxyIps = check(['TRUSTED_PROXY_IPS'], () => [...new Set((values.get('TRUSTED_PROXY_IPS') || '').split(',').map(value => value.trim()).filter(Boolean).map(value => {
     const ip = normalizeClientIp(value);
     if (!ip || ip === '0.0.0.0' || ip === '::') throw new Error('TRUSTED_PROXY_IPS 必须是明确的代理 IP，不支持通配地址、域名或网段');
     return ip;
-  }))];
-  if (trustedProxyIps.length && wildcard) throw new Error('TRUSTED_PROXY_IPS 要求 PUBLIC_ALLOWED_ADDRESSES 使用精确地址，不能使用通配模式');
+  }))]);
+  check(['TRUSTED_PROXY_IPS', 'PUBLIC_ALLOWED_ADDRESSES'], () => {
+    if (trustedProxyIps.length && wildcard) throw new Error('TRUSTED_PROXY_IPS 要求 PUBLIC_ALLOWED_ADDRESSES 使用精确地址，不能使用通配模式');
+  });
 
   return {
     codex: {
@@ -139,31 +143,26 @@ export function formatPublicAccessStatus(config) {
   return ['公网访问：已启用', ...config.publicAccess.addresses.map((address) => `  ${address.origin}`)];
 }
 
-function unquote(value) {
-  if (value.length >= 2 && value[0] === value.at(-1) && ['"', "'"].includes(value[0])) return value.slice(1, -1);
-  return value;
-}
-
 function normalizeCodexHost(value) {
   const host = String(value || '').trim().toLowerCase();
   const version = net.isIP(host);
   const loopback = version === 4 ? /^127\./.test(host) : version === 6 && ['::1', '0:0:0:0:0:0:0:1'].includes(host);
-  if (!loopback) throw new Error(`Codex IP 必须是回环地址：${host || '(空)'}`);
+  if (!loopback) throw new Error('Codex IP 必须是回环地址');
   return host;
 }
 
 function normalizeCodexPort(value) {
   const raw = String(value || '').trim();
-  if (!/^\d+$/.test(raw)) throw new Error(`Codex 端口无效：${raw || '(空)'}`);
+  if (!/^\d+$/.test(raw)) throw new Error('Codex 端口无效');
   const port = Number.parseInt(raw, 10);
-  if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error(`Codex 端口无效：${raw}`);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('Codex 端口无效');
   return port;
 }
 
 function normalizeHttpEndpoint(name, hostValue, portValue) {
   const listenHost = String(hostValue || '').trim().toLowerCase();
   const ipVersion = net.isIP(listenHost);
-  if (!ipVersion) throw new Error(`${name}监听 IP 无效：${listenHost || '(空)'}`);
+  if (!ipVersion) throw new Error(`${name}监听 IP 无效`);
   const port = normalizeServicePort(name, portValue);
   const connectHost = listenHost === '0.0.0.0' ? '127.0.0.1' : isUnspecifiedIpv6(listenHost) ? '::1' : listenHost;
   const listenAuthority = formatAuthority(listenHost, port);
@@ -180,9 +179,9 @@ function normalizeHttpEndpoint(name, hostValue, portValue) {
 
 function normalizeServicePort(name, value) {
   const raw = String(value || '').trim();
-  if (!/^\d+$/.test(raw)) throw new Error(`${name}监听端口无效：${raw || '(空)'}`);
+  if (!/^\d+$/.test(raw)) throw new Error(`${name}监听端口无效`);
   const port = Number.parseInt(raw, 10);
-  if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error(`${name}监听端口无效：${raw}`);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error(`${name}监听端口无效`);
   return port;
 }
 
@@ -213,19 +212,19 @@ function tryNormalizeAddress(value) {
 
 function normalizeAddress(value) {
   const raw = String(value || '').trim();
-  if (!raw || raw.includes('://') || /[\s/?#@*]/.test(raw)) throw new Error(`公网地址格式无效：${raw || '(空)'}`);
+  if (!raw || raw.includes('://') || /[\s/?#@*]/.test(raw)) throw new Error('公网地址格式无效');
 
   let url;
   try {
     url = new URL(`https://${raw}`);
   } catch {
-    throw new Error(`公网地址格式无效：${raw}`);
+    throw new Error('公网地址格式无效');
   }
   if (url.username || url.password || url.pathname !== '/' || url.search || url.hash || !url.hostname) {
-    throw new Error(`公网地址格式无效：${raw}`);
+    throw new Error('公网地址格式无效');
   }
   const port = url.port ? Number.parseInt(url.port, 10) : 443;
-  if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error(`公网地址端口无效：${raw}`);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('公网地址端口无效');
   const hostname = url.hostname.toLowerCase();
   const authority = port === 443 ? hostname : `${hostname}:${port}`;
   return {

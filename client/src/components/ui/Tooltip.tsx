@@ -160,7 +160,7 @@ export default function Tooltip({ content, children, delay = 300, disabled = fal
           ref={tooltipRef}
           id={tooltipId}
           role="tooltip"
-          className="pointer-events-none fixed z-[1100] max-w-[min(32rem,calc(100vw-1rem))] whitespace-normal rounded-lg border border-[var(--color-overlay-border)] bg-[var(--color-overlay-surface)] px-2 py-1 text-[11px] font-medium leading-4 text-[var(--color-text-secondary)] shadow-[var(--color-overlay-shadow)] [overflow-wrap:anywhere]"
+          className="pointer-events-none fixed z-[1100] max-w-[min(32rem,calc(100vw-1rem))] whitespace-pre-line rounded-lg border border-[var(--color-overlay-border)] bg-[var(--color-overlay-surface)] px-2 py-1 text-[11px] font-medium leading-4 text-[var(--color-text-secondary)] shadow-[var(--color-overlay-shadow)] [overflow-wrap:anywhere]"
           style={{ ...position, zIndex: coexist ? 1300 : 1100, visibility: positioned ? 'visible' : 'hidden' }}
         >
           {content}

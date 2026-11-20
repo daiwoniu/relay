@@ -140,7 +140,7 @@ export interface CoreCommandInputs {
     clientIntentDigest?:string;
     origin: { kind: 'direct' } | { kind: 'followup'; followupId: string };
     draft?: { projectId: string; title: string; titleManuallySet: boolean };
-    workspaceTaskLink?: { taskId: string; workspacePath: string };
+    workspaceTaskLink?: { taskId: string; workspacePath: string; workspaceId?:string; connectionScope?:string; targetRef?:string };
     bind?: { modelId: string | null; reasoningEffort: string | null; serviceTier: string | null };
   };
   'queue.claim': { resourceKey: string; claimToken: string };
@@ -171,8 +171,8 @@ export interface CoreCommandInputs {
   'themeAsset.commit':{jobId:string;proofDigest:string};
   'themeAsset.reject':{jobId:string};
   'themeAsset.finishFiles':{jobId:string;proofDigest:string};
-  'workspace.linkSession':{linkId:string;taskId:string;sessionId:string};
-  'workspace.unlinkSession':{taskId:string;sessionId:string};
+  'workspace.linkSession':{linkId:string;taskId:string;sessionId:string;workspaceId?:string;connectionScope?:string;targetRef?:string};
+  'workspace.unlinkSession':{taskId:string;sessionId:string;workspaceId?:string;connectionScope?:string;targetRef?:string};
   'workspace.beginSnapshot':Record<string,never>;
   'workspace.saveSnapshot':{version:number;value:StoredWorkspaceDashboard};
   'usage.beginSync':{jobId:string;email:string;accountId:string;untilDay:string};

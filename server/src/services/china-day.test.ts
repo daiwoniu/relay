@@ -1,10 +1,40 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { buildChinaDay } from './china-day.js';
+import { buildChinaDay, locationFor } from './china-day.js';
 
 function json(value: unknown): Response {
   return new Response(JSON.stringify(value), { headers: { 'content-type': 'application/json' } });
 }
+
+test('location diagnostics distinguish provider rejection from unknown city without exposing visitor IP', async () => {
+  const ip = '2001:db8::123';
+  let requested = '';
+  const fetcher = (async (input: string | URL | Request) => {
+    requested = String(input);
+    return json({ code: -412, message: `blocked ${ip}` });
+  }) as typeof fetch;
+  await assert.rejects(locationFor(fetcher, ip), error => {
+    assert.ok(error instanceof Error);
+    assert.match(error.message, /访客 IPv6，错误码 -412/);
+    assert.ok(!error.message.includes(ip));
+    assert.doesNotMatch(error.message, /未返回城市/);
+    return true;
+  });
+  assert.equal(new URL(requested).searchParams.get('ip'), ip);
+  for (const [address, target] of [[ip, '访客 IPv6'], ['192.0.2.1', '访客 IPv4'], [undefined, '服务器出口 IP']] as const) {
+    const noCity = (async () => json({ code: 0, data: { city: '  ' } })) as typeof fetch;
+    await assert.rejects(locationFor(noCity, address), error => {
+      assert.ok(error instanceof Error);
+      assert.ok(error.message.includes(`查询成功但未返回城市（${target}）`));
+      return true;
+    });
+  }
+});
+
+test('location diagnostics do not reflect arbitrary provider codes', async () => {
+  const fetcher = (async () => json({ code: 'private upstream payload' })) as typeof fetch;
+  await assert.rejects(locationFor(fetcher, '192.0.2.1'), /地区接口请求失败（访客 IPv4，错误码 未知）/);
+});
 
 test('combines visitor IP location, API weather and Chinese calendar without webpage requests', async () => {
   const requested: string[] = [];

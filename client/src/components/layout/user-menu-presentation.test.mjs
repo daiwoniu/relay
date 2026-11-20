@@ -45,5 +45,7 @@ test('移动端用户菜单使用贴底面板并保持退出入口可达', () =>
 });
 
 test('管理入口保留账号管理图标', () => {
-  assert.match(component, /if \(type === 'accounts'\)[\s\S]*circle cx="13\.3" cy="12\.7" r="2\.1"/);
+  const icon = fs.readFileSync(new URL('../icons/UserMenuIcon.tsx', import.meta.url), 'utf8');
+  assert.match(component, /import MenuGlyph from '..\/icons\/UserMenuIcon'/);
+  assert.match(icon, /if \(type === 'accounts'\)[\s\S]*circle cx="13\.3" cy="12\.7" r="2\.1"/);
 });

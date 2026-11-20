@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import {
   formatPublicAccessStatus,
   getRelayServicePorts,
@@ -8,6 +11,7 @@ import {
   isLocalOrPrivateHost,
   isPublicOriginAllowed,
   parseRelayConfig,
+  loadRelayConfig,
 } from './lib/relay-config.mjs';
 
 const configText = (publicAddresses = '', codexHost = '127.0.0.1', codexPort = '9281', backendHost = '0.0.0.0', backendPort = '9181', frontendHost = '0.0.0.0', frontendPort = '9081') => `
@@ -19,6 +23,48 @@ FRONTEND_LISTEN_HOST=${frontendHost}
 FRONTEND_LISTEN_PORT=${frontendPort}
 PUBLIC_ALLOWED_ADDRESSES=${publicAddresses}
 `;
+
+test('Relay validates effective merged values, preserves inheritance and clears public access explicitly', t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'relay-config-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const base = path.join(root, 'relay.conf');
+  const local = path.join(root, 'relay.local.conf');
+  fs.writeFileSync(base, configText('example.com', '127.0.0.1', 'invalid'));
+  fs.writeFileSync(local, 'CODEX_PORT=9282\nPUBLIC_ALLOWED_ADDRESSES=\nBACKEND_LISTEN_HOST=::');
+  const effective = loadRelayConfig(base);
+  assert.equal(effective.codex.port, 9282);
+  assert.equal(effective.backend.port, 9181);
+  assert.equal(effective.backend.connectHost, '::1');
+  assert.equal(effective.publicAccess.enabled, false);
+  fs.writeFileSync(local, 'CODEX_PORT=');
+  assert.throws(() => loadRelayConfig(base), /Codex 端口/);
+  fs.writeFileSync(local, 'CODEX_PORT=private-value');
+  assert.throws(() => loadRelayConfig(base), error => {
+    assert.ok(error.message.includes(local));
+    assert.match(error.message, /CODEX_PORT.*Codex 端口/);
+    assert.ok(!error.message.includes('private-value'));
+    return true;
+  });
+  fs.writeFileSync(local, configText());
+  fs.unlinkSync(base);
+  assert.deepEqual(loadRelayConfig(base), parseRelayConfig(configText()));
+  fs.unlinkSync(local);
+  assert.throws(() => loadRelayConfig(base), /配置文件不存在/);
+});
+
+test('Relay cross-field security checks use the merged local override', t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'relay-config-security-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const base = path.join(root, 'relay.conf');
+  const local = path.join(root, 'relay.local.conf');
+  fs.writeFileSync(base, configText('example.com') + 'TRUSTED_PROXY_IPS=127.0.0.1');
+  fs.writeFileSync(local, 'PUBLIC_ALLOWED_ADDRESSES=0.0.0.0');
+  assert.throws(() => loadRelayConfig(base), /不能使用通配模式/);
+  fs.writeFileSync(local, 'PUBLIC_ALLOWED_ADDRESSES=0.0.0.0\nTRUSTED_PROXY_IPS=');
+  assert.deepEqual(loadRelayConfig(base).trustedProxyIps, []);
+  fs.writeFileSync(local, 'BACKEND_LISTEN_PORT=9081');
+  assert.throws(() => loadRelayConfig(base), /监听端口不能重复/);
+});
 
 test('空配置保持公网访问关闭', () => {
   const config = parseRelayConfig(configText());
