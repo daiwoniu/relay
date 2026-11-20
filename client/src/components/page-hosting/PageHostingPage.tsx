@@ -15,11 +15,11 @@ import HostingMoreMenu from './HostingMoreMenu';
 import PreviewHostingDialog from './PreviewHostingDialog';
 import generationRules from './generation-rules.md?raw';
 import { getHostParentPath } from '../chat/host-file-path';
+import { formatHostingInspectionSummary, formatHostingSize } from './hosting-summary';
 import './page-hosting.css';
 
 const DirectoryPicker=lazy(()=>import('../chat/DirectoryPicker'));
 const HostFilePicker=lazy(()=>import('../chat/HostFilePicker'));
-const size=(bytes:number)=>bytes<1024*1024?`${(bytes/1024).toFixed(1)} KB`:`${(bytes/1024/1024).toFixed(1)} MB`;
 const nameFromPath=(value:string)=>value.replace(/[\\/]+$/,'').split(/[\\/]/).pop()?.replace(/\.(?:zip|html?)$/i,'')??'';
 
 export function UploadDialog({site:existingSite,onClose,onPublished,initialLocalPath='',sites=[],sitesLoading=false,sitesError=null,onReloadSites=()=>{}}:{site:HostedSite|null;onClose:()=>void;onPublished:(site:HostedSite)=>void;initialLocalPath?:string;sites?:HostedSite[];sitesLoading?:boolean;sitesError?:unknown;onReloadSites?:()=>void}){
@@ -91,7 +91,7 @@ export function UploadDialog({site:existingSite,onClose,onPublished,initialLocal
         </>}
         <label className="hosting-field">页面名称<input value={name} maxLength={80} disabled={busy} onChange={event=>setName(event.target.value)} placeholder="例如：产品介绍" /></label>
         {stage&&<>
-          <div className="hosting-summary" role="status">共 {stage.fileCount} 个文件 · {size(stage.totalBytes)} · 已修正 {stage.rewritten} 处路径{stage.warningCount>0&&` · ${stage.warningCount} 项提示`}</div>
+          <div className="hosting-summary" role="status">{formatHostingInspectionSummary(stage)}</div>
           <label className="hosting-field">首页<select value={entry} disabled={busy} onChange={event=>{featureAction('hosting','select_entry','admin');setEntry(event.target.value);}}><option value="" disabled>请选择 HTML 首页</option>{stage.entries.map(path=><option key={path} value={path}>{path}</option>)}</select></label>
           {stage.warningCount>0&&<details className="hosting-checks"><summary>查看检查提示</summary><ul>{stage.warnings.map((warning,index)=><li key={index}>{warning}</li>)}</ul>{stage.warningCount>stage.warnings.length&&<p>仅展示前 {stage.warnings.length} 项，请预览确认页面效果。</p>}<p>无法定位的引用保持原样，动态脚本路径不会自动修改。</p></details>}
           <p className="hosting-muted">临时内容保留 1 小时。{site?'替换后访问链接不变，只保留最新内容。':'发布后可随时更新、停用或删除。'}</p>
@@ -135,7 +135,7 @@ export default function PageHostingPage({onClose,mobile=false,importRequest}:{on
       {rulesError!==null&&<div className="hosting-summary" role="alert"><FailureNotice error={rulesError} description="AI 生成规则复制失败" suggestion="请允许浏览器访问剪贴板，并再次点击「复制 AI 生成规则」。" /></div>}
       {message&&<p role="status" className="hosting-summary">{message}</p>}{error!==null&&<div className="hosting-summary"><FailureNotice error={error} /><button type="button" onClick={()=>setReload(value=>value+1)}>刷新列表</button></div>}
       {loading&&!sites.length?<p role="status">正在加载托管页面…</p>:!sites.length?<div className="hosting-empty"><h2>还没有托管页面</h2><p className="hosting-muted">支持单个 HTML、ZIP 包，或直接复制服务器上的静态目录。</p><button className="hosting-primary" type="button" onClick={()=>setUpload({site:null})}>添加第一个页面</button></div>:<ul className="hosting-sites">{sites.map(site=><li key={site.id} className="hosting-site">
-        <div className="hosting-site-info"><h2>{site.name}<span className={site.enabled?'hosting-status':'hosting-status is-disabled'}>{site.enabled?'已发布':'已停用'}</span></h2><p className="hosting-muted">{site.entry} · {size(site.totalBytes)} · {site.fileCount} 个文件</p><p className="hosting-muted">更新于 {formatDateTime(site.updatedAt, { seconds: true })}</p></div>
+        <div className="hosting-site-info"><h2>{site.name}<span className={site.enabled?'hosting-status':'hosting-status is-disabled'}>{site.enabled?'已发布':'已停用'}</span></h2><p className="hosting-muted">{site.entry} · {formatHostingSize(site.totalBytes)} · {site.fileCount} 个文件</p><p className="hosting-muted">更新于 {formatDateTime(site.updatedAt, { seconds: true })}</p></div>
         <div className="hosting-actions"><a className="hosting-button" href={api.hostedUrl(site.publicId??site.id)} target="_blank" rel="noopener noreferrer" onClick={()=>{const report=localAction('hosting','open_external','admin');report(true);}}>打开</a><button type="button" onClick={()=>void copy(site)}>复制链接</button><button type="button" disabled={busy} aria-haspopup="menu" aria-expanded={more?.site.id===site.id} aria-label={`${site.name}的更多操作`} onClick={event=>setMore(more?.site.id===site.id?null:{site,anchor:event.currentTarget})}>更多</button></div>
       </li>)}</ul>}
     </div>

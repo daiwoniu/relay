@@ -68,7 +68,6 @@ export async function inspectPackage(input:{filename:string;archive:string;conte
       for(const name of entries){
         if(!/\.(?:html?|css|m?js)$/i.test(name))continue;
         const target=path.join(content,...name.split('/')),stat=await fs.stat(target);
-        if(stat.size>4*1024*1024){warningCount++;if(warnings.length<40)warnings.push(`${name}：超过 4 MB，跳过自动路径修正`);continue;}
         const source=await fs.readFile(target,'utf8');
         if(source.includes('\uFFFD')){warningCount++;if(warnings.length<40)warnings.push(`${name}：请使用 UTF-8 编码，未自动修改`);continue;}
         const result=rewriteReferences(name,source,files);rewritten+=result.rewritten;warningCount+=result.warningCount;warnings.push(...result.warnings.slice(0,40-warnings.length));

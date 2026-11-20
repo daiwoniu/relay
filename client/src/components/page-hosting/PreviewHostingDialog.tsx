@@ -8,6 +8,7 @@ import { useState } from 'react';
 import { copyToClipboard } from '../../utils/clipboard';
 import HostingSelect from './HostingSelect';
 import { MenuIcon } from '../icons/MenuIcon';
+import { formatHostingInspectionSummary } from './hosting-summary';
 
 interface Props {
   filePath: string;
@@ -75,7 +76,7 @@ export default function PreviewHostingDialog(props: Props) {
       <p className="hosting-muted">启用的托管页面可由持链接的人访问。</p>
       {unavailable&&<p role="alert" className="hosting-muted">所选托管页面已不可用，请重新选择发布目标。</p>}
       {stage && <>
-        <p className="hosting-summary" role="status">检查完成 · {stage.fileCount} 个文件{stage.warningCount > 0 && ` · ${stage.warningCount} 项提示`}</p>
+        <p className="hosting-summary" role="status">{formatHostingInspectionSummary(stage)}</p>
         {(stage.entries.length > 1 && !stage.entries.includes(fileName)) || !entry ? <HostingSelect label="打开的页面" value={entry} disabled={busy} placeholder="请选择页面" onChange={props.onEntryChange} options={stage.entries.map(path=>({value:path,label:path,icon:<PageHostingIcon/>}))}/> : null}
         {stage.warningCount > 0 && <details className="hosting-checks"><summary>查看检查提示</summary><ul>{stage.warnings.map((warning, index) => <li key={index}>{warning}</li>)}</ul>{stage.warningCount > stage.warnings.length && <p>仅展示前 {stage.warnings.length} 项，请预览确认页面效果。</p>}</details>}
       </>}

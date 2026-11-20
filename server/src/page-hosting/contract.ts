@@ -3,6 +3,7 @@ import { z } from 'zod';
 export const HOSTING_UPLOAD_BYTES = 32 * 1024 * 1024;
 export const HOSTING_EXPANDED_BYTES = 128 * 1024 * 1024;
 export const HOSTING_FILE_COUNT = 1500;
+export const HOSTING_REWRITE_CODE_BYTES = 2 * 1024 * 1024;
 export const HostingPublicIdSchema = z.string().regex(/^[a-z0-9]{10}$/);
 export const HostingPathSchema = z.string().min(1).max(512).refine(value =>
   !value.startsWith('/') && !value.includes('\\') && value.split('/').every(part =>

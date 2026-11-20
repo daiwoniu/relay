@@ -1,6 +1,7 @@
 import path from 'node:path';
 import ts from 'typescript';
 import { encodePath } from './file-paths.js';
+import { HOSTING_REWRITE_CODE_BYTES } from './contract.js';
 export { safePackagePath,isStaticFile,encodePath } from './file-paths.js';
 
 
@@ -71,7 +72,22 @@ export function rewriteReferences(filename: string, source: string, files: Set<s
     rewritten++;
     return encodePath(relative) + suffix;
   };
-  const css = (value: string) => cssReferences(value,reference);
+  // A large HTML data URL is cheap to scan; CSS strings and module ASTs need bounded work.
+  // Count all fragments of each kind in this file so splitting code cannot bypass the budget.
+  const remaining = { css: HOSTING_REWRITE_CODE_BYTES, module: HOSTING_REWRITE_CODE_BYTES };
+  const code = (kind: keyof typeof remaining, value: string, rewrite: (value: string) => string) => {
+    const bytes = Buffer.byteLength(value, 'utf8');
+    if (bytes > remaining[kind]) {
+      const scope = kind === 'css' ? 'CSS 内容' : '模块脚本';
+      const limit = `${HOSTING_REWRITE_CODE_BYTES / 1024 / 1024} MiB`;
+      warn(`${scope}${bytes > HOSTING_REWRITE_CODE_BYTES ? `超过 ${limit} 解析预算` : `超出本文件累计 ${limit} 解析预算`}，该部分保持原样，未自动修正路径`);
+      return value;
+    }
+    remaining[kind] -= bytes;
+    return rewrite(value);
+  };
+  const css = (value: string) => code('css', value, text => cssReferences(text,reference));
+  const module = (value: string, onInvalid: () => void) => code('module', value, text => moduleReferences(text,reference,onInvalid));
   const srcset=(value:string)=>{
     if(/data:/i.test(value)){warn('srcset 包含内嵌资源，请人工检查');return value;}
     const edits:Array<{start:number;end:number;value:string}>=[];let offset=0;
@@ -93,18 +109,24 @@ export function rewriteReferences(filename: string, source: string, files: Set<s
       if (tag.startsWith('<!--')) return tag;
       const opening=/^<(?:"[^"]*"|'[^']*'|[^'">])*>/.exec(tag)?.[0]??tag;
       let rest=tag.slice(opening.length);
-      const changed=opening.replace(/(\s+)([^\s"'<>/=]+)(\s*=\s*)(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))/g,
+      let scriptType: string | undefined;
+      const changed=opening.replace(/(\s+)([^\s"'<>/=]+)(?:(\s*=\s*)(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g,
         (match,space:string,attr:string,equals:string,double:string|undefined,single:string|undefined,bare:string|undefined)=>{
           const value=double??single??bare??'',q=double!==undefined?'"':single!==undefined?"'":'',name=attr.toLowerCase();let replacement=value;
+          if(name==='type'&&scriptType===undefined)scriptType=value.toLowerCase();
+          if(equals===undefined)return match;
           if(['src','href','poster','data'].includes(name))replacement=reference(value);
           else if(name==='style')replacement=css(value);
           else if(name==='srcset')replacement=srcset(value);
           return `${space}${attr}${equals}${q}${replacement}${q}`;
         });
-      if(/^<style\b/i.test(opening))rest=css(rest);
-      if(/^<script\b/i.test(opening)&&/\btype\s*=\s*(?:"module"|'module'|module(?=[\s>]))/i.test(opening)){
+      if(/^<style\b/i.test(opening)){
+        const end=rest.toLowerCase().lastIndexOf('</style');
+        rest=css(rest.slice(0,end))+rest.slice(end);
+      }
+      if(/^<script\b/i.test(opening)&&scriptType==='module'){
         const end=rest.toLowerCase().lastIndexOf('</script');
-        rest=moduleReferences(rest.slice(0,end),reference,()=>warn('模块脚本语法未能完整解析，静态引用保持原样'))+rest.slice(end);
+        rest=module(rest.slice(0,end),()=>warn('模块脚本语法未能完整解析，静态引用保持原样'))+rest.slice(end);
       }
       return changed+rest;
     });
@@ -113,7 +135,7 @@ export function rewriteReferences(filename: string, source: string, files: Set<s
   } else if (ext === '.css') text = css(text);
   else if (ext === '.js' || ext === '.mjs') {
     // Conservative module-specifier scan; other strings and runtime URLs stay intact.
-    text = moduleReferences(text,reference,()=>warn('脚本语法未能完整解析，静态模块引用保持原样'));
+    text = module(text,()=>warn('脚本语法未能完整解析，静态模块引用保持原样'));
     if(/\b(?:fetch\s*\(|import\s*\(|new\s+URL\s*\()/i.test(source))warn('脚本动态引用保持原样，请预览确认');
   }
   return { text, rewritten, warnings, warningCount };

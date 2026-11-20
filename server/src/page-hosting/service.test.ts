@@ -40,6 +40,22 @@ test('Native metadata rejects duplicate or changed short addresses and accepts l
   }finally{await t.close();}
 });
 function stream(value:string|Buffer){return new Blob([new Uint8Array(Buffer.from(value))]).stream();}
+
+test('large HTML imports keep outer rewrites while oversized inline code is preserved with accurate totals',async()=>{
+  const t=await setup();try{
+    const directory=path.join(t.f.directory,'large-site');await fs.mkdir(path.join(directory,'assets'),{recursive:true});
+    const code='/*'+'x'.repeat(2*1024*1024)+'*/import "/assets/app.js";';
+    const html='<img src="data:image/png;base64,'+'A'.repeat(5*1024*1024)+'"><img src="/assets/logo.png"><script type="module">'+code+'</script>';
+    await fs.writeFile(path.join(directory,'index.html'),html);await fs.writeFile(path.join(directory,'assets/logo.png'),'image');await fs.writeFile(path.join(directory,'assets/app.js'),'export {};');
+    const stage=await t.service.importLocal(admin,directory);
+    const rewritten=html.replace('src="/assets/logo.png"','src="./assets/logo.png"');
+    assert.equal(stage.fileCount,3);assert.equal(stage.rewritten,1);
+    assert.equal(stage.totalBytes,Buffer.byteLength(rewritten)+Buffer.byteLength('image')+Buffer.byteLength('export {};'));
+    assert.ok(stage.warnings.some(value=>/模块脚本超过 2 MiB/.test(value)));
+    assert.equal(stage.warnings.some(value=>/超过 4 MB/.test(value)),false);
+    assert.equal((await t.service.read(stage.uploadId,'index.html',stage.previewToken))!.bytes.toString(),rewritten);
+  }finally{await t.close();}
+});
 async function setup(){
   const f=fixture();f.mutate(HOSTING_SCHEMA_SQL);
   const port=await StorageWorkerClient.open({filename:f.filename,storeId:'hosting',generation:1,initialize:true});

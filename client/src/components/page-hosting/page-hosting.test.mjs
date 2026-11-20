@@ -5,6 +5,7 @@ import ts from 'typescript';
 import * as jsx from 'react/jsx-runtime';
 import { getHostParentPath } from '../chat/host-file-path.ts';
 import { formatDateTime } from '../../utils/date-display.ts';
+import * as hostingSummary from './hosting-summary.ts';
 const generationRules=fs.readFileSync(new URL('./generation-rules.md',import.meta.url),'utf8');
 
 const code=ts.transpileModule(fs.readFileSync(new URL('./PageHostingPage.tsx',import.meta.url),'utf8'),{compilerOptions:{jsx:ts.JsxEmit.ReactJSX,module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
@@ -33,6 +34,7 @@ function harness(t,overrides={},given={}){
   const module={exports:{}},previewModule={exports:{}};
   const resolve=name=>{
     if(name==='./PreviewHostingDialog')return previewModule.exports;
+    if(name==='./hosting-summary')return hostingSummary;
     if(name==='../../analytics/features')return {featureAction(){},localAction:()=>()=>{},useFeatureView(){}};
     if(name==='react')return hooks;if(name==='react/jsx-runtime')return jsx;if(name==='../../api/page-hosting')return api;
     if(name==='../../auth/AuthContext')return {useAuth:()=>({user:given.authUser??{role:'member'}})};
@@ -54,6 +56,18 @@ function harness(t,overrides={},given={}){
 const button=(tree,label)=>nodes(tree,node=>node.type==='button'&&content(node)===label)[0];
 const input=(tree,placeholder)=>nodes(tree,node=>node.type==='input'&&node.props.placeholder===placeholder)[0];
 const choice=(tree,label)=>nodes(tree,node=>node.props?.label===label&&Array.isArray(node.props?.options))[0];
+
+for (const preview of [true, false]) test(`inspection summary appears after checking with complete metadata (${preview ? 'preview' : 'normal'})`, async t => {
+  const result = {...stage, fileCount:1, totalBytes:1153434, rewritten:0, warnings:['检查提示'], warningCount:1};
+  const h = harness(t, {importHostedFiles:async()=>result}, preview ? {initialLocalPath:'D:/site/index.html'} : {});
+  let tree=h.render();h.flush();
+  if(!preview){button(tree,'从本机导入').props.onClick();tree=h.render();input(tree,'服务器上的绝对路径').props.onChange({target:{value:'D:/site/index.html'}});tree=h.render();}
+  assert.equal(nodes(tree,node=>node.props?.className==='hosting-summary').length,0);
+  button(tree,preview?'检查页面':'导入并检查').props.onClick();await settle();tree=h.render();
+  const summaries=nodes(tree,node=>node.props?.className==='hosting-summary');
+  assert.equal(summaries.length,1);
+  assert.equal(content(summaries[0]),'共 1 个文件 · 1.1 MB · 已修正 0 处路径 · 1 项提示');
+});
 
 test('preview form imports the current file or directory without irrelevant source controls',async t=>{
   const h=harness(t,{importHostedFiles:async(...args)=>{h.calls.push(['import',...args]);return {...stage,entries:['index.html','about.html']};}}, {initialLocalPath:'D:/site/pages/about.html'});
@@ -88,6 +102,7 @@ test('changing preview resource scope discards the prior inspection before impor
   nodes(tree,node=>node.type==='input'&&node.props.type==='checkbox')[0].props.onChange({target:{checked:true}});await settle();tree=h.render();
   assert.ok(h.calls.find(call=>call[0]==='cancel'));
   assert.equal(button(tree,'发布'),undefined);
+  assert.equal(nodes(tree,node=>node.props?.className==='hosting-summary').length,0);
   button(tree,'检查页面').props.onClick();await settle();
   assert.equal(h.calls.filter(call=>call[0]==='import').at(-1)[1],'D:/site');
 });
