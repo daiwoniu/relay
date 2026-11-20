@@ -2,7 +2,7 @@ import type { WorkspaceConsoleDashboardDto, WorkspaceConsoleResponsibilityDto } 
 import { primaryFeishuWorkItemId } from './workspace-task-identity.ts';
 import { taskStatusPresentation } from './task-status.ts';
 import {summarizeTaskCardStatus} from './task-card-status.ts';
-import { feishuSubtaskUrl, feishuTypeName, isFinishedProjectIssue,personalIssueCompleted, latestTaskRecordAt, selectGroupPrimaryEntry, taskEntryLane, taskPrimaryFiles, workbenchFlowEnded, workbenchSubtaskStatusLabel, workItemCurrentNodeLines, type GroupedTaskEntry, type TaskEntry } from './workspace-console-view-model.ts';
+import { feishuSubtaskUrl, feishuTypeName, isFinishedProjectIssue,personalIssueCompleted, latestTaskRecordAt, taskEntryLane, taskPrimaryFiles, workbenchFlowEnded, workbenchSubtaskStatusLabel, workItemCurrentNodeLines, type GroupedTaskEntry, type TaskEntry } from './workspace-console-view-model.ts';
 
 type Report=WorkspaceConsoleResponsibilityDto;
 type Task=Extract<TaskEntry,{kind:'local'}>['task'];
@@ -16,8 +16,7 @@ export type CardStatus={source:string;label:string;description:string;tone:Statu
 export type TaskCardModel={
   title:string;statuses:CardStatus[];summaryStatus:CardStatus;tone:'doing'|'unstarted'|'completed';parent:CardIdentity|null;nodeLines:string[];nodeLabel:'当前节点'|'当前状态';feishuUpdatedAt:string|null;hasFeishu:boolean;
   relations:CardRelation[];ledgers:CardLedger[];ledgerCount:number;
-  sessionEntry:TaskEntry|null;chooseSession:boolean;missingLedgerCount:number;
-  sessionTargetRefs:string[];sessionLocalTaskIds:string[];
+  missingLedgerCount:number;
   parentAction:CardRelation|null;localActions:CardRelation[];
 };
 const time=(value?:string|null)=>Date.parse(value??'')||0;
@@ -82,16 +81,7 @@ export function buildTaskCardModel(entry:GroupedTaskEntry,report:Report|null,run
   }
   const tone=taskEntryLane(entry),completed=tone==='completed';
   const ledgers=locals.sort((a,b)=>Number(taskEntryLane({kind:'local',key:a.id,task:a})==='completed')-Number(taskEntryLane({kind:'local',key:b.id,task:b})==='completed')
-    ||time(latestTaskRecordAt(b))-time(latestTaskRecordAt(a))).map(task=>({task,status:taskStatusPresentation(task.status).label,next:task.nextAction?.trim()||'',updatedAt:latestTaskRecordAt(task),files:[
-      ...(task.taskDocumentPath?[{path:task.taskDocumentPath,label:'任务说明'}]:[]),
-      ...(task.taskPlanPath&&task.taskPlanPath!==task.taskDocumentPath?[{path:task.taskPlanPath,label:'实施计划／下一步'}]:[]),
-    ]}));
-  const primary=entry.kind==='group'?selectGroupPrimaryEntry(entry):entry;
-  const active=locals.filter(task=>taskEntryLane({kind:'local',key:task.id,task})!=='completed');
-  const native=entry.kind==='group'?entry.members.filter(member=>member.kind!=='local'&&taskEntryLane(member)!=='completed'
-    && !(member.kind==='subtask'&&active.some(task=>member.subtask.localTaskIds?.includes(task.id)))
-    && !(member.kind==='project'&&active.some(task=>member.item.localTaskIds.includes(task.id)))
-    && !(member.kind==='parent'&&active.some(task=>member.item.localTaskIds?.includes(task.id)))):[];
+    ||time(latestTaskRecordAt(b))-time(latestTaskRecordAt(a))).map(task=>({task,status:taskStatusPresentation(task.status).label,next:task.nextAction?.trim()||'',updatedAt:latestTaskRecordAt(task),files:taskPrimaryFiles(task)}));
   const lines=parent?workItemCurrentNodeLines(parent):[];
   const ended=parent&&('mySubtasks' in parent?workbenchFlowEnded(parent):isFinishedProjectIssue(parent));
   const registered=new Set([...(parent?.localTaskIds??[]),...(parent&&'mySubtasks' in parent?parent.mySubtasks.flatMap(child=>child.localTaskIds??[]):[])]);
@@ -151,8 +141,6 @@ export function buildTaskCardModel(entry:GroupedTaskEntry,report:Report|null,run
   return {title:root?.title||local?.title||local?.id||'任务',statuses,summaryStatus,tone,parent:root,
     nodeLines:lines.length?lines:ended?['流程已结束']:[parent&&'statusName' in parent?parent.statusName||'未提供':'未提供'],
     nodeLabel:parent&&'statusName' in parent?'当前状态':'当前节点',feishuUpdatedAt:parent?.updatedAt??null,hasFeishu:!!root||localIds.length>0,
-    relations:visibleRelations,ledgers:remainingLedgers,ledgerCount:ledgers.length,sessionEntry:primary,missingLedgerCount:[...registered].filter(id=>!ledgerIds.has(id)).length,
-    sessionTargetRefs:[...(root?[`feishu:${root.id}`]:[]),...[...relations.values()].map(item=>item.target?.kind==='subtask'?`feishu-subtask:${item.target.parent.workItemId}:${item.id}`:`feishu:${item.id}`)],sessionLocalTaskIds:locals.map(task=>task.id),
-    parentAction,localActions,
-    chooseSession:entry.kind==='group'&&(completed?locals.length>1:active.length+native.length>1)};
+    relations:visibleRelations,ledgers:remainingLedgers,ledgerCount:ledgers.length,missingLedgerCount:[...registered].filter(id=>!ledgerIds.has(id)).length,
+    parentAction,localActions};
 }

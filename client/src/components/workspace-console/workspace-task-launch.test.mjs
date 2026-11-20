@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import * as taskLaunch from './workspace-task-launch.ts';
-import { workbenchActionCompleted } from './workspace-console-view-model.ts';
+import {buildWorkspaceEntryLaunch,workspaceTaskTargetRef} from './workspace-task-entry.ts';
 const { buildWorkspaceTaskDraft, clearWorkspaceTaskLaunch, prepareWorkspaceTaskLaunch, readWorkspaceTaskLaunch } = taskLaunch;
 
 test('task draft uses only an explicitly registered primary item as a positioning hint', () => {
@@ -13,17 +13,6 @@ test('task draft uses only an explicitly registered primary item as a positionin
   for (const primary of [undefined, null, 'unknown', '9001000003']) {
     assert.doesNotMatch(buildWorkspaceTaskDraft({ ...task, feishuPrimaryWorkItemId: primary }), /主飞书工作项/);
   }
-});
-
-test('flow tracking continues an existing session even when personal work is completed but the whole workflow remains open', () => {
-  const item={workItemId:'9001000037',flowFinished:false,stateKey:'doing',isArchivedState:false,myNodes:[{id:'n',phase:'completed'}],mySubtasks:[],currentNodeNames:['生产验收']};
-  const entry={kind:'parent',key:'parent:9001000037',item};
-  const dashboard={tasks:[],sessions:[{sessionId:'existing',updatedAt:100,workspaceTargets:[{taskId:'feishu:'+item.workItemId,targetRef:'feishu:'+item.workItemId}]}]};
-  assert.equal(workbenchActionCompleted(entry),true);
-  const action=taskLaunch.resolveFeishuWorkItemPrimaryAction(item.workItemId,dashboard,workbenchActionCompleted(entry,true));
-  assert.deepEqual(action,{kind:'continue',sessionId:'existing'});
-  item.flowFinished=true;
-  assert.equal(workbenchActionCompleted(entry,true),true);
 });
 
 test('association refresh preserves a newer ledger, refresh status and newly registered tasks',()=>{
@@ -50,11 +39,9 @@ test('Feishu actions require exact explicit targets and never borrow local sessi
     {sessionId:'direct-linked',updatedAt:2,workspaceTargets:[{taskId:'feishu:9001000015',targetRef:'feishu:9001000015'}]},
     {sessionId:'unrelated',updatedAt:3,feishuWorkItemIds:['999']},
   ]};
-  assert.deepEqual(taskLaunch.resolveFeishuWorkItemPrimaryAction('9001000015',dashboard),{kind:'continue',sessionId:'direct-linked'});
-  assert.deepEqual(taskLaunch.resolveFeishuWorkItemPrimaryAction('9001000015',{...dashboard,sessions:dashboard.sessions.slice(0,1)}),{kind:'start',newTab:true});
-  assert.deepEqual(taskLaunch.resolveFeishuWorkItemPrimaryAction('9001000015',{...dashboard,sessions:[]}),{kind:'start',newTab:true});
-  assert.deepEqual(taskLaunch.resolveFeishuWorkItemPrimaryAction('9001000015',dashboard,true),{kind:'restart',newTab:false});
-  assert.deepEqual(taskLaunch.resolveFeishuWorkItemPrimaryAction('missing',dashboard),{kind:'start',newTab:true});
+  assert.deepEqual(taskLaunch.relationSessionCandidates({targetRef:'feishu:9001000015'},dashboard).map(s=>s.sessionId),['direct-linked']);
+  assert.deepEqual(taskLaunch.relationSessionCandidates({targetRef:'feishu:9001000015'},{...dashboard,sessions:dashboard.sessions.slice(0,1)}),[]);
+  assert.deepEqual(taskLaunch.relationSessionCandidates({targetRef:'feishu:missing'},dashboard),[]);
 });
 
 test('Feishu-only launch draft points to the source without copying report state into a long prompt', () => {
@@ -65,7 +52,7 @@ test('Feishu-only launch draft points to the source without copying report state
   assert.match(text, /飞书工作项「示例数据表」/);
   assert.match(text, /9001000015/);
   assert.match(text, /https:\/\/project\.feishu\.cn\/demo-space\/story\/detail\/9001000015/);
-  assert.match(text, /先核查飞书工作项/);
+  assert.match(text, /先核查任务资料与工作区最新情况/);
   assert.doesNotMatch(text, /实施改造|完成切换改造/);
 });
 
@@ -103,31 +90,31 @@ test('a handoff launch without a fixed title keeps normal session naming', () =>
 });
 
 test('new conversation draft points to the authoritative ledger without copying stale status text', () => {
-  const text = buildWorkspaceTaskDraft({ id: 'task-a', title: '修复任务 A', description: '为客户修复导入流程', statusBasis: '已定位', nextAction: '完成验证', taskDocumentPath: 'D:/tasks/a/README.md' }, '先前会话已改接口');
+  const text = buildWorkspaceTaskDraft({ id: 'task-a', title: '修复任务 A', description: '为客户修复导入流程', statusBasis: '已定位', nextAction: '完成验证', taskDocumentPath: 'D:/tasks/a/README.md' });
   assert.match(text, /task-a/);
   assert.match(text, /D:\/tasks\/a\/README.md/);
-  assert.match(text, /先前会话已改接口/);
+  assert.doesNotMatch(text, /上一会话交接摘要/);
   assert.doesNotMatch(text, /为客户修复导入流程|已定位|完成验证/);
 });
 
-test('multiple linked sessions require explicit choice', () => {
-  assert.equal(typeof taskLaunch.resolveWorkspaceTaskPrimaryAction, 'function');
-  const { resolveWorkspaceTaskPrimaryAction } = taskLaunch;
-  const sessions = [{ sessionId: 'older', updatedAt: 10 }, { sessionId: 'newer', updatedAt: 20 }];
-  assert.deepEqual(resolveWorkspaceTaskPrimaryAction({ status: 'doing', sessionIds: ['older', 'newer'] }, sessions), { kind: 'choose', sessionIds: ['older', 'newer'] });
-  assert.deepEqual(resolveWorkspaceTaskPrimaryAction({ status: 'doing', sessionIds: [] }, sessions), { kind: 'start', newTab: true });
-  assert.deepEqual(resolveWorkspaceTaskPrimaryAction({ status: 'done', sessionIds: ['older'] }, sessions), { kind: 'restart', newTab: false });
+test('local candidates include ledger IDs and explicit stored associations independent of completion',()=>{
+ const task={id:'local-a',status:'completed',sessionIds:['ledger']};
+ const sessions=[{sessionId:'ledger',updatedAt:1},{sessionId:'explicit',updatedAt:2,workspaceTargets:[{taskId:'local-a',targetRef:'feishu:11'}]},
+  {sessionId:'other',updatedAt:3,workspaceTargets:[{taskId:'local-b',targetRef:'feishu:11'}]}];
+ const ids=taskLaunch.relationSessionCandidates({targetRef:'local:local-a'},{tasks:[task],sessions}).map(session=>session.sessionId);
+ assert.deepEqual(ids,['ledger','explicit']);
+ assert.deepEqual(taskLaunch.relationSessionCandidates({targetRef:'local:local-a'},null),[]);
 });
 
-test('a child prefers its exact session and otherwise reuses only verified sessions of the same matter',()=>{
- const scope={targetRef:'feishu-subtask:11:22',localTaskIds:[],matterTargetRefs:['feishu:11','feishu-subtask:11:21','feishu-subtask:11:22'],matterLocalTaskIds:['local-parent']};
+test('a child uses only its exact sessions and excludes siblings, parent ledgers and same-number children',()=>{
+ const scope={targetRef:'feishu-subtask:11:22'};
  const sibling={sessionId:'a',workspaceTargets:[{taskId:'feishu-subtask:11:21',targetRef:'feishu-subtask:11:21'}]};
  const own={sessionId:'b',workspaceTargets:[{taskId:scope.targetRef,targetRef:scope.targetRef}]};
  const other={sessionId:'wrong',workspaceTargets:[{taskId:'feishu-subtask:33:22',targetRef:'feishu-subtask:33:22'}]};
  const local={sessionId:'local',workspaceTargets:[]};
  const dashboard={tasks:[{id:'local-parent',sessionIds:['local']}],sessions:[sibling,other,local]};
- assert.deepEqual(taskLaunch.relationSessionCandidates(scope,dashboard).map(item=>item.sessionId),['a','local']);
- assert.deepEqual(taskLaunch.relationSessionCandidates(scope,{...dashboard,sessions:[sibling,own,other,local]}).map(item=>item.sessionId),['b','a','local']);
+ assert.deepEqual(taskLaunch.relationSessionCandidates(scope,dashboard).map(item=>item.sessionId),[]);
+ assert.deepEqual(taskLaunch.relationSessionCandidates(scope,{...dashboard,sessions:[sibling,own,other,local]}).map(item=>item.sessionId),['b']);
  assert.deepEqual(taskLaunch.relationSessionCandidates(scope,{tasks:[],sessions:[other]}),[]);
 });
 
@@ -150,13 +137,33 @@ test('existing session tabs use the supported URL parameter without inheriting w
 
 test('child launch restores workspace identity and exact parent/child target',()=>{
  const current=storage();
- const launch=taskLaunch.buildFeishuWorkItemLaunch({workItemId:'22',parentId:'11',title:'child',url:null,current:'',next:''},'project',1000,'workspace-two');
+ const launch=taskLaunch.buildFeishuWorkItemLaunch({workItemId:'22',parentId:'11',parentTitle:'parent',title:'child',url:null,current:'',next:''},'project',1000,'workspace-two');
  prepareWorkspaceTaskLaunch(current,launch);
  assert.equal(readWorkspaceTaskLaunch(current,'project',1001).taskId,'feishu-subtask:11:22');
  assert.equal(readWorkspaceTaskLaunch(current,'project',1001).workspaceId,'workspace-two');
- assert.match(launch.text,/子任务 ID：22，父工作项 ID：11/);
+ assert.match(launch.text,/飞书子任务「child」（ID：22）/);
+ assert.match(launch.text,/所属父项：「parent」（ID：11）/);
+ assert.equal(launch.title,'child');
  const dashboard={tasks:[],sessions:[{sessionId:'parent',workspaceTargets:[{targetRef:'feishu:11'}]},{sessionId:'other-parent',workspaceTargets:[{targetRef:'feishu-subtask:33:22'}]},{sessionId:'child',workspaceTargets:[{targetRef:'feishu-subtask:11:22'}]}]};
- assert.deepEqual(taskLaunch.resolveFeishuWorkItemPrimaryAction(launch.taskId,dashboard),{kind:'continue',sessionId:'child'});
+ assert.deepEqual(taskLaunch.relationSessionCandidates({targetRef:launch.taskId},dashboard).map(s=>s.sessionId),['child']);
  dashboard.sessions.push({sessionId:'another',workspaceTargets:[{targetRef:launch.taskId}]});
- assert.deepEqual(taskLaunch.resolveFeishuWorkItemPrimaryAction(launch.taskId,dashboard),{kind:'choose',sessionIds:['child','another']});
+ assert.deepEqual(taskLaunch.relationSessionCandidates({targetRef:launch.taskId},dashboard).map(s=>s.sessionId),['child','another']);
+});
+
+test('all native and local entry points build a stable exact identity and a short task draft',()=>{
+ const parent={workItemId:'11',title:'父任务',url:'https://project.feishu.cn/p/story/detail/11'};
+ const child={kind:'subtask',key:'child',parent,subtask:{id:'22',title:'子任务'},localTasks:[]};
+ const launch=buildWorkspaceEntryLaunch(child,'project','workspace',1000);
+ assert.equal(workspaceTaskTargetRef(child),launch.taskId);
+ assert.match(launch.text,/飞书子任务「子任务」（ID：22）/);
+ assert.match(launch.text,/所属父项：「父任务」（ID：11）/);
+ assert.match(launch.text,/subTaskId=22/);
+ assert.deepEqual(buildWorkspaceEntryLaunch({...child,key:'another-ui-key'},'project','workspace',1000),launch);
+ const local={kind:'local',task:{id:'ledger',title:'本地任务',taskDocumentPath:'tasks/ledger/README.md'}};
+ assert.equal(workspaceTaskTargetRef(local),'local:ledger');
+ assert.equal(buildWorkspaceEntryLaunch(local,'project','workspace',1000).taskId,'ledger');
+ assert.match(buildWorkspaceEntryLaunch(local,'project','workspace',1000).text,/tasks\/ledger\/README.md/);
+ const root=buildWorkspaceEntryLaunch({kind:'parent',item:parent},'project','workspace',1000);
+ assert.equal(root.taskId,'feishu:11');
+ assert.doesNotMatch(root.text,/所属父项/);
 });

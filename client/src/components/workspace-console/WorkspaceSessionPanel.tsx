@@ -2,7 +2,10 @@ import { useEffect, useRef, useState } from 'react';
 import { linkWorkspaceTaskSession, unlinkWorkspaceTaskSession } from '../../api/workspace-console';
 import type { WorkspaceConsoleDashboardDto } from '../../generated/relay-contracts';
 import { invalidateWorkspaceDashboard } from './workspace-console-cache';
+import WorkspaceChildSessionActions from './WorkspaceChildSessionActions';
+import {relationSessionCandidates} from './workspace-task-launch';
 import FailureNotice from '../ui/FailureNotice';
+import WorkspaceHelpBadge from './WorkspaceHelpBadge';
 
 /** Existing task detail entry point; relations describe history, never the session's current topic. */
 export default function WorkspaceSessionPanel({taskId,targetRef,dashboard,userId,onChanged,onNew,onOpen:openSession,localTaskIds=[]}:{
@@ -10,7 +13,6 @@ export default function WorkspaceSessionPanel({taskId,targetRef,dashboard,userId
   onChanged():Promise<void>|void;onNew():string|null;onOpen(sessionId:string):string|null|void;localTaskIds?:string[];
 }){
   const [selected,setSelected]=useState(''),[local,setLocal]=useState(''),[busy,setBusy]=useState(false),[error,setError]=useState<string|null>(null);
-  const onOpen=(sessionId:string)=>setError(openSession(sessionId)??null);
   const generation=useRef(0);
   useEffect(()=>{generation.current++;setSelected('');setLocal('');setError(null);setBusy(false);return()=>{generation.current++;};},[taskId,targetRef]);
   const relations=dashboard.sessions.flatMap(session=>(session.workspaceTargets??[]).filter(target=>targetRef?target.targetRef===targetRef:target.taskId===taskId)
@@ -25,16 +27,14 @@ export default function WorkspaceSessionPanel({taskId,targetRef,dashboard,userId
     }catch(cause){if(version===generation.current)setError(cause instanceof Error?cause.message:'会话关联操作失败');}
     finally{if(version===generation.current)setBusy(false);}
   };
-  const linkedSessions=[...new Map(relations.map(relation=>[relation.session.sessionId,relation.session])).values()];
+  const linkedSessions=relationSessionCandidates({targetRef:targetRef??`local:${taskId}`},dashboard);
   return <section aria-label="任务会话关联" className="space-y-3 rounded-xl border border-cyan-300/20 bg-cyan-300/5 p-4">
-    <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="text-sm font-medium">处理会话</h3><div className="flex flex-wrap gap-2">
-      {linkedSessions.length===1&&<button type="button" onClick={()=>onOpen(linkedSessions[0].sessionId)} className="rounded-lg border border-cyan-300/40 bg-cyan-300/10 px-3 py-2 text-xs font-medium text-cyan-200">继续处理 →</button>}
-      <button type="button" onClick={()=>setError(onNew())} className="rounded-lg border border-cyan-300/40 px-3 py-2 text-xs text-cyan-200">{linkedSessions.length?'新建会话处理':'开始处理 →'}</button>
-    </div></div>
-    {linkedSessions.length>0&&<p className="text-xs text-slate-400">曾处理此任务的会话 · {linkedSessions.length}{linkedSessions.length>1?'，请选择具体会话继续处理':''}</p>}
-    {linkedSessions.length===1?<p className="min-w-0 break-words text-xs text-slate-400">{linkedSessions[0].title||linkedSessions[0].sessionId}</p>:linkedSessions.map(session=><button key={session.sessionId} type="button" onClick={()=>onOpen(session.sessionId)} className="block min-w-0 break-words text-left text-xs text-cyan-300 hover:underline">继续处理：{session.title||session.sessionId}</button>)}
+    <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="text-sm font-medium">任务会话<WorkspaceHelpBadge label="任务会话" content="关联表示处理历史；会话可能继续处理其他工作，删除会话不会改变任务状态。"/></h3>
+      <WorkspaceChildSessionActions key={targetRef??taskId} sessions={linkedSessions} onNew={()=>setError(onNew())} onContinue={async(id)=>openSession(id)??null}/>
+    </div>
+    {linkedSessions.length>0&&<p className="text-xs text-slate-400">曾关联此任务的会话 · {linkedSessions.length}</p>}
+    {linkedSessions.length===1&&<p className="min-w-0 break-words text-xs text-slate-400">{linkedSessions[0].title||linkedSessions[0].sessionId}</p>}
     {linkedSessions.length===0&&<p className="text-xs text-slate-500">暂无关联会话。</p>}
-    <p className="text-xs text-slate-400">关联表示处理历史；会话可能继续处理其他工作，删除会话不会改变任务状态。</p>
     <details className="rounded-lg border border-white/10 p-2.5">
       <summary className="cursor-pointer text-xs text-slate-400">管理会话关联</summary>
       <div className="mt-3 space-y-3">

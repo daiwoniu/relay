@@ -77,7 +77,7 @@ import { TRANSIENT_NOTICE_DELAY_MS, useDelayedComposerStatusNotices } from './de
 import { useAuth } from '../../auth/AuthContext';
 import { filterSelectableProjects } from '../layout/session-project';
 import { extractTransferredFiles, hasTransferredFiles } from './composer-file-transfer';
-import { createAttachmentUploadQueue } from './attachment-upload-queue';
+import { createAttachmentTransferQueue, createAttachmentUploadQueue } from './attachment-upload-queue';
 import { readWorkspaceTaskLaunch } from '../workspace-console/workspace-task-launch';
 
 interface Props {
@@ -137,6 +137,7 @@ export default function ChatInput({ onSend, onEnsureProject, onStop, onCancelQue
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const uploadTasksRef = useRef(new Map<string, UploadProjectFileTask>());
   const uploadQueueRef = useRef(createAttachmentUploadQueue());
+  const transferQueueRef = useRef(createAttachmentTransferQueue());
   const attachmentsRef = useRef<AttachmentDraft[]>([]);
   const attachmentDraftKeyRef = useRef('');
   const messageDraftIdRef = useRef<string | null>(null);
@@ -639,13 +640,13 @@ export default function ChatInput({ onSend, onEnsureProject, onStop, onCancelQue
   }, [hostFileDirectoryKey]);
 
   const startUpload = (draft: PendingUploadedAttachmentDraft, projectId: string, targetDraftKey: string) => {
-    const task = uploadProjectFile(projectId, draft.file, {
+    const task = transferQueueRef.current.enqueue(() => uploadProjectFile(projectId, draft.file, {
       uploadId: draft.uploadId,
       messageId: draft.messageId,
       onProgress: (progress) => updateAttachmentsForKey(targetDraftKey, (current) => current.map((attachment) => (
         attachment.id === draft.id && attachment.status === 'uploading' ? { ...attachment, progress } : attachment
       ))),
-    });
+    }));
     uploadTasksRef.current.set(draft.id, task);
     void task.promise.then(({ attachment }) => {
       updateAttachmentsForKey(targetDraftKey, (current) => current.map((entry) => entry.id === draft.id ? {
@@ -661,7 +662,9 @@ export default function ChatInput({ onSend, onEnsureProject, onStop, onCancelQue
         progress: 0,
         error: error instanceof Error ? error.message : '上传失败，请重试',
       } : entry));
-    }).finally(() => uploadTasksRef.current.delete(draft.id));
+    }).finally(() => {
+      if (uploadTasksRef.current.get(draft.id) === task) uploadTasksRef.current.delete(draft.id);
+    });
   };
 
   const handleUploadFiles = async (files: File[], targetDraftKey: string) => {
@@ -800,11 +803,15 @@ export default function ChatInput({ onSend, onEnsureProject, onStop, onCancelQue
     try {
       const projectId = await onEnsureProject();
       if (attachmentDraftKeyRef.current !== targetDraftKey) return;
-      const retryDraft: PendingUploadedAttachmentDraft = { ...failed, status: 'uploading', progress: 0, uploadId: generateUUID(), error: undefined };
+      const current = attachmentsRef.current.find((entry) => entry.id === id);
+      if (current?.status !== 'failed' || uploadTasksRef.current.has(id)) return;
+      const retryDraft: PendingUploadedAttachmentDraft = { ...failed, status: 'uploading', progress: 0, error: undefined };
       updateAttachmentsForKey(targetDraftKey, (current) => current.map((entry) => entry.id === id ? retryDraft : entry));
       startUpload(retryDraft, projectId, targetDraftKey);
     } catch (error) {
-      setAttachmentNotice({ message: error instanceof Error ? error.message : '重试上传失败', tone: 'danger' });
+      if (attachmentDraftKeyRef.current === targetDraftKey) {
+        setAttachmentNotice({ message: error instanceof Error ? error.message : '重试上传失败', tone: 'danger' });
+      }
     }
   };
 

@@ -129,7 +129,7 @@ const cardFixture=()=>{
   const children=Array.from({length:6},(_,index)=>({id:String(7173251048+index),title:`子项${index}`,nodeId:'node',nodeName:'交付支持',owners:['me'],ownerNames:['张三'],passed:index===5,phase:index===5?'completed':'current',createdAt:`2026-11-${String(10+index).padStart(2,'0')}T09:00:00+08:00`,updatedAt:`2026-11-${String(10+index).padStart(2,'0')}T10:00:00+08:00`,localTaskIds:index===0?['active']:[]}));
   const parent={workItemId:'7065309150',title:'飞书父项',typeName:'专项工作',url:'https://project.feishu.cn/demo/story/detail/7065309150',updatedAt:'2026-11-20T09:00:00+08:00',currentNodes:[{name:'交付支持',ownerNames:['李国祥']}],myNodes:[],mySubtasks:children,localTaskIds:['active']};
   const task={id:'active',title:'本地交付标题',status:'doing',nextAction:'复核后交付',taskDocumentPath:'tasks/active/README.md',lastVerifiedAt:'2026-11-20T08:00:00+08:00',feishuWorkItemIds:[parent.workItemId],sessionIds:[],runIds:[]};
-  return {entry:{kind:'group',key:'matter',unified:true,parent,members:[{kind:'local',key:'active',task}]},responsibility:{workbenchItems:[parent],items:[],localAssociated:[]},runs:[],onOpen(){},onOpenEntry(){},onStart(){},onOpenFile(){},actionLabel:()=> '新建会话'};
+  return {entry:{kind:'group',key:'matter',unified:true,parent,members:[{kind:'local',key:'active',task}]},responsibility:{workbenchItems:[parent],items:[],localAssociated:[]},runs:[],onOpen(){},onOpenEntry(){},onContinueRelation:async()=>null,onNewRelation(){},onOpenFile(){}};
 };
 
 test('current card sections follow the requested order and all current relations expand as one group',()=>{
@@ -147,16 +147,16 @@ test('current card sections follow the requested order and all current relations
   assert.equal((html.match(/class="workspace-workbench__task-status /g)??[]).length,1,'one summary badge per card');
 });
 
-test('each child offers new processing and can continue a verified sibling session even when that sibling is completed',()=>{
+test('each child opens only its exact sessions and offers a new session',()=>{
   const props=cardFixture();props.onContinueRelation=async()=>null;props.onNewRelation=()=>{};
-  props.dashboard={tasks:[],sessions:[{sessionId:'session-a',title:'子项 A 会话',workspaceTargets:[{taskId:'feishu-subtask:7065309150:7173251053',targetRef:'feishu-subtask:7065309150:7173251053'}]}]};
+  props.dashboard={tasks:[],sessions:[{sessionId:'session-a',title:'子项 A 会话',workspaceTargets:[{taskId:'feishu-subtask:7065309150:7173251052',targetRef:'feishu-subtask:7065309150:7173251052'}]}]};
   const text=plain(render(MatterCard,props));
-  assert.equal((text.match(/继续处理/g)??[]).length,5);assert.equal((text.match(/新会话处理/g)??[]).length,5);
+  assert.equal((text.match(/打开会话/g)??[]).length,1);assert.equal((text.match(/新建会话/g)??[]).length,5);
   props.dashboard.sessions=[];
-  assert.doesNotMatch(plain(render(MatterCard,props)),/继续处理/);
+  assert.doesNotMatch(plain(render(MatterCard,props)),/打开会话/);
   props.dashboard.sessions=[{sessionId:'a',title:'会话 A',workspaceTargets:[{taskId:'feishu:7065309150',targetRef:'feishu:7065309150'}]},{sessionId:'b',title:'会话 B',workspaceTargets:[{taskId:'feishu:7065309150',targetRef:'feishu:7065309150'}]}];
-  assert.match(plain(render(MatterCard,props)),/继续处理 ▾.*会话 A.*会话 B/);
-  assert.equal((plain(render(MatterCard,props)).match(/新会话处理/g)??[]).length,6,'a parent with its own sessions keeps a footer action in addition to five child actions');
+  assert.match(plain(render(MatterCard,props)),/选择会话 ▾.*会话 A.*会话 B/);
+  assert.equal((plain(render(MatterCard,props)).match(/新建会话/g)??[]).length,6,'a parent with its own sessions keeps a footer action in addition to five child actions');
 });
 test('summary badge exposes explanatory hover content and can receive keyboard focus',()=>{
   const hints=[],badges=[];
@@ -164,6 +164,13 @@ test('summary badge exposes explanatory hover content and can receive keyboard f
   visit(MatterCard(cardFixture()));
   assert.equal(hints.length,1);assert.equal(hints[0].asChild,true);assert.match(hints[0].content,/明确登记为处理中/);
   assert.equal(badges.length,1);assert.equal(badges[0].tabIndex,0);assert.equal(badges[0].children,'处理中');
+});
+
+test('a local ledger session does not create a parent session footer',()=>{
+ const props=cardFixture();
+ const task=props.entry.members[0].task;task.sessionIds=['ledger-session'];
+ props.dashboard={tasks:[task],sessions:[{sessionId:'ledger-session',title:'台账会话',workspaceTargets:[{taskId:task.id,targetRef:''}]}]};
+ assert.doesNotMatch(render(MatterCard,props),/data-card-session-footer/);
 });
 
 test('NEW markers identify the specific discovered child and local ledger within an existing matter',()=>{
@@ -187,7 +194,7 @@ test('completed cards use the same sections and include completed relations sort
   assert.match(html,/<details aria-label="飞书子项"/);assert.doesNotMatch(html,/<details open="" aria-label="飞书子项"/);
   props.onContinueRelation=async()=>null;props.onNewRelation=()=>{};props.dashboard={tasks:[],sessions:[{sessionId:'old',title:'旧会话',workspaceTargets:[{targetRef:'feishu:7065309150'}]}]};
   const actionsText=plain(render(MatterCard,props));
-  assert.match(actionsText,/重新处理/);assert.doesNotMatch(actionsText,/继续处理|新会话处理/);
+  assert.match(actionsText,/打开会话/);assert.match(actionsText,/新建会话/);assert.doesNotMatch(actionsText,/重新处理/);
 });
 
 test('one child with one exact ledger has no inner borders and only the footer contains session actions',()=>{
@@ -195,7 +202,7 @@ test('one child with one exact ledger has no inner borders and only the footer c
   const targets=[];props.onContinueRelation=async()=>null;props.onNewRelation=item=>targets.push([item.target.kind,item.id]);props.dashboard={tasks:[],sessions:[]};
   const html=render(MatterCard,props),before=html.slice(0,html.indexOf('data-card-session-footer'));
   assert.doesNotMatch(html,/workspace-workbench__relation-item/);
-  assert.doesNotMatch(before,/新会话处理/);assert.equal((plain(html).match(/新会话处理/g)??[]).length,1);
+  assert.doesNotMatch(before,/新建会话/);assert.equal((plain(html).match(/新建会话/g)??[]).length,1);
   assert.equal((plain(html).match(/本地台账/g)??[]).length,1);
   assert.doesNotMatch(html,/<details/);
   const invoke=node=>{if(!node||typeof node!=='object')return;if(Array.isArray(node)){node.forEach(invoke);return;}if(node.props?.sessions&&node.props?.onNew)node.props.onNew();invoke(node.props?.children);};
@@ -224,27 +231,28 @@ test('multiple unmapped ledgers have individual borders under one folding title 
   const html=render(MatterCard,props),text=plain(html);
   assert.match(html,/<details open="" aria-label="本地台账"/);assert.match(text,/本地台账 · 2 份/);
   assert.equal((html.match(/workspace-workbench__relation-item/g)??[]).length,2);
-  assert.equal((text.match(/新会话处理/g)??[]).length,2);
+  assert.equal((text.match(/新建会话/g)??[]).length,2);
   assert(html.indexOf('本地台账 · 2 份')<html.indexOf('workspace-workbench__relation-item'));
 });
 
 test('missing sources are explicit and file, title and session actions preserve their exact targets',()=>{
   const props=cardFixture(),events=[];
   const task=props.entry.members[0].task;
-  const local={...props,responsibility:null,entry:{kind:'local',key:'active',task:{...task,feishuWorkItemIds:[]}},onOpen:()=>events.push('detail'),onOpenFile:path=>events.push(path),onStart:entry=>events.push(entry.task.id)};
+  const local={...props,responsibility:null,entry:{kind:'local',key:'active',task:{...task,feishuWorkItemIds:[]}},onOpen:()=>events.push('detail'),onOpenFile:path=>events.push(path),onNewRelation:item=>events.push(item.target.task.id)};
   assert.match(plain(render(MatterCard,local)),/本地交付标题.*无飞书任务/);
   const buttons=[];
   const visit=node=>{if(!node||typeof node!=='object')return;if(Array.isArray(node)){node.forEach(visit);return;}if(node.type==='button')buttons.push(node);visit(node.props?.children);};
   visit(MatterCard(local));
   buttons.find(button=>button.props.title==='本地交付标题').props.onClick();
   buttons.find(button=>button.props.title?.includes('tasks/active/README.md')).props.onClick();
-  buttons.at(-1).props.onClick();
+  const invokeNew=node=>{if(!node||typeof node!=='object')return;if(Array.isArray(node)){node.forEach(invokeNew);return;}if(node.props?.sessions&&node.props?.onNew)node.props.onNew();invokeNew(node.props?.children);};
+  invokeNew(MatterCard(local));
   assert.deepEqual(events,['detail','tasks/active/README.md','active']);
   const withoutLocal={...props,responsibility:null,entry:{...props.entry,parent:{...props.entry.parent,localTaskIds:[],mySubtasks:[]},members:[]}};
   assert.match(plain(render(MatterCard,withoutLocal)),/无本地台账/);
 });
 
-test('child titles open the exact native child and multiple ledgers require an explicit session choice',()=>{
+test('child titles open the exact native child and multiple ledgers retain separate actions',()=>{
   const props=cardFixture(),events=[];
   const buttons=[];
   const visit=node=>{if(!node||typeof node!=='object')return;if(Array.isArray(node)){node.forEach(visit);return;}if(node.type==='button')buttons.push(node);visit(node.props?.children);};
@@ -254,25 +262,36 @@ test('child titles open the exact native child and multiple ledgers require an e
   buttons.find(button=>button.props.title==='本地交付标题').props.onClick();
   assert.equal(events[1][0],'local');
   props.entry.members.push({...props.entry.members[0],key:'another',task:{...props.entry.members[0].task,id:'another'}});
-  buttons.length=0;
-  visit(MatterCard({...props,onOpen:()=>events.push('choose'),onStart:()=>events.push('unexpected-start')}));
-  buttons.at(-1).props.onClick();assert.equal(events.at(-1),'choose');assert(!events.includes('unexpected-start'));
+  props.entry.parent.mySubtasks=[];
+  const targets=[];
+  const visitActions=node=>{if(!node||typeof node!=='object')return;if(Array.isArray(node)){node.forEach(visitActions);return;}if(node.props?.sessions&&node.props?.onNew)node.props.onNew();visitActions(node.props?.children);};
+  visitActions(MatterCard({...props,onNewRelation:item=>targets.push(item.target)}));
+  assert(targets.some(target=>target.kind==='local'&&target.task.id==='another'));
+  assert(targets.some(target=>target.kind==='local'&&target.task.id==='active'));
 });
 
 test('task detail processing actions are visible outside association management and keep exact target scope', () => {
   const base={taskId:'local-a',userId:'user',dashboard:{tasks:[],sessions:[]},onChanged(){},onNew(){return null;},onOpen(){}};
   const empty=render(SessionPanel,base);
-  assert(empty.indexOf('开始处理')<empty.indexOf('<details'));
+  assert(empty.indexOf('新建会话')<empty.indexOf('<details'));
   const sessions=[
     {sessionId:'parent',title:'父项历史',workspaceTargets:[{taskId:'local-a',targetRef:'feishu:100'}]},
     {sessionId:'child',title:'子项历史',workspaceTargets:[{taskId:'local-a',targetRef:'feishu-subtask:100:200'}]},
   ];
   const single=render(SessionPanel,{...base,targetRef:'feishu-subtask:100:200',dashboard:{tasks:[],sessions}});
-  assert(single.indexOf('继续处理')<single.indexOf('<details'));
-  assert(single.indexOf('新建会话处理')<single.indexOf('<details'));
+  assert(single.indexOf('打开会话')<single.indexOf('<details'));
+  assert(single.indexOf('新建会话')<single.indexOf('<details'));
   const visibleActions=plain(single.slice(0,single.indexOf('<details')));
   assert.match(visibleActions,/子项历史/);assert.doesNotMatch(visibleActions,/父项历史/);
   const multiple=render(SessionPanel,{...base,targetRef:'feishu:100',dashboard:{tasks:[],sessions:[sessions[0],{sessionId:'second',title:'第二段历史',workspaceTargets:[{taskId:'local-a',targetRef:'feishu:100'}]}]}});
-  assert.match(plain(multiple),/请选择具体会话继续处理/);
-  assert.match(plain(multiple),/继续处理：父项历史/);assert.match(plain(multiple),/继续处理：第二段历史/);
+  assert.match(plain(multiple),/选择会话 ▾/);
+  assert.match(plain(multiple),/父项历史/);assert.match(plain(multiple),/第二段历史/);
+});
+
+test('detail relations show all unfinished objects and open completed-only groups without another expansion layer',()=>{
+ const linkedFeishu=Array.from({length:4},(_,index)=>({key:String(index),title:`关联缺陷${index}`,typeName:'缺陷',kind:'issue',workItemId:String(index),pending:true,statusLabel:'未结束',finished:false}));
+ const current=render(Relations,{linkedFeishu,needsRecheck:false,completed:false,inDetail:true});
+ assert.match(plain(current),/关联缺陷0.*关联缺陷1.*关联缺陷2.*关联缺陷3/);assert.doesNotMatch(plain(current),/展开其余未结束项/);
+ const done=render(Relations,{linkedFeishu:linkedFeishu.map(item=>({...item,pending:false,finished:true})),needsRecheck:false,completed:true,inDetail:true});
+ assert.match(done,/<details open=""/);
 });

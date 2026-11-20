@@ -44,57 +44,44 @@ export function clearWorkspaceTaskLaunch(storage: Pick<Storage, 'removeItem'>): 
 }
 
 export function buildWorkspaceTaskDraft(task: {
-  id: string; title: string | null; description?: string | null; statusBasis: string | null; nextAction: string | null; taskDocumentPath: string | null;
+  id: string; title: string | null; taskDocumentPath: string | null;
   feishuPrimaryWorkItemId?: string | null; feishuWorkItemIds?: readonly string[];
-}, handoffSummary?: string | null): string {
+}): string {
   const primary = primaryFeishuWorkItemId(task);
   const facts = [
-    `请处理任务「${task.title || task.id}」（ID：${task.id}）。先核查实际台账与工作区状态，再确定下一步。`,
+    `请处理任务「${task.title || task.id}」（台账 ID：${task.id}）。`,
     ...(task.taskDocumentPath ? [`本地任务说明：${task.taskDocumentPath}`] : []),
     ...(primary ? [`台账登记的主飞书工作项：${primary}。仅供定位，请核对实际责任及其他关联项。`] : []),
   ];
-  if (handoffSummary?.trim()) facts.push(`上一会话交接摘要（仅供核查）：\n${handoffSummary.trim()}`);
+  facts.push('请先核查任务资料与工作区最新情况，再确定下一步。');
   return facts.join('\n\n');
 }
 
 export function buildFeishuWorkItemDraft(item: {
-  workItemId: string; parentId?:string; title: string; url: string | null; current: string; next: string;
+  workItemId: string; parentId?:string; parentTitle?:string; title: string; url: string | null;
 }): string {
   return [
     item.parentId
-      ? `请处理飞书子任务「${item.title}」（子任务 ID：${item.workItemId}，父工作项 ID：${item.parentId}）。先核查父项流程、子任务与工作区实际状态，再确定下一步。`
-      : `请处理飞书工作项「${item.title}」（ID：${item.workItemId}）。先核查飞书工作项与工作区实际状态，再确定下一步。`,
+      ? `请处理飞书子任务「${item.title}」（ID：${item.workItemId}）。`
+      : `请处理飞书工作项「${item.title}」（ID：${item.workItemId}）。`,
+    ...(item.parentId ? [`所属父项：${item.parentTitle ? `「${item.parentTitle}」` : ''}（ID：${item.parentId}）。`] : []),
     ...(item.url ? [`飞书链接：${item.url}`] : []),
+    '请先核查任务资料与工作区最新情况，再确定下一步。',
   ].join('\n\n');
 }
 
-export function resolveWorkspaceTaskPrimaryAction(
-  task: Pick<WorkspaceConsoleDashboardDto['tasks'][number], 'status' | 'sessionIds'>,
-  sessions: Array<Pick<WorkspaceConsoleDashboardDto['sessions'][number], 'sessionId' | 'updatedAt'>>,
-): { kind: 'continue'; sessionId: string } | { kind: 'choose'; sessionIds:string[] } | { kind: 'start' | 'restart'; newTab: boolean } {
-  if (['done', 'completed', 'closed', 'cancelled', 'canceled'].includes(task.status ?? '')) return { kind: 'restart', newTab: false };
-  const associated = sessions.filter((session) => task.sessionIds.includes(session.sessionId));
-  return associated.length>1?{kind:'choose',sessionIds:associated.map(session=>session.sessionId)}:associated[0]?{ kind: 'continue', sessionId: associated[0].sessionId } : { kind: 'start', newTab: true };
+export function feishuTaskTargetRef(workItemId:string,parentId?:string):string {
+  return parentId?`feishu-subtask:${parentId}:${workItemId}`:`feishu:${workItemId}`;
 }
 
-export function resolveFeishuWorkItemPrimaryAction(workItemId: string, dashboard: Pick<WorkspaceConsoleDashboardDto,'tasks'|'sessions'> | null, completed = false) {
-  const reference=workItemId.startsWith('feishu:')||workItemId.startsWith('feishu-subtask:')?workItemId:`feishu:${workItemId}`;
-  const sessionIds = dashboard?.sessions.filter(session=>session.workspaceTargets?.some(target=>target.targetRef===reference)).map(session=>session.sessionId)??[];
-  return resolveWorkspaceTaskPrimaryAction({status:completed?'completed':null,sessionIds},dashboard?.sessions??[]);
+export function buildFeishuWorkItemLaunch(item: Parameters<typeof buildFeishuWorkItemDraft>[0], projectId: string, now = Date.now(),workspaceId?:string) {
+  return { taskId: feishuTaskTargetRef(item.workItemId,item.parentId), ...(workspaceId?{workspaceId}:{}),projectId, title: workspaceTaskSessionTitle({id:item.workItemId,title:item.title}), text: buildFeishuWorkItemDraft(item), createdAt: now };
 }
 
-export function buildFeishuWorkItemLaunch(item: Parameters<typeof buildFeishuWorkItemDraft>[0] & {parentId?:string}, projectId: string, now = Date.now(),workspaceId?:string) {
-  return { taskId: item.parentId?`feishu-subtask:${item.parentId}:${item.workItemId}`:`feishu:${item.workItemId}`, ...(workspaceId?{workspaceId}:{}),projectId, title: workspaceTaskSessionTitle({id:item.workItemId,title:item.title}), text: buildFeishuWorkItemDraft(item), createdAt: now };
-}
-
-export function relationSessionCandidates(scope:{targetRef:string;localTaskIds:readonly string[];matterTargetRefs:readonly string[];matterLocalTaskIds:readonly string[]},dashboard:Pick<WorkspaceConsoleDashboardDto,'tasks'|'sessions'>|null){
-  const candidates=(refs:readonly string[],localIds:readonly string[])=>{
-    const references=new Set(refs),ids=new Set(localIds);
-    const linked=new Set(dashboard?.tasks.filter(task=>ids.has(task.id)).flatMap(task=>task.sessionIds)??[]);
-    return dashboard?.sessions.filter(session=>linked.has(session.sessionId)||session.workspaceTargets?.some(target=>references.has(target.targetRef)||ids.has(target.taskId)))??[];
-  };
-  const exact=candidates([scope.targetRef],scope.localTaskIds);
-  return [...new Map([...exact,...candidates(scope.matterTargetRefs,scope.matterLocalTaskIds)].map(session=>[session.sessionId,session])).values()];
+export function relationSessionCandidates(scope:{targetRef:string},dashboard:Pick<WorkspaceConsoleDashboardDto,'tasks'|'sessions'>|null){
+  const localId=scope.targetRef.startsWith('local:')?scope.targetRef.slice(6):null;
+  const linked=new Set(localId?dashboard?.tasks.find(task=>task.id===localId)?.sessionIds??[]:[]);
+  return dashboard?.sessions.filter(session=>linked.has(session.sessionId)||session.workspaceTargets?.some(target=>localId?target.taskId===localId:target.targetRef===scope.targetRef))??[];
 }
 
 export function workspaceSessionUrl(href:string,sessionId:string):string{

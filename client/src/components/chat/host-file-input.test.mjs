@@ -164,6 +164,11 @@ test('附件上传批次串行接纳并同步提交最新额度快照', () => {
   assert.match(inputSource, /const currentAttachments = attachmentsRef\.current/);
   assert.match(inputSource, /selectUploadFiles\(currentAttachments, files\)/);
   assert.match(inputSource, /attachmentsRef\.current = nextAttachments/);
+  assert.match(inputSource, /transferQueueRef\.current\.enqueue\(\(\) => uploadProjectFile/);
+  const retry = inputSource.slice(inputSource.indexOf('const retryUpload ='), inputSource.indexOf('const currentProject ='));
+  assert.match(retry, /startUpload\(retryDraft, projectId, targetDraftKey\)/);
+  assert.doesNotMatch(retry, /uploadId: generateUUID/);
+  assert.match(retry, /catch \(error\) \{\s*if \(attachmentDraftKeyRef\.current === targetDraftKey\)/);
 });
 
 test('回复处理中允许准备下一条附件，但发送守卫保持生效', () => {

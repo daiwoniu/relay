@@ -394,6 +394,19 @@
   color: #fff;
 }
 
+.workspace-detail { display: flex; flex-direction: column; }
+.workspace-detail__header { display: flex; flex: none; flex-wrap: wrap; align-items: flex-start; gap: .75rem; padding: 1rem; border-bottom: 1px solid var(--wb-border); }
+.workspace-detail__header button { min-height: 2.25rem; padding: .375rem .75rem; border: 1px solid var(--wb-border); border-radius: .5rem; font-size: .75rem; }
+.workspace-detail__header button:disabled { opacity: .5; }
+.workspace-detail__body { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; padding: 1rem; font-size: .875rem; line-height: 1.65; }
+.workspace-detail__body > * + * { margin-top: 1rem; }
+.workspace-detail__disclosure { padding: .75rem 0; border-top: 1px solid var(--wb-border); }
+.workspace-detail__disclosure > summary { cursor: pointer; font-size: .875rem; font-weight: 500; color: var(--wb-text); }
+.workspace-detail__text > summary { cursor: pointer; color: var(--wb-accent); }
+.workspace-detail [class~="text-[10px]"], .workspace-detail [class~="text-[11px]"] { font-size: .75rem; }
+.workspace-detail .workspace-workbench__local-row, .workspace-detail .workspace-workbench__relation-item { padding: .75rem 0; border: 0; border-radius: 0; border-bottom: 1px solid var(--wb-border); }
+.workspace-detail section[aria-label="任务会话关联"] { background: var(--wb-surface); box-shadow: none; }
+@media (min-width: 640px) { .workspace-detail__header, .workspace-detail__body { padding: 1.5rem; } }
 .workspace-workbench [role="dialog"] {
   border-color: var(--wb-border);
   background: var(--wb-panel);

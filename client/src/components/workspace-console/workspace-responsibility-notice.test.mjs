@@ -21,7 +21,8 @@ const render = responsibility => renderToStaticMarkup(React.createElement(module
 
 test('完整或尚未加载的快照不显示分类提示，旧快照缺少数量时不编造零', () => {
   assert.equal(render(null), '');
-  assert.equal(render({ complete: true }), '');
+  assert.equal(render({ complete: true,relationCoverage:'complete' }), '');
+  assert.match(render({complete:true}),/部分飞书关联尚未核实/);
   const html = render({ complete: false });
   assert.match(html, /role="status"/);
   assert.match(html, /当前数据不代表完整责任清单/);
@@ -29,7 +30,7 @@ test('完整或尚未加载的快照不显示分类提示，旧快照缺少数�
 });
 
 test('详情独立刷新取得分类不完整的新快照时，使用详情自己的数量', async () => {
-  const main = { complete: true, unverifiedCount: 0 };
+  const main = { complete: true, unverifiedCount: 0,relationCoverage:'complete' };
   const fresh = { complete: false, unverifiedCount: 3, error: null, stale: false,
     items: [], workbenchItems: [{ workItemId: '123' }] };
   const detail = await loadWorkbenchDetailSnapshot({ kind: 'group', id: '123' }, async () => ({}),
@@ -38,12 +39,12 @@ test('详情独立刷新取得分类不完整的新快照时，使用详情自�
   const html = render(detail.responsibility);
   assert.match(html, /3 个候选待核实/);
   assert.equal((html.match(/role="status"/g) ?? []).length, 1);
-  assert.equal(render({ complete: true, unverifiedCount: 0 }), '');
+  assert.equal(render({ complete: true, unverifiedCount: 0,relationCoverage:'complete' }), '');
 });
 
-test('主列表及三种详情区域绑定各自快照，复用同一提示组件', () => {
+test('全局责任数量只出现在主列表，单项详情不重复全局警告', () => {
   const page = fs.readFileSync(new URL('./WorkspaceConsolePage.tsx', import.meta.url), 'utf8');
   assert.equal((page.match(/<WorkspaceResponsibilityNotice responsibility=\{responsibility\}/g) ?? []).length, 1);
-  assert.equal((page.match(/<WorkspaceResponsibilityNotice responsibility=\{detailResponsibility\}/g) ?? []).length, 3);
+  assert.equal((page.match(/<WorkspaceResponsibilityNotice responsibility=\{detailResponsibility\}/g) ?? []).length, 0);
   assert.doesNotMatch(page, /responsibilityClassificationNotice\(/);
 });

@@ -2,6 +2,13 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import * as viewModel from './workspace-console-view-model.ts';
 
+test('single and grouped detail execution lists share exact task filtering and newest-first order',()=>{
+ const runs=[{runId:'old',taskId:'a',startedAt:'2026-11-20T01:00:00Z'},{runId:'new',taskId:'b',startedAt:'2026-11-20T03:00:00Z'},{runId:'other',taskId:'c',startedAt:'2026-11-20T04:00:00Z'}];
+ assert.deepEqual(viewModel.runsForTasks({runs},['a','b','a']).map(run=>run.runId),['new','old']);
+ assert.deepEqual(viewModel.runsForTask({runs},{id:'a'}),viewModel.runsForTasks({runs},['a']));
+ assert.deepEqual(viewModel.runsForTasks(null,['a']),[]);
+});
+
 test('ledger heading distinguishes no ledger from registered but unmatched links', () => {
   assert.equal(viewModel.localLedgerLabel(0,0),'无本地台账');
   assert.equal(viewModel.localLedgerLabel(0,1),'已登记本地关联，台账尚未匹配');
@@ -284,8 +291,8 @@ test('related summaries separate flow completion from personal action and do not
   ['workItems',1,0,1,0],['issues',3,1,2,1],['subtasks',1,1,0,0]]);
 });
 
-test('task file previews use known task and run paths, limit entries and preserve cross-task isolation',()=>{
- const local={...task('a','doing'),taskDocumentPath:'D:/tasks/a/README.md'};
+test('task files contain the guide and plan while execution files stay in run details',()=>{
+ const local={...task('a','doing'),taskDocumentPath:'D:/tasks/a/README.md',taskPlanPath:'D:/tasks/a/plan.md'};
  const files=viewModel.taskPrimaryFiles(local,[
   {taskId:'other',detailFilePath:'D:/private/other.json',startedAt:'2026-11-19T20:00:00Z'},
   {taskId:'a',detailFilePath:'D:/tasks/a/latest.json',startedAt:'2026-11-19T10:00:00Z'},
@@ -294,7 +301,7 @@ test('task file previews use known task and run paths, limit entries and preserv
   {taskId:'a',detailFilePath:'D:/tasks/a/older.json',startedAt:'2026-11-19T07:00:00Z'},
   {taskId:'a',detailFilePath:'D:/tasks/a/oldest.json',startedAt:'2026-11-19T06:00:00Z'},
  ]);
- assert.deepEqual(files.map(f=>f.path),['D:/tasks/a/README.md','D:/tasks/a/latest.json','D:/tasks/a/older.json']);
+ assert.deepEqual(files.map(f=>f.path),['D:/tasks/a/README.md','D:/tasks/a/plan.md']);
 });
 
 test('subtask links preserve the verified parent route and add precise node and child identifiers',()=>{
@@ -818,13 +825,13 @@ test('recent run observation does not displace newer runs to favor distinct task
   assert.equal(runs[0].runId, 'c1');
 });
 
-test('latest execution file uses the same order as the run list when start time is absent', () => {
+test('task material does not substitute a run file when no task documents are registered', () => {
   const item = { ...task('a', 'doing'), taskDocumentPath: null };
   const runs = [
     { taskId: 'a', runId: 'dated', detailFilePath: 'older.json', startedAt: '2026-11-19 09:00:00' },
     { taskId: 'a', runId: '20261120-090000-new', detailFilePath: 'newer.json', startedAt: null },
   ];
-  assert.equal(viewModel.taskPrimaryFiles(item, runs)[0].path, 'newer.json');
+  assert.deepEqual(viewModel.taskPrimaryFiles(item, runs), []);
 });
 
 test('focus current removes only a leading timestamp and keeps dates in the description', () => {

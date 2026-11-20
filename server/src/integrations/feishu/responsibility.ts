@@ -1,4 +1,4 @@
-import { FeishuProjectClient, numericId, object, rows, type Row, type FlowRoleDefinition } from './client.js';
+import { FeishuProjectClient, FeishuApiError, numericId, object, rows, type Row, type FlowRoleDefinition } from './client.js';
 
 export type Phase = 'current' | 'upcoming' | 'completed' | 'unknown';
 export type Actionability = 'current' | 'state_responsibility' | 'upcoming' | 'noncurrent' | 'archived' | 'unverified';
@@ -205,10 +205,33 @@ export class FeishuResponsibilityService {
       }
     }
     for (const parent of requiredParents) if (!facts.some(fact => fact.id === parent && fact.mySubtasks.some(task => !task.passed))) throw new Error('飞书未完成子任务无法核实父项');
+    if(catalog.some(row=>row.type_key==='sub_task'))await hydrateSubtaskTimes(this.client,facts);
     await hydrateFactNames(this.client, facts);
     const fetchedAt = this.now();
     return { generatedAt: new Date(fetchedAt).toISOString(), fetchedAt, retrievalComplete: true,
       classificationComplete: facts.every(fact => !hasUnverifiedResponsibility(fact)), relationCoverage: this.storyRelationField ? relationComplete?'complete':'partial' : 'not_queried', facts };
+  }
+}
+
+/** Search/workflow task rows omit creation metadata; the sub_task work-item query supplies it. */
+export async function hydrateSubtaskTimes(client:FeishuProjectClient,facts:FeishuFact[]):Promise<void> {
+  const byId=new Map<string,FeishuFact['mySubtasks']>();
+  for(const task of facts.flatMap(fact=>fact.mySubtasks)){
+    const entries=byId.get(task.id)??[];entries.push(task);byId.set(task.id,entries);
+  }
+  const ids=[...byId].filter(([,entries])=>entries.some(task=>!task.createdAt||!task.updatedAt)).map(([id])=>id);
+  for(let offset=0;offset<ids.length;offset+=50){
+    let details:Row[];
+    try{details=await client.details('sub_task',ids.slice(offset,offset+50),{allowMissing:true});}
+    catch(error){
+      // Preserve native facts, and do not repeat connection-wide failures for every optional batch.
+      if(error instanceof FeishuApiError&&['permission','rate_limit','network'].includes(error.kind))break;
+      continue;
+    }
+    for(const item of details)for(const task of byId.get(numericId(item.id))??[]){
+      task.createdAt=orderingTimestamp(item.created_at)??task.createdAt??null;
+      task.updatedAt=orderingTimestamp(item.updated_at)??task.updatedAt??null;
+    }
   }
 }
 

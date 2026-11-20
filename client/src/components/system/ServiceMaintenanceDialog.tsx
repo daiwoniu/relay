@@ -15,15 +15,12 @@ import UserMenuIcon from '../icons/UserMenuIcon';
 import MaintenanceProgress from './MaintenanceProgress';
 import MaintenanceOutput from './MaintenanceOutput';
 import SystemResourceStatus from './SystemResourceStatus';
-import MessageRepairPanel from './MessageRepairPanel';
 import FailureNotice from '../ui/FailureNotice';
 
 interface ServiceMaintenanceDialogViewProps {
   open: boolean;
   onClose: () => void;
   controller: ServiceMaintenanceController;
-  admin?: boolean;
-  accountId?: string;
 }
 
 interface ServiceMaintenanceDialogContainerProps {
@@ -196,7 +193,7 @@ function confirmationPresentation(controller: ServiceMaintenanceController, acti
   };
 }
 
-export function ServiceMaintenanceDialog({ open, onClose, controller, admin = false, accountId }: ServiceMaintenanceDialogViewProps) {
+export function ServiceMaintenanceDialog({ open, onClose, controller }: ServiceMaintenanceDialogViewProps) {
   useFeatureView('maintenance',open,'user_menu');
   const capabilities = controller.capabilities;
   const recommendedAction = controller.policy.recommendedAction;
@@ -340,8 +337,6 @@ export function ServiceMaintenanceDialog({ open, onClose, controller, admin = fa
             <div className="bg-[var(--color-surface)] px-3 py-2"><div className="text-[10px] text-[var(--color-text-tertiary)]">操作限制</div><div className="mt-0.5 text-xs leading-5 text-[var(--color-text)]">{controller.loading ? '检测中' : operationLimitSummary(controller)}</div></div>
           </section>
 
-          <SystemResourceStatus active={open} />
-
           {capabilities?.setupOperation?.startedAt && (
             <section data-setup-operation-time className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-xs text-[var(--color-text-secondary)]">
               环境修复开始于 {formatServiceStartedAt(capabilities.setupOperation.startedAt)}
@@ -372,17 +367,17 @@ export function ServiceMaintenanceDialog({ open, onClose, controller, admin = fa
             </section>
           )}
 
-          {!controller.submitting && (showAdvancedAction || admin) && (
+          {!controller.submitting && showAdvancedAction && (
             <details data-service-maintenance-advanced className="group overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
               <summary className="flex min-h-11 cursor-pointer list-none items-center gap-2 px-3 py-2 text-left text-xs text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--color-surface-hover)]">
                 <span aria-hidden="true" className="transition-transform group-open:rotate-90">›</span>
                 <span className="min-w-0">
                   <strong className="block font-medium text-[var(--color-text)]">高级操作</strong>
-                  <span className="block leading-5">服务整体重启、启动器换代与历史消息维护</span>
+                  <span className="block leading-5">服务整体重启与启动器换代</span>
                 </span>
               </summary>
               <div className="space-y-3 border-t border-[var(--color-border)] p-2.5">
-                {showAdvancedAction && <button
+                <button
                   type="button"
                   disabled={!advancedState.enabled}
                   onClick={() => {featureAction('maintenance','select_action','admin');controller.requestAction(advancedAction);}}
@@ -390,11 +385,11 @@ export function ServiceMaintenanceDialog({ open, onClose, controller, admin = fa
                 >
                   <span className="block text-sm font-medium text-[var(--color-status-danger)]">{advancedState.label}</span>
                   <span className="mt-0.5 block text-xs leading-5 text-[var(--color-text-secondary)]">{advancedState.reason || actionDescription(advancedAction, controller)}</span>
-                </button>}
-                {admin && <MessageRepairPanel key={accountId} disabled={controller.loading || controller.submitting || capabilities?.operationInProgress === true} />}
+                </button>
               </div>
             </details>
           )}
+          <SystemResourceStatus active={open} />
       </PanelShell>
 
       <ConfirmDialog
@@ -428,5 +423,5 @@ export default function ServiceMaintenanceDialogContainer({
     enabled: open,
     onReconnect,
   });
-  return <ServiceMaintenanceDialog open={open} onClose={onClose} controller={controller} admin={user?.role === 'admin'} accountId={user?.id} />;
+  return <ServiceMaintenanceDialog open={open} onClose={onClose} controller={controller} />;
 }

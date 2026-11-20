@@ -139,7 +139,7 @@ export class FeishuProjectClient {
     if (!allowMissing && list.length !== ids.length || list.some(row => !ids.includes(String(row.id)) || !types.includes(row.work_item_type_key))) throw new Error('飞书类型发现不完整');
     return new Map(list.map(row => [String(row.id), row.work_item_type_key]));
   }
-  async details(type: string, ids: string[]): Promise<Row[]> {
+  async details(type: string, ids: string[], options:{allowMissing?:boolean}={}): Promise<Row[]> {
     if (!ids.length || ids.length > 50 || new Set(ids).size !== ids.length) throw new Error('飞书批量详情范围无效');
     const batch=feishuReadBatch(this), itemKey=(id:string)=>JSON.stringify([type,id]);
     ids.forEach(numericId);
@@ -149,10 +149,10 @@ export class FeishuProjectClient {
     const seen = new Set<string>();
     for (const row of list) { const id = this.verifyItem({ ...row, work_item_type_key: row.work_item_type_key ?? type }, type);
       if (!missing.includes(id) || seen.has(id)) throw new Error('飞书详情身份不匹配'); seen.add(id); }
-    if (seen.size !== missing.length) throw new Error('飞书详情不完整');
+    if (!options.allowMissing && seen.size !== missing.length) throw new Error('飞书详情不完整');
     const fetched=new Map(list.map(row=>[String(row.id),row]));
     for(const [id,row] of fetched)rememberFeishuItem(batch,itemKey(id),row);
-    return ids.map(id=>fetched.get(id)??batch!.items.get(itemKey(id))!);
+    return ids.map(id=>fetched.get(id)??batch?.items.get(itemKey(id))).filter((row):row is Row=>row!==undefined);
   }
   async stateFlow(type: string, id: string): Promise<Row> { return object((await this.request(`${this.prefix}/work_item/${segment(type)}/${numericId(id)}/workflow/query`, { flow_type: 1 })).data); }
   async workflow(type: string, id: string): Promise<Row> { return object((await this.request(`${this.prefix}/work_item/${segment(type)}/${numericId(id)}/workflow/query`, { fields: [], flow_type: 0 })).data); }

@@ -105,7 +105,6 @@ export const ANALYTICS_IMPLEMENTATION_EVIDENCE = [
   {source:'client/src/hooks/useEngineMaintenance.ts',ids:['maintenance.confirm','maintenance.cancel','maintenance.select_action','maintenance.abort','maintenance.install','maintenance.upgrade','maintenance.upgrade_and_restart','maintenance.restart','maintenance.recheck']},
   {source:'client/src/components/system/ServiceMaintenanceDialog.tsx',ids:['maintenance.service_restart','maintenance.service_repair']},
   {source:'client/src/api/engine-maintenance.ts',ids:['maintenance.check_version']},
-  {source:'client/src/api/message-repair.ts',ids:['maintenance.preview_repair','maintenance.apply_repair']},
   {source:'client/src/components/analytics/AnalyticsPage.tsx',ids:['analytics.range','analytics.filter','analytics.refresh','analytics.retry']},
   {source:'client/src/components/analytics/FeatureAnalytics.tsx',ids:['analytics.details','analytics.paginate']},
   {source:'client/src/components/analytics/DailyVisitsChart.tsx',ids:['analytics.metric','analytics.select_day']},
@@ -131,11 +130,13 @@ export const ANALYTICS_IMPLEMENTATION_EVIDENCE = [
   {source:'server/src/system/stored-managed-maintenance.ts',ids:['maintenance.install.result','maintenance.upgrade.result','maintenance.upgrade_and_restart.result','maintenance.restart.result','maintenance.recheck.result']},
 ] as const;
 const evidence=new Map<string,string>(ANALYTICS_IMPLEMENTATION_EVIDENCE.flatMap(item=>item.ids.map(id=>[id,item.source] as const)));
+// Keep historical event decoding without treating removed UI actions as future work.
+const retired = new Set(['maintenance.preview_repair', 'maintenance.apply_repair']);
 
 export const ANALYTICS_COVERAGE = groups.map(group => ({
   ...group,
   registrations: ANALYTICS_REGISTRY.filter(entry => (group.features as readonly string[]).includes(entry.feature))
-    .map(entry => ({ id:entry.id,status:evidence.has(entry.id)?'implemented' as const:'planned' as const,source:evidence.get(entry.id)??null })),
+    .map(entry => ({ id:entry.id,status:retired.has(entry.id)?'retired' as const:evidence.has(entry.id)?'implemented' as const:'planned' as const,source:evidence.get(entry.id)??null })),
 }));
 
 export const ANALYTICS_EXISTING_COVERAGE = [

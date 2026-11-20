@@ -16,6 +16,7 @@ import { StoredProjectUploads,type StoredUploadIntent } from './stored-project-u
 import { createStoredProjectUploadsRouter } from '../routes/stored-project-uploads.js';
 import { StoredDraftCleanup } from './stored-draft-cleanup.js';
 import { createStoredDraftCleanupRouter } from '../routes/stored-draft-cleanup.js';
+import { createAttachmentTransferQueue } from '../../../client/src/components/chat/attachment-upload-queue.js';
 const user='11111111-1111-4111-8111-111111111111',project='22222222-2222-4222-8222-222222222222';
 const principal={kind:'user' as const,userId:user,authSessionHash:hashSessionToken('synthetic-upload-owner')};
 const stream=(value='hello')=>new ReadableStream<Uint8Array>({start(c){c.enqueue(Buffer.from(value));c.close();}});
@@ -38,6 +39,19 @@ test('current Native authorization, streamed receive, isolated publication and r
     let cancelled=false;const retry=await service.upload(principal,p.intent,new ReadableStream({cancel(){cancelled=true;}}));assert.deepEqual(retry,first);assert.equal(cancelled,true);
     const manifest=JSON.parse(await fs.readFile(path.join(path.dirname(first.value.attachment.path),'manifest.json'),'utf8'));assert.equal(manifest.attachments.length,1);assert.equal(manifest.attachments[0].createdAt,1234);
     assert.deepEqual(await service.upload(principal,{...p.intent,name:'different.txt'},stream()),{state:'rejected',code:'CONFLICT'});assert.equal(await fs.readFile(first.value.attachment.path,'utf8'),'hello');
+  }finally{await p.cleanup();}
+});
+
+test('a selected batch queues real uploads through publication and quota validation without losing later files',async()=>{
+  const p=await prepared();try{
+    const service=p.make(),queue=createAttachmentTransferQueue(),intents=Array.from({length:4},(_,i)=>({...p.intent,uploadId:randomUUID(),name:`batch-${i}.txt`}));
+    const results=await Promise.all(intents.map(intent=>queue.enqueue(()=>({promise:service.upload(principal,intent,stream()),abort(){}})).promise));
+    assert.deepEqual(results.map(result=>result.state),['committed','committed','committed','committed']);
+    const first=results[0];if(first.state!=='committed')return;
+    const manifest=JSON.parse(await fs.readFile(path.join(path.dirname(first.value.attachment.path),'manifest.json'),'utf8'));
+    assert.equal(manifest.attachments.length,4);
+    for(const result of results)if(result.state==='committed')assert.equal(await fs.readFile(result.value.attachment.path,'utf8'),'hello');
+    const last=results[3];if(last.state==='committed'){assert.equal(last.value.usage.usedBytes,20);assert.equal(last.value.usage.reservedBytes,0);}
   }finally{await p.cleanup();}
 });
 

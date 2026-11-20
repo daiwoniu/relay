@@ -56,7 +56,7 @@ test('维护操作命令参考只展示在二次确认 subject 中', () => {
   assert.doesNotMatch(source, /MaintenanceCommandReference/);
 });
 test('管理员菜单分别提供 Relay 维护与引擎维护', () => {
-  assert.match(userMenu, /<span>Relay 维护<\/span>/);
+  assert.match(userMenu, /<span\b[^>]*>Relay 维护<\/span>/);
   assert.match(source, /: 'Relay 维护'/);
   assert.match(userMenu, />引擎维护</);
   assert.doesNotMatch(userMenu, /user-menu__engine-row/);

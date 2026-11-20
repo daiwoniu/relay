@@ -38,7 +38,7 @@ const requireBackendStopped = () => requireOfflineBackend(port, probeHost);
 if (apply) await requireBackendStopped();
 const original = fs.readFileSync(dbPath);
 if (original[18] === 2 || original[19] === 2 || fs.existsSync(`${dbPath}-wal`) || fs.existsSync(`${dbPath}-shm`)) {
-  throw new Error('此旧版离线修复工具不支持 WAL 数据库；请使用新版 Relay 内的缺失回复恢复功能');
+  throw new Error('此旧版离线修复工具不支持 WAL 数据库；需要专项排查时使用在线恢复接口，见 ai/docs/reference/commands.md');
 }
 const digest = (data: string | Uint8Array) => createHash('sha256').update(data).digest('hex');
 const originalDigest = digest(original);
@@ -47,7 +47,7 @@ const SQL = await initSqlJs({ locateFile: () => require.resolve('sql.js/dist/sql
 const raw = new SQL.Database(original);
 if (raw.exec("SELECT 1 FROM sqlite_master WHERE name='_relay_storage_meta'").length) {
   raw.close();
-  throw new Error('此旧版离线修复工具不支持 Native 数据库；请使用新版 Relay 内的缺失回复恢复功能');
+  throw new Error('此旧版离线修复工具不支持 Native 数据库；需要专项排查时使用在线恢复接口，见 ai/docs/reference/commands.md');
 }
 const db = new SQLiteDB(raw, ':memory:');
 try {

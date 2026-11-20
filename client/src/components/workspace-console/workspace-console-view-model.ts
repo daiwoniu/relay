@@ -245,14 +245,9 @@ export function taskFeishuContext(task: DashboardTask, report: WorkspaceConsoleR
   });
 }
 
-export function taskPrimaryFiles(task: DashboardTask, runs: readonly WorkspaceConsoleDashboardDto['runs'][number][]) {
+export function taskPrimaryFiles(task: DashboardTask) {
   const files:Array<{path:string;label:string}> = task.taskDocumentPath ? [{path:task.taskDocumentPath,label:'任务说明'}] : [];
-  let runFiles=0;
-  for(const run of selectRecentRuns(runs.filter(run=>run.taskId===task.id&&run.detailFilePath),runs.length)){
-    if(files.some(file=>file.path===run.detailFilePath))continue;
-    files.push({path:run.detailFilePath!,label:runFiles===0?'最近执行文件':'上次执行文件'});
-    if(++runFiles>=2)break;
-  }
+  if(task.taskPlanPath&&!files.some(file=>file.path===task.taskPlanPath))files.push({path:task.taskPlanPath,label:'实施计划'});
   return files;
 }
 
@@ -921,7 +916,12 @@ export function feishuUrlForWorkItem(item: { workItemId: string; url: string | n
 }
 
 export function runsForTask(dashboard: WorkspaceConsoleDashboardDto, task: DashboardTask) {
-  return selectRecentRuns(dashboard.runs.filter((run) => run.taskId === task.id), dashboard.runs.length);
+  return runsForTasks(dashboard,[task.id]);
+}
+
+export function runsForTasks(dashboard:WorkspaceConsoleDashboardDto|null,taskIds:readonly string[]) {
+  const ids=new Set(taskIds);
+  return selectRecentRuns(dashboard?.runs.filter(run=>run.taskId!==null&&ids.has(run.taskId))??[],dashboard?.runs.length??0);
 }
 
 export function formatObservedDuration(seconds: number | null): string {

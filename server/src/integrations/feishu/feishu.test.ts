@@ -4,8 +4,8 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { loadFeishuConfig, type FeishuConfig } from './config.js';
-import { FeishuProjectClient, type Row } from './client.js';
-import { FeishuResponsibilityService, hasUnverifiedResponsibility, hydrateFactNames, linkedWorkItemIds, projectResponsibility, timestamp } from './responsibility.js';
+import { FeishuProjectClient, FeishuApiError, type Row } from './client.js';
+import { FeishuResponsibilityService, hasUnverifiedResponsibility, hydrateFactNames, hydrateSubtaskTimes, linkedWorkItemIds, projectResponsibility, timestamp } from './responsibility.js';
 import { readOperationPage } from './operations.js';
 import { FeishuWorkbenchSource, projectFeishuSnapshot } from '../../workspace-console/feishu-source.js';
 import { WorkspaceConsoleResponsibilityDtoSchema } from '../../contracts/dto.js';
@@ -16,6 +16,51 @@ import { TaskRegistryComposition } from '../../workspace-console/task-registry-c
 const config: FeishuConfig = { connectionId: 'test', projectKey: 'space', userKey: 'me', pluginId: 'plugin', pluginSecret: 'secret', scope: 'a'.repeat(64) };
 const catalog = [{ type_key: 'story', api_name: 'requirement', name: '需求', is_disable: 2 }, { type_key: 'issue', api_name: 'defect', name: '缺陷', is_disable: 2 }];
 const space = { project_key: 'space', simple_name: 'test' };
+
+test('responsibility load obtains child creation time from the sub_task work-item query',async()=>{
+ const created=1787621798238,updated=1789973937907;
+ const native=item();
+ const child={work_item_id:native.id,node_id:'node',sub_task:{id:'7084388111',name:'子任务',owners:['me'],passed:false,actual_begin_time:'2026-08-25T09:36:38.008Z'}};
+ const {client,calls}=fake((route,body)=>{
+   if(route.endsWith('all-types'))return{data:[...catalog,{type_key:'sub_task',api_name:'sub_task'}]};
+   if(route==='projects/detail')return{data:{space}};
+   if(route.endsWith('filter'))return{data:[native],pagination:{total:1}};
+   if(route.endsWith('subtask/search'))return{data:[child],pagination:{total:1}};
+   if(route.includes('/work_item/sub_task/query'))return{data:[item({id:child.sub_task.id,work_item_type_key:'sub_task',created_at:created,updated_at:updated})]};
+   if(route==='user/query')return{data:[]};
+   return{data:[native]};
+ });
+ const result=await new FeishuResponsibilityService(client).load();
+ const task=result.facts[0].mySubtasks[0];
+ assert.equal(task.createdAt,'2026-08-25T01:36:38.238Z');assert.equal(task.updatedAt,new Date(updated).toISOString());
+ assert.notEqual(task.createdAt,child.sub_task.actual_begin_time);assert.equal(task.passed,false);
+ assert.equal(calls.filter(call=>call.route.includes('/work_item/sub_task/query')).length,1);
+ const dto=WorkspaceConsoleResponsibilityDtoSchema.parse(projectFeishuSnapshot(result,'me','space'));
+ assert.equal(dto.workbenchItems[0].mySubtasks[0].createdAt,task.createdAt);
+ assert.deepEqual(calls.find(call=>call.route.endsWith('/filter'))?.body.work_item_type_keys,['story','issue']);
+});
+
+test('child time enrichment batches unique IDs, skips known metadata and keeps facts on optional failure',async()=>{
+ const tasks=Array.from({length:51},(_,i)=>({id:String(1000000100+i),createdAt:null,updatedAt:null}));
+ const known={id:'1000000999',createdAt:'2026-01-01T00:00:00.000Z',updatedAt:'2026-01-02T00:00:00.000Z'};
+ const calls:string[][]=[];
+ const client={details:async(type:string,ids:string[])=>{assert.equal(type,'sub_task');calls.push(ids);if(calls.length===2)throw Error('unavailable');return ids.map(id=>({id,created_at:1787621798238,updated_at:'invalid'}));}} as unknown as FeishuProjectClient;
+ await hydrateSubtaskTimes(client,[{mySubtasks:[...tasks,known,tasks[0]]}] as any);
+ assert.deepEqual(calls.map(ids=>ids.length),[50,1]);assert.equal(tasks[0].createdAt,'2026-08-25T01:36:38.238Z');assert.equal(tasks[0].updatedAt,null);
+ assert.equal(tasks[50].createdAt,null);assert.equal(known.createdAt,'2026-01-01T00:00:00.000Z');
+});
+
+test('child time enrichment accepts partial results and stops subsequent optional batches on connection-wide failures',async()=>{
+ const tasks=Array.from({length:101},(_,i)=>({id:String(1000000100+i),createdAt:null,updatedAt:null}));
+ let count=0;
+ const client={details:async(type:string,ids:string[],options:{allowMissing?:boolean})=>{
+   assert.equal(type,'sub_task');assert.equal(options.allowMissing,true);count++;
+   if(count===2)throw new FeishuApiError('permission',403);
+   return [{id:ids[0],created_at:1787621798238,updated_at:1789973937907}];
+ }} as unknown as FeishuProjectClient;
+ await hydrateSubtaskTimes(client,[{mySubtasks:tasks}] as any);
+ assert.equal(count,2);assert.equal(tasks[0].createdAt,'2026-08-25T01:36:38.238Z');assert.equal(tasks[1].createdAt,null);assert.equal(tasks[100].createdAt,null);
+});
 test('optional item and child ordering timestamps preserve native evidence without substituting parent update time',()=>{
   const {client}=fake(()=>({data:[]}));
   const created=1795142276713,updated=1795142303345;

@@ -7,6 +7,22 @@ const dashboard = (tasks) => ({ sourceAvailable: { registry: true }, tasks, runs
 const report = (items) => ({ stale: false, error: null, items, localAssociated: [] });
 const item = (workItemId, localTaskIds = []) => ({ workItemId, localTaskIds, actionability: 'current' });
 
+test('internal navigation keeps the displayed dashboard and responsibility rather than rebuilding from the main list',()=>{
+ const shown=dashboard([{id:'new-local'}]),shownReport=report([item('new-project')]);
+ const parent=taskDetail.detailSnapshotForSelection({kind:'group',id:'11'},shown,shownReport);
+ const next=taskDetail.detailSnapshotForSelection({kind:'project',id:'new-project'},parent.dashboard,parent.responsibility);
+ assert.equal(next.dashboard,shown);assert.equal(next.responsibility,shownReport);assert.equal(next.taskId,null);
+ assert.equal(taskDetail.detailSnapshotForSelection({kind:'local',id:'new-local'},next.dashboard,next.responsibility).taskId,'new-local');
+});
+
+test('local ledger notices distinguish no association, registered but missing, partial matching and source failure',()=>{
+ assert.match(taskDetail.localLedgerNotice([],[],true),/未关联/);
+ assert.match(taskDetail.localLedgerNotice(['a','a'],[],true),/已登记但未匹配.*1 份/);
+ assert.match(taskDetail.localLedgerNotice(['a','b'],[{id:'a'}],true),/已登记但未匹配.*1 份/);
+ assert.equal(taskDetail.localLedgerNotice(['a'],[{id:'a'}],true),null);
+ assert.match(taskDetail.localLedgerNotice(['a'],[],false),/来源不可用/);
+});
+
 test('session association refresh reads the local task without requesting Feishu', async () => {
   const snapshot = await taskDetail.loadTaskDetailSnapshot('a', async () => dashboard([{ id: 'a', title: '已关联会话' }]));
   assert.equal(snapshot.dashboard.tasks[0].title, '已关联会话');
@@ -15,7 +31,7 @@ test('session association refresh reads the local task without requesting Feishu
 
 test('local detail refresh reads only local data and retains the existing Feishu snapshot', async () => {
   const task = { id: 'a', title: '新台账标题', status: 'doing', feishuWorkItemIds: [] };
-  const cached = report([item('711', ['a'])]);
+  const cached = report([item('711', ['other'])]);
   const detail = await taskDetail.loadWorkbenchDetailSnapshot(
     { kind: 'local', id: 'a' },
     async () => dashboard([task]),
@@ -25,7 +41,15 @@ test('local detail refresh reads only local data and retains the existing Feishu
   assert.equal(detail.responsibility, cached);
   assert.equal(detail.taskId, 'a');
   assert.equal(detail.dashboard.tasks[0].title, '新台账标题');
-  assert.deepEqual(projectItemsForTask(detail.dashboard.tasks[0], detail.responsibility).map((entry) => entry.workItemId), ['711']);
+  assert.deepEqual(projectItemsForTask(detail.dashboard.tasks[0], detail.responsibility), []);
+});
+
+test('refreshing a linked local detail refreshes its Feishu source and rejects stale results',async()=>{
+ const task={id:'a',feishuWorkItemIds:['711']};
+ const fresh=report([item('711',['a'])]);
+ const snapshot=await taskDetail.loadWorkbenchDetailSnapshot({kind:'local',id:'a'},async()=>dashboard([task]),async(force)=>{assert.equal(force,true);return fresh;});
+ assert.equal(snapshot.responsibility,fresh);
+ await assert.rejects(taskDetail.loadWorkbenchDetailSnapshot({kind:'local',id:'a'},async()=>dashboard([task]),async()=>({...fresh,stale:true})),/保留上次详情/);
 });
 
 test('Feishu detail refresh retains the selected project and all newly associated local tasks', async () => {
@@ -106,15 +130,22 @@ test('group detail refresh retains every own child when the parent belongs to so
 });
 
 test('detail refresh rejects incomplete sources and missing selected records', async () => {
-  await assert.rejects(taskDetail.loadWorkbenchDetailSnapshot({ kind: 'project', id: '711' }, async () => ({ sourceAvailable: { registry: false }, tasks: [] }), async () => report([item('711')])), /台账/);
+  const native=await taskDetail.loadWorkbenchDetailSnapshot({ kind: 'project', id: '711' }, async () => ({ sourceAvailable: { registry: false }, tasks: [] }), async () => report([item('711')]));
+  assert.equal(native.dashboard.sourceAvailable.registry,false);
+  assert.equal(native.responsibility.items[0].workItemId,'711');
   assert.equal((await taskDetail.loadWorkbenchDetailSnapshot({ kind: 'local', id: 'a' }, async () => dashboard([{ id: 'a' }]), async () => assert.fail('must not read'))).responsibility, null);
   await assert.rejects(taskDetail.loadWorkbenchDetailSnapshot({ kind: 'local', id: 'a' }, async () => dashboard([{ id: 'b' }]), async () => report([])), /当前任务/);
   await assert.rejects(taskDetail.loadWorkbenchDetailSnapshot({ kind: 'project', id: '711' }, async () => dashboard([]), async () => report([item('712')])), /当前工作项/);
 });
 
 test('a Run opened from refreshed task details comes from that task snapshot', () => {
-  const page = { runs: [{ runId: 'old', taskId: 'a' }] };
   const detail = { taskId: 'a', dashboard: { runs: [{ runId: 'new', taskId: 'a' }] } };
-  assert.deepEqual(taskDetail.runForTaskDetail({ runId: 'new', taskId: 'a' }, page, detail), { runId: 'new', taskId: 'a' });
-  assert.equal(taskDetail.runForTaskDetail({ runId: 'new', taskId: 'b' }, page, detail), null);
+  assert.deepEqual(taskDetail.runForTaskDetail({ runId: 'new', taskId: 'a',snapshot:detail.dashboard }), { runId: 'new', taskId: 'a' });
+  assert.equal(taskDetail.runForTaskDetail({ runId: 'new', taskId: 'b',snapshot:detail.dashboard }), null);
+});
+
+test('execution selected in a group uses the exact displayed snapshot without a local detail taskId',()=>{
+ const snapshot={runs:[{runId:'new',taskId:'a'}]};
+ assert.deepEqual(taskDetail.runForTaskDetail({runId:'new',taskId:'a',snapshot}),snapshot.runs[0]);
+ assert.equal(taskDetail.runForTaskDetail({runId:'missing',taskId:'a',snapshot}),null);
 });
