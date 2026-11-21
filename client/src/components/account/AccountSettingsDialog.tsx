@@ -19,7 +19,7 @@ import SessionEngineBadge from '../chat/SessionEngineBadge';
 import { ENGINE_PRESENTATION_LIST } from '../../engine/catalog';
 import { useEngineStatuses } from '../chat/use-engine-statuses';
 import { useEngineModelsStore } from '../../stores/engine-models';
-import { buildModelChoices } from '../chat/model-settings-presentation';
+import AccountModelSettings from './AccountModelSettings';
 import { filterSelectableProjects } from '../layout/session-project';
 
 function errorMessage(cause: unknown, fallback: string): string {
@@ -109,7 +109,6 @@ export default function AccountSettingsDialog({ open, onClose, mobile }: { open:
   const [defaultError, setDefaultError] = useState('');
   const defaultModelCatalog = useEngineModelsStore((state) => user ? state.byEngine[user.defaultEngine] : undefined);
   const loadModels = useEngineModelsStore((state) => state.load);
-  const defaultModelChoices = buildModelChoices(defaultModelCatalog?.catalog?.models ?? []);
   const defaultModelCatalogUnavailable = !defaultModelCatalog?.catalog;
   const storedDefaultModelUnavailable = Boolean(user?.defaultModelId)
     && !defaultModelCatalog?.catalog?.models.some((model) => model.id === user?.defaultModelId);
@@ -351,17 +350,16 @@ export default function AccountSettingsDialog({ open, onClose, mobile }: { open:
           </select></div>
           <div className="conversation-defaults__engine"><div className="conversation-defaults__label"><div>默认引擎</div><p>不可用时会临时使用其他可用引擎，不会修改这里的选择</p></div><DefaultEnginePicker value={user.defaultEngine} pending={defaultPending} onChange={(engine) => void changeConversationDefault(() => setDefaultEngine(engine), '默认引擎更新失败')} /></div>
           <div className="conversation-defaults__project">
-            <div className="conversation-defaults__label"><div><label htmlFor="account-default-model">默认模型</label></div><p>{defaultModelCatalog?.status === 'loading' && !defaultModelCatalog.catalog
+            <div className="conversation-defaults__label"><div>默认模型</div><p>{defaultModelCatalog?.status === 'loading' && !defaultModelCatalog.catalog
               ? '正在加载当前引擎的模型目录…'
               : defaultModelCatalog?.error
                 ? defaultModelCatalog.error
                 : storedDefaultModelUnavailable && defaultModelCatalog?.catalog
                   ? '已保存的模型不在当前目录中，请重新选择'
-                  : '新会话使用该模型和它的默认推理强度'}</p></div>
-            <select id="account-default-model" aria-label="默认模型" disabled={defaultPending || defaultModelCatalogUnavailable} value={user.defaultModelId ?? ''} onChange={(event) => void changeConversationDefault(() => setDefaultModel(event.target.value || null), '默认模型更新失败')} className={formControlClassName}>
-              {storedDefaultModelUnavailable && <option value={user.defaultModelId ?? ''} disabled>不可用 · {user.defaultModelId}</option>}
-              {defaultModelChoices.map((choice) => <option key={choice.id ?? 'default'} value={choice.id ?? ''}>{choice.label}</option>)}
-            </select>
+                  : '新会话使用以下模型、推理强度与速度设置'}</p></div>
+            <AccountModelSettings key={`${user.id}:${user.defaultEngine}`} user={user} models={defaultModelCatalog?.catalog?.models ?? []}
+              pending={defaultPending} unavailable={defaultModelCatalogUnavailable}
+              onApply={preferences => void changeConversationDefault(() => setDefaultModel(preferences.modelId, preferences), '默认模型设置更新失败')} />
           </div>
           <FormFeedback message={defaultError} error />
         </section>}

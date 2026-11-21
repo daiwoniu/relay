@@ -17,7 +17,10 @@ export const userDisabledPatchSchema = z.object({ disabled: z.boolean() }).stric
 export const userProjectPermissionPatchSchema = z.object({ canCreateProject: z.boolean() }).strict();
 export const defaultProjectPatchSchema = z.object({ projectId: z.string().uuid() }).strict();
 export const defaultEnginePatchSchema = z.object({ engine: z.enum(['codex', 'codebuddy', 'opencode', 'zcode']) }).strict();
-export const defaultModelPatchSchema = z.object({ modelId: z.string().trim().min(1).max(200).nullable() }).strict();
+export const defaultModelPatchSchema = z.object({ modelId: z.string().trim().min(1).max(200).nullable(),
+  reasoningEffort: z.string().trim().min(1).max(64).nullable().optional(),
+  serviceTier: z.string().trim().min(1).max(64).nullable().optional(),
+}).strict();
 
 export type LoginSessionPolicyInput = { purpose?: 'headless_acceptance'; marker?: string; remoteAddress?: string;
   proxiedClientAddress?: string; forwardedHost?: string; forwardedProto?: string };

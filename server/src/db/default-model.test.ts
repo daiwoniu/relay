@@ -19,11 +19,18 @@ test('账号默认模型随默认引擎保存，并在切换引擎时清空', as
       default_engine TEXT NOT NULL, default_model_id TEXT,
       created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
     ); INSERT INTO users VALUES ('u1', 'user', 'hash', 'member', 'codex', NULL, 1, 1);`);
+    raw.exec('ALTER TABLE users ADD COLUMN default_reasoning_effort TEXT; ALTER TABLE users ADD COLUMN default_service_tier TEXT;');
     assert.equal(setUserDefaultModelInDatabase(repository, 'u1', 'gpt-selected', 2).default_model_id, 'gpt-selected');
     assert.equal(setUserDefaultEngineInDatabase(repository, 'u1', 'codex', 3).default_model_id, 'gpt-selected');
+    const configured = setUserDefaultModelInDatabase(repository, 'u1', 'gpt-selected', 3, { reasoningEffort: 'medium', serviceTier: 'ultrafast' });
+    assert.equal(configured.default_reasoning_effort, 'medium');
+    assert.equal(configured.default_service_tier, 'ultrafast');
+    assert.equal(setUserDefaultModelInDatabase(repository, 'u1', 'gpt-selected', 3).default_service_tier, 'ultrafast');
     const switched = setUserDefaultEngineInDatabase(repository, 'u1', 'codebuddy', 4);
     assert.equal(switched.default_engine, 'codebuddy');
     assert.equal(switched.default_model_id, null);
+    assert.equal(switched.default_reasoning_effort, null);
+    assert.equal(switched.default_service_tier, null);
   } finally {
     raw.close();
   }

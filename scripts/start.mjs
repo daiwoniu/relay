@@ -391,7 +391,6 @@ async function runLauncher(options = {}) {
   if (backendService) backendService.env = {
     ...backendService.env,
     RELAY_CODEX_INSTALL_SOURCE: codexInstallation.get().installSource,
-    RELAY_CODEX_RUNNING_VERSION: codexInstallation.get().version || '',
     RELAY_CODEBUDDY_INSTALL_SOURCE: codeBuddyInstallation.get().installSource,
     RELAY_CODEBUDDY_VERSION: codeBuddyInstallation.get().version || '',
     RELAY_CODEBUDDY_READINESS: configured.codebuddy?.available ? 'ready' : 'stale',

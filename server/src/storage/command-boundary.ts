@@ -203,7 +203,7 @@ const inputs = {
   'account.setDisplayName': z.object({ displayName: z.string().trim().max(40).nullable() }).strict(),
   'account.setAvatar': z.object({ mime:z.enum(ALLOWED_AVATAR_MIME_TYPES).nullable(),data:z.string().min(1).max(4*Math.ceil(MAX_AVATAR_BYTES/3)).nullable() }).strict().refine(value=>(value.mime===null)===(value.data===null)),
   'account.setDefaultEngine': z.object({engine}).strict(),
-  'account.setDefaultModel': z.object({expectedEngine:engine,modelId:z.string().trim().min(1).max(200).nullable()}).strict(),
+  'account.setDefaultModel': z.object({expectedEngine:engine,modelId:z.string().trim().min(1).max(200).nullable(),reasoningEffort:z.string().trim().min(1).max(64).nullable().optional(),serviceTier:z.string().trim().min(1).max(64).nullable().optional()}).strict(),
   'account.setNotifications':z.object({changes:NotificationPreferencesPatchSchema}).strict(),
   'account.setPreviewPreferences':z.object({changes:PreviewPreferencesPatchSchema}).strict(),
   'account.setTheme':z.object({settings:ThemeSettingsInputSchema}).strict(),

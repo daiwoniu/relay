@@ -354,7 +354,7 @@ export class NativeStore {
     const actor = this.user(principal);
     if (actor.role !== 'admin' && actor.id !== request.userId) deny('FORBIDDEN');
     const row = this.get(`SELECT id,username,role,display_name,avatar_updated_at,default_project_id,default_engine,
-      default_model_id,must_change_password,disabled_at,can_create_project FROM users WHERE id=?`, [request.userId]);
+      default_model_id,default_reasoning_effort,default_service_tier,must_change_password,disabled_at,can_create_project FROM users WHERE id=?`, [request.userId]);
     if (!row) deny('NOT_FOUND');
     return presentPublicUser(row as User);
   }
@@ -725,7 +725,7 @@ export class NativeStore {
     if (Object.keys(request).length !== 1) deny('INVALID_ARGUMENT');
     this.accountAdmin(parseStoragePrincipal(request.principal));
     const rows = this.all(`SELECT id,username,role,display_name,avatar_updated_at,default_project_id,default_engine,
-      default_model_id,must_change_password,disabled_at,can_create_project FROM users ORDER BY created_at,id LIMIT 501`);
+      default_model_id,default_reasoning_effort,default_service_tier,must_change_password,disabled_at,can_create_project FROM users ORDER BY created_at,id LIMIT 501`);
     if (rows.length > 500) deny('PAYLOAD_TOO_LARGE');
     return rows.map((row) => presentPublicUser(row as User));
   }
@@ -771,7 +771,7 @@ export class NativeStore {
     if (!request || Object.keys(request).length !== 1 || typeof request.tokenHash !== 'string'
       || !/^[a-f0-9]{64}$/.test(request.tokenHash)) deny('INVALID_ARGUMENT');
     const row = this.get(`SELECT u.id,u.username,u.role,u.display_name,u.avatar_updated_at,u.default_project_id,
-      u.default_engine,u.default_model_id,u.must_change_password,u.disabled_at,u.can_create_project,a.expires_at
+      u.default_engine,u.default_model_id,u.default_reasoning_effort,u.default_service_tier,u.must_change_password,u.disabled_at,u.can_create_project,a.expires_at
       FROM auth_sessions a JOIN users u ON u.id=a.user_id
       WHERE a.token_hash=? AND a.expires_at>? AND u.disabled_at IS NULL`, [request.tokenHash, Date.now()]);
     // Password-change gating belongs to the HTTP/WS policy, not this authentication lookup.
@@ -1074,7 +1074,7 @@ export class NativeStore {
           appendAdminAuditEventInDatabase(bridge, { actorUserId: request.principal.userId, action: disabled ? 'account.disable' : 'account.enable',
             resourceType: 'user', resourceId: userId, ownerUserId: userId, result: 'succeeded', occurredAt: now }, randomUUID);
           const row = this.get(`SELECT id,username,role,display_name,avatar_updated_at,default_project_id,default_engine,
-            default_model_id,must_change_password,disabled_at,can_create_project FROM users WHERE id=?`, [userId]);
+            default_model_id,default_reasoning_effort,default_service_tier,must_change_password,disabled_at,can_create_project FROM users WHERE id=?`, [userId]);
           value = { user: presentPublicUser(row as User), revokedSessions, cancelledSessions: cancelled.map((entry) => ({
             sessionId: entry.savedMessage.message.session_id, attemptId: entry.attemptId, resourceKey: entry.resourceKey,
             revision: entry.savedMessage.revision, messageId: entry.savedMessage.message.id })) };

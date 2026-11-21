@@ -48,6 +48,8 @@ export function fixture() {
     ALTER TABLE users ADD COLUMN default_project_id TEXT;
     ALTER TABLE users ADD COLUMN default_engine TEXT DEFAULT 'codex';
     ALTER TABLE users ADD COLUMN default_model_id TEXT;
+    ALTER TABLE users ADD COLUMN default_reasoning_effort TEXT;
+    ALTER TABLE users ADD COLUMN default_service_tier TEXT;
     ALTER TABLE users ADD COLUMN can_create_project INTEGER DEFAULT 1;
     UPDATE users SET username=id;
     ALTER TABLE auth_sessions ADD COLUMN created_at INTEGER DEFAULT 1;

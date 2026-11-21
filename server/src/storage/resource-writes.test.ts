@@ -54,6 +54,20 @@ test('session creation supports shared collaborator defaults and draft engine st
     assert.equal((await p.run({ name: 'session.create', input: { ...input, sessionId: 'after-revoke' } }, 'other')).state, 'rejected');
   } finally { await p.cleanup(); }
 });
+test('新绑定会话按相同引擎继承账号偏好，不污染旧会话或其他引擎',async()=>{
+  const p=await prepared();
+  try{
+    p.f.mutate("UPDATE users SET default_model_id='sol',default_reasoning_effort='medium',default_service_tier='ultrafast' WHERE id='owner'");
+    const input={sessionId:'configured',projectId:'project',title:null,engine:'codex' as const};
+    assert.equal((await p.run({name:'session.create',input})).state,'committed');
+    const session=await p.port.readSession({principal:actor(),sessionId:'configured'});
+    assert.equal(session?.engine_preferences.modelId,'sol');assert.equal(session?.engine_preferences.reasoningEffort,'medium');assert.equal(session?.engine_preferences.serviceTier,'ultrafast');
+    assert.equal(p.f.scalar("SELECT selected_model_id FROM sessions WHERE id='session'"),null);
+    assert.equal((await p.run({name:'session.create',input:{...input,sessionId:'other-engine',engine:'codebuddy'}})).state,'committed');
+    assert.equal((await p.port.readSession({principal:actor(),sessionId:'other-engine'}))?.engine_preferences.serviceTier,null);
+  }finally{await p.cleanup();}
+});
+
 test('administrator session creation uses own same-directory project and receipt failure rolls back its implicit project', async () => {
   const p = await prepared();
   try {

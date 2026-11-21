@@ -1,6 +1,30 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { extractPlanUpdate, presentWarningNotification } from './client-turn-facts.js';
+import { extractPlanUpdate, presentWarningNotification, retireTurn, isStaleTurnNotification, extractAsyncAgentMessageNotification } from './client-turn-facts.js';
+
+test('异步投递通过统一识别旁路转发，普通消息和其他通知保持原路径', () => {
+  const item = { id: 'partial', type: 'agentMessage', delivery: 'async', questions: [], text: 'PARTIAL' };
+  assert.deepEqual(extractAsyncAgentMessageNotification('item/completed', { threadId: 'root', turnId: 'old', item }), {
+    type: 'item_complete', threadId: 'root', turnId: 'old', item,
+  });
+  assert.equal(extractAsyncAgentMessageNotification('item/completed', { item: { ...item, delivery: 'inline' } }), null);
+  assert.equal(extractAsyncAgentMessageNotification('turn/completed', { item }), null);
+});
+
+test('回合过滤仅拒绝明确旧身份并有界保留历史，兼容无身份的旧通知和全局通知', () => {
+  const retired = new Set<string>();
+  retireTurn(retired, null);
+  for (let i = 0; i < 130; i++) retireTurn(retired, `turn-${i}`);
+  assert.equal(retired.size, 128);
+  assert(!retired.has('turn-0'));
+  assert(isStaleTurnNotification('turn/started', { turn: { id: 'turn-129' } }, null, retired));
+  assert(isStaleTurnNotification('item/agentMessage/delta', { turnId: 'unrelated' }, 'active', retired));
+  assert(isStaleTurnNotification('thread/tokenUsage/updated', { turnId: 'turn-129' }, 'active', retired));
+  assert(!isStaleTurnNotification('turn/completed', { turn: { id: 'active' } }, 'active', retired));
+  assert(!isStaleTurnNotification('item/completed', {}, 'active', retired));
+  assert(!isStaleTurnNotification('serverRequest/resolved', { turnId: 'turn-129' }, 'active', retired));
+  assert(!isStaleTurnNotification('warning', { turnId: 'turn-129' }, 'active', retired));
+});
 
 test('计划快照拒绝非活动回合和无效输入，保留空计划以清空旧清单', () => {
   assert.equal(extractPlanUpdate({ turnId: 'old', plan: [] }, 'current', 'root'), null);

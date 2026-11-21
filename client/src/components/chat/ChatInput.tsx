@@ -7,6 +7,7 @@ import { useChatInputHistory } from './use-chat-input-history';
 import { clearChatDraft, getChatDraftKey, readChatDraft, writeChatDraft } from './chat-drafts';
 import type { EngineId, EnginePreferencesDto, EngineStatusDto, SendAttachmentDto } from '../../generated/relay-contracts';
 import { useEngineModelsStore } from '../../stores/engine-models';
+import { resolveComposerModelPreferences } from './composer-model-preferences';
 import { updateSessionEnginePreferences } from '../../api/sessions';
 import { authorizeHostFiles } from '../../api/filesystem';
 import AttachmentDraftList from './AttachmentDraftList';
@@ -187,12 +188,11 @@ export default function ChatInput({ onSend, onEnsureProject, onStop, onCancelQue
   const loadModels = useEngineModelsStore((state) => state.load);
   const setModelDraft = useEngineModelsStore((state) => state.setDraft);
   const clearModelDraft = useEngineModelsStore((state) => state.clearDraft);
-  const authorityPreferences = currentSession?.engine_preferences;
+  const authorityPreferences = currentSession?.engine ? currentSession.engine_preferences : undefined;
   const applicableDraft = modelDraft?.engineId === selectedEngine ? modelDraft : undefined;
-  const selectedPreferences = authorityPreferences ?? applicableDraft;
-  const selectedModelId = selectedPreferences ? selectedPreferences.modelId
-    : selectedEngine === user?.defaultEngine ? user.defaultModelId : null;
-  const selectedReasoningEffort = selectedPreferences?.reasoningEffort ?? null;
+  const selectedPreferences = resolveComposerModelPreferences(selectedEngine,user,authorityPreferences,applicableDraft);
+  const selectedModelId = selectedPreferences.modelId;
+  const selectedReasoningEffort = selectedPreferences.reasoningEffort;
   useEffect(() => {
     if (!selectedEngine) return;
     void loadModels(selectedEngine).catch(() => undefined);
@@ -513,7 +513,7 @@ export default function ChatInput({ onSend, onEnsureProject, onStop, onCancelQue
       }, enginePreferences);
       if (attachmentDraftKeyRef.current === submissionDraftKey) shouldRestoreInputFocus = true;
       if (!accepted) return;
-      if (!currentSession) clearModelDraft(modelDraftKey);
+      if (!currentSession?.engine) clearModelDraft(modelDraftKey);
       if (typeof sessionStorage !== 'undefined') {
         clearChatDraft(sessionStorage, draftKey);
         writeAttachmentDrafts(sessionStorage, attachmentDraftKey, []);
@@ -926,7 +926,7 @@ export default function ChatInput({ onSend, onEnsureProject, onStop, onCancelQue
       isMobile={isMobile}
       onOpen={() => { void loadModels(selectedEngine, { refresh: true }).catch(() => undefined); }}
       onApply={async (preferences) => {
-        if (currentSession) {
+        if (currentSession?.engine) {
           const result = await updateSessionEnginePreferences(currentSession.id, {
             ...preferences,
             expectedRevision: currentSession.engine_preferences.revision,

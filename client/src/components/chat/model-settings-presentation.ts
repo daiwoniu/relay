@@ -44,19 +44,25 @@ export function reconcileReasoningEffort(model: EngineModelDto | undefined, valu
   return { value: null, changed: true };
 }
 
-export function getFastServiceTier(model: EngineModelDto | undefined) {
-  const fastTiers = model?.serviceTiers?.filter((tier) => tier.id === 'priority' || tier.id === 'fast') ?? [];
-  return fastTiers.find((tier) => tier.id === model?.defaultServiceTier) ?? fastTiers[0] ?? null;
+export function serviceTierLabel(id: string, fallback?: string) {
+  const label = ({ default: '标准', priority: '快速', fast: '快速', ultrafast: '极速' } as Record<string, string>)[id] || fallback || id;
+  return label === id ? id : `${label}（${id}）`;
 }
 
-export function isFastServiceTier(model: EngineModelDto | undefined, value: string | null) {
-  return Boolean(value && model?.serviceTiers?.some((tier) => tier.id === value && (tier.id === 'priority' || tier.id === 'fast')));
+export function getServiceTierChoices(model: EngineModelDto | undefined) {
+  if (!model?.serviceTiers?.length) return [];
+  return [{ id: 'default', label: serviceTierLabel('default') }, ...model.serviceTiers
+    .filter((tier) => tier.id !== 'default')
+    .map((tier) => ({ id: tier.id, label: serviceTierLabel(tier.id, tier.label) }))];
+}
+
+export function isAcceleratedServiceTier(model: EngineModelDto | undefined, value: string | null) {
+  return Boolean(value && value !== 'default' && model?.serviceTiers?.some((tier) => tier.id === value));
 }
 
 export function reconcileServiceTier(model: EngineModelDto | undefined, value: string | null) {
   if (value === null) return { value: null, changed: false };
-  const fastTier = getFastServiceTier(model);
-  if (fastTier && (value === 'default' || isFastServiceTier(model, value))) return { value, changed: false };
+  if (model?.serviceTiers?.length && (value === 'default' || model.serviceTiers.some((tier) => tier.id === value))) return { value, changed: false };
   return { value: null, changed: true };
 }
 

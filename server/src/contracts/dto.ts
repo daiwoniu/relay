@@ -404,6 +404,8 @@ export const PublicUserDtoSchema = z.object({
   defaultProjectId: z.string().uuid().nullable(),
   defaultEngine: EngineIdSchema,
   defaultModelId: z.string().nullable(),
+  defaultReasoningEffort: z.string().nullable().optional(),
+  defaultServiceTier: z.string().nullable().optional(),
   mustChangePassword: z.boolean(),
   disabledAt: z.number().nullable(),
   canCreateProject: z.boolean().optional(),
@@ -1474,6 +1476,8 @@ type PublicUserSource = {
   default_project_id?: string | null;
   default_engine?: EngineId;
   default_model_id?: string | null;
+  default_reasoning_effort?: string | null;
+  default_service_tier?: string | null;
   must_change_password?: number | null;
   disabled_at?: number | null;
   can_create_project?: number;
@@ -1561,6 +1565,10 @@ export function presentPublicUser<T extends PublicUserSource>(user: T): PublicUs
     defaultProjectId: user.default_project_id ?? null,
     defaultEngine: user.default_engine ?? 'codex',
     defaultModelId: user.default_model_id ?? null,
+    ...(user.default_reasoning_effort !== undefined || user.default_service_tier !== undefined ? {
+      defaultReasoningEffort: user.default_reasoning_effort ?? null,
+      defaultServiceTier: user.default_service_tier ?? null,
+    } : {}),
     mustChangePassword: user.must_change_password === 1,
     disabledAt: user.disabled_at ?? null,
     canCreateProject: user.role === 'admin' || user.can_create_project !== 0,

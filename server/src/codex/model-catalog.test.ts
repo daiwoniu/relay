@@ -2,6 +2,9 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { WebSocketServer } from 'ws';
 import { listCodexModels } from './model-catalog.js';
+import { buildStoredTurnModelSnapshot } from '../engine/models/stored-turn-snapshot.js';
+import { resolveTurnStartPreferences } from '../engine/runtime.js';
+import type { SessionRuntime } from '../engine/runtime.js';
 
 test('Codex model/list 完整分页并映射统一目录', async (t) => {
   const server = new WebSocketServer({ port: 0 });
@@ -57,6 +60,31 @@ test('Codex model/list 完整分页并映射统一目录', async (t) => {
     { limit: 100, includeHidden: false, cursor: 'page-2' },
   ]);
   assert(requests.some((request) => request.method === 'config/read'));
+});
+
+test('Ultrafast 配置默认值经模型目录和 Native 快照保留到发送参数', async (t) => {
+  const server = new WebSocketServer({ port: 0 });
+  await new Promise<void>((resolve) => server.once('listening', resolve));
+  t.after(() => server.close());
+  const address = server.address();
+  assert(address && typeof address === 'object');
+  server.on('connection', (socket) => socket.on('message', (raw) => {
+    const request = JSON.parse(raw.toString());
+    if (request.method === 'initialized') return;
+    const result = request.method === 'config/read'
+      ? { config: { model: 'sol', service_tier: 'ultrafast', model_reasoning_effort: 'medium' } }
+      : request.method === 'model/list' ? { data: [
+        { id: 'sol', isDefault: true, supportedReasoningEfforts: [{ reasoningEffort: 'medium' }], serviceTiers: [{ id: 'priority', name: 'Fast' }, { id: 'ultrafast', name: 'Ultrafast' }] },
+        { id: 'astra', supportedReasoningEfforts: [], serviceTiers: [{ id: 'priority', name: 'Fast' }] },
+      ], nextCursor: null } : {};
+    socket.send(JSON.stringify({ id: request.id, result }));
+  }));
+  const catalog = await listCodexModels({ wsUrl: `ws://127.0.0.1:${address.port}` });
+  assert.equal(catalog.models[0].defaultServiceTier, 'ultrafast');
+  assert.equal(catalog.models[1].defaultServiceTier, undefined);
+  const preferences = { modelId: null, reasoningEffort: null, serviceTier: null };
+  const snapshot = buildStoredTurnModelSnapshot('codex', preferences, catalog);
+  assert.equal(resolveTurnStartPreferences({ engine: 'codex', turnModelSnapshot: { ...snapshot, preferences } } as SessionRuntime).serviceTier, 'ultrafast');
 });
 
 test('config/read 当前模型覆盖目录 isDefault', async (t) => {

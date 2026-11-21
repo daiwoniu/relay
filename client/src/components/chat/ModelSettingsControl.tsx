@@ -4,7 +4,8 @@ import { useRef, useState } from 'react';
 import type { EngineId, EngineModelDto } from '../../generated/relay-contracts';
 import Popover from '../ui/Popover';
 import ModelSettingsPanel from './ModelSettingsPanel';
-import { getFastServiceTier, getModelPreferenceLabel, isFastServiceTier, reconcileReasoningEffort, reconcileServiceTier } from './model-settings-presentation';
+import { getModelPreferenceLabel, isAcceleratedServiceTier, serviceTierLabel, reconcileReasoningEffort, reconcileServiceTier } from './model-settings-presentation';
+import ServiceTierIcon from './ServiceTierIcon';
 
 interface Props {
   models: EngineModelDto[];
@@ -32,8 +33,9 @@ export default function ModelSettingsControl({ models, modelId, reasoningEffort,
   const [submitting, setSubmitting] = useState(false);
   const label = getModelPreferenceLabel(modelId, reasoningEffort, models);
   const selectedModel = models.find((model) => model.id === modelId) ?? models.find((model) => model.isDefault);
-  const fastTier = getFastServiceTier(selectedModel);
-  const isFast = Boolean(fastTier && isFastServiceTier(selectedModel, serviceTier ?? selectedModel?.defaultServiceTier ?? null));
+  const effectiveServiceTier = serviceTier ?? selectedModel?.defaultServiceTier ?? 'default';
+  const isFast = isAcceleratedServiceTier(selectedModel, effectiveServiceTier);
+  const speedLabel = serviceTierLabel(effectiveServiceTier, selectedModel?.serviceTiers?.find((tier) => tier.id === effectiveServiceTier)?.label);
 
   const close = () => { if (!submitting) setOpen(false); };
   const show = () => {featureAction('composer','open_model_settings','composer');
@@ -66,9 +68,9 @@ export default function ModelSettingsControl({ models, modelId, reasoningEffort,
 
   return (
     <>
-      <button ref={buttonRef} type="button" onClick={show} aria-haspopup="dialog" aria-expanded={open} aria-label={`切换模型，当前${label}${isFast ? '，快速模式' : ''}`} className="composer-compact-trigger model-settings-trigger group">
+      <button ref={buttonRef} type="button" onClick={show} aria-haspopup="dialog" aria-expanded={open} aria-label={`切换模型，当前${label}${isFast ? `，${speedLabel}模式` : ''}`} className="composer-compact-trigger model-settings-trigger group">
         <span className="min-w-0 truncate whitespace-nowrap font-medium">{loading && !models.length ? '模型加载中…' : label}</span>
-        {isFast && <Tooltip content="快速模式" asChild><span className="model-settings-speed-indicator" aria-hidden="true">⚡</span></Tooltip>}
+        {isFast && <Tooltip content={speedLabel} asChild><span className="model-settings-speed-indicator" aria-hidden="true"><ServiceTierIcon tier={effectiveServiceTier} /></span></Tooltip>}
         <svg width="10" height="10" viewBox="0 0 12 12" fill="none" className="model-settings-chevron" aria-hidden="true">
           <path d="M3 4.5l3 3 3-3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
         </svg>

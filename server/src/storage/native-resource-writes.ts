@@ -59,9 +59,11 @@ export function executeResourceWrite(db: DB, actor: Actor, command: Command) {
     const input = command.input;
     if (db.get('SELECT id FROM sessions WHERE id=?', [input.sessionId])) deny('CONFLICT');
     const projectId = resolveSessionProject(db, actor, input.projectId);
+    const user = db.get('SELECT default_engine,default_model_id,default_reasoning_effort,default_service_tier FROM users WHERE id=?',[actor.id]);
+    const defaults = input.engine !== null && input.engine === user?.default_engine ? user : undefined;
     db.run(`INSERT INTO sessions(id,title,title_manually_set,created_at,updated_at,project_id,owner_user_id,engine,engine_bound,status,
-      message_revision,context_compaction_count,engine_preferences_revision) VALUES(?,?,?,?,?,?,?,?,?,'idle',0,0,0)`,
-    [input.sessionId, input.title ?? '新对话', Number(input.title !== null), now, now, projectId, actor.id, input.engine ?? 'codex', Number(input.engine !== null)]);
+      message_revision,context_compaction_count,engine_preferences_revision,selected_model_id,selected_reasoning_effort,selected_service_tier) VALUES(?,?,?,?,?,?,?,?,?,'idle',0,0,0,?,?,?)`,
+    [input.sessionId, input.title ?? '新对话', Number(input.title !== null), now, now, projectId, actor.id, input.engine ?? 'codex', Number(input.engine !== null),defaults?.default_model_id??null,defaults?.default_reasoning_effort??null,defaults?.default_service_tier??null]);
     return { sessionId: input.sessionId, projectId };
   }
   const kind = command.name === 'project.update' ? 'project' : 'session';

@@ -79,8 +79,8 @@ export function setDefaultEngine(engine: EngineId): Promise<UserResponseDto> {
   return requestJson('/api/auth/default-engine', { analytics:{feature:'settings',action:'save',surface:'settings',settingKey:'default_engine'},method: 'PATCH', ...jsonBody({ engine }) });
 }
 
-export function setDefaultModel(modelId: string | null): Promise<UserResponseDto> {
-  return requestJson('/api/auth/default-model', { analytics:{feature:'settings',action:'save',surface:'settings',settingKey:'default_model'},method: 'PATCH', ...jsonBody({ modelId }) });
+export function setDefaultModel(modelId: string | null, preferences?: { reasoningEffort?: string | null; serviceTier?: string | null }): Promise<UserResponseDto> {
+  return requestJson('/api/auth/default-model', { analytics:{feature:'settings',action:'save',surface:'settings',settingKey:'default_model'},method: 'PATCH', ...jsonBody({ modelId, ...preferences }) });
 }
 
 export function resetUserPassword(userId: string, currentPassword: string, newPassword: string): Promise<OkDto> {

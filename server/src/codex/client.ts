@@ -22,6 +22,10 @@ import {
 } from './client-agent-messages.js';
 import { buildThreadOpenRequest, isArchivedThreadError, isNotificationForActiveThread } from './client-thread.js';
 import {
+  retireTurn,
+  extractAsyncAgentMessageNotification,
+  isStaleTurnNotification,
+  itemLeavesNonRetryableTrace,
   extractPlanUpdate,
   presentWarningNotification,
   presentModelReroutedNotice,
@@ -157,6 +161,7 @@ interface CodexSession extends AgentMessageState {
   resolveTurnReady: ((turnId: string) => void) | null;
   rejectTurnReady: ((error: Error) => void) | null;
   interruptedTurnIds: Set<string>;
+  retiredTurnIds: Set<string>;
   recoveryPending: boolean;
   recoveryReadyPromise: Promise<void> | null;
   resolveRecoveryReady: (() => void) | null;
@@ -325,6 +330,7 @@ export function createCodexConnection(
     resolveTurnReady: null,
     rejectTurnReady: null,
     interruptedTurnIds: new Set(),
+    retiredTurnIds: new Set(),
     recoveryPending: shouldRecoverTurn,
     recoveryReadyPromise,
     resolveRecoveryReady,
@@ -681,6 +687,7 @@ function resetTurnState(
   session: CodexSession,
   options: { preserveCompletionRetry?: boolean } = {},
 ): void {
+  retireTurn(session.retiredTurnIds, session.currentTurnId);
   session.turnStartGeneration += 1;
   session.retryNoticeCount = 0;
   session.currentTurnId = null;
@@ -828,24 +835,6 @@ function scheduleCompletionOverloadRetry(
     resetTurnState(session);
   });
   return true;
-}
-
-const NON_RETRYABLE_TRACE_ITEM_TYPES = new Set([
-  'commandExecution',
-  'fileChange',
-  'collabAgentToolCall',
-  'subAgentActivity',
-  'webSearch',
-  'imageGeneration',
-  'imageView',
-  'mcpToolCall',
-  'dynamicToolCall',
-]);
-
-function itemLeavesNonRetryableTrace(item: any): boolean {
-  if (!item || typeof item !== 'object') return false;
-  if (NON_RETRYABLE_TRACE_ITEM_TYPES.has(item.type)) return true;
-  return item.type === 'agentMessage' && typeof item.text === 'string' && item.text.length > 0;
 }
 
 function startTurnAttempt(
@@ -1033,6 +1022,14 @@ function handleNotification(session: CodexSession, notification: { method: strin
   // app-server 会在同一连接上广播子代理线程事件。除跨线程 request ID
   // 解析外，只允许当前 Relay 会话绑定的根线程更新回复缓冲区和任务生命周期。
   if (method !== 'serverRequest/resolved' && !isNotificationForActiveThread(session.threadId, params.threadId)) {
+    return;
+  }
+
+  // Out-of-band messages never rebuild the active turn's message buffers.
+  const asyncMessage = extractAsyncAgentMessageNotification(method, params);
+  if (asyncMessage) { session.frontendCallback(asyncMessage); return; }
+  if (isStaleTurnNotification(method, params, session.currentTurnId, session.retiredTurnIds)) {
+    if (method === 'turn/completed') session.interruptedTurnIds.delete(extractTurnId(params)!);
     return;
   }
 

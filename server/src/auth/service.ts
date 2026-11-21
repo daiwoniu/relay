@@ -18,7 +18,7 @@ export interface AuthRepository {
   createMemberWithDefaultProject?(input: { username: string; passwordHash: string; displayName?: string | null; workspacePath: string; canCreateProject?: boolean; projectIds?: string[] }): { user: User };
   setUserDefaultProject?(userId: string, projectId: string): unknown;
   setUserDefaultEngine?(userId: string, engine: EngineId): unknown;
-  setUserDefaultModel?(userId: string, modelId: string | null): unknown;
+  setUserDefaultModel?(userId: string, modelId: string | null, preferences?: { reasoningEffort?: string | null; serviceTier?: string | null }): unknown;
   setUserDisabled?(userId: string, disabledAt: number | null): User;
   setUserCanCreateProject?(userId: string, allowed: boolean): User;
   createAuthSession(session: AuthSession): void;
@@ -202,12 +202,13 @@ export function setOwnDefaultModel(
   expectedEngine: EngineId,
   modelId: string | null,
   repository: AuthRepository = databaseRepository,
+  preferences?: { reasoningEffort?: string | null; serviceTier?: string | null },
 ): SetDefaultModelResult {
   const current = repository.getUserById(userId);
   if (!current) return { ok: false, reason: 'user_not_found' };
   if ((current.default_engine ?? 'codex') !== expectedEngine) return { ok: false, reason: 'engine_changed' };
   if (!repository.setUserDefaultModel) return { ok: false, reason: 'unsupported' };
-  repository.setUserDefaultModel(userId, modelId);
+  repository.setUserDefaultModel(userId, modelId, preferences);
   const updated = repository.getUserById(userId);
   return updated ? { ok: true, user: presentPublicUser(updated) } : { ok: false, reason: 'user_not_found' };
 }

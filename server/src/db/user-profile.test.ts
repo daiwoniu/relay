@@ -22,6 +22,7 @@ test('旧 users 表补齐账号资料列且保留现有用户', async () => {
     `);
     assert.deepEqual(ensureUserProfileColumns(db), [
       'display_name', 'avatar_mime', 'avatar_data', 'avatar_updated_at', 'default_engine', 'default_model_id',
+      'default_reasoning_effort', 'default_service_tier',
     ]);
     assert.deepEqual(ensureUserProfileColumns(db), []);
     const row = db.get("SELECT username, display_name, avatar_mime, avatar_updated_at, default_engine, default_model_id FROM users WHERE id = 'u1'");

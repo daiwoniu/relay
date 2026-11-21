@@ -516,6 +516,8 @@ export interface PublicUserDto {
   defaultProjectId: string | null;
   defaultEngine: 'codex' | 'codebuddy' | 'opencode' | 'zcode';
   defaultModelId: string | null;
+  defaultReasoningEffort?: string | null;
+  defaultServiceTier?: string | null;
   mustChangePassword: boolean;
   disabledAt: number | null;
   canCreateProject?: boolean;

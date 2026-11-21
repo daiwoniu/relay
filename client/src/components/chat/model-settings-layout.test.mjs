@@ -32,7 +32,10 @@ test('composer model trigger is strictly one line and truncates', async () => {
 
 test('model selector and reasoning slider expose concrete defaults', async () => {
   const [panel, styles] = await Promise.all([read('./ModelSettingsPanel.tsx'), read('../../styles/message-ui.css')]);
-  assert.match(panel, /⚡ 快速/);
+  assert.match(panel, /serviceTierChoices\.map/);
+  assert.match(panel, /selectedServiceTier === tier\.id/);
+  assert.match(styles, /\.model-settings-speed-options \{[^}]*flex-wrap:wrap/);
+  assert.match(styles, /\.model-settings-speed-options button \{[^}]*white-space:nowrap/);
   assert.match(panel, /aria-label="模型选择"/);
   assert.match(panel, /type="range"/);
   assert.match(panel, /model-settings-reasoning-dots/);

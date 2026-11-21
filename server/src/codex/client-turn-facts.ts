@@ -1,4 +1,38 @@
 import type { RelayWSMessage } from './protocol.js';
+import { isAsyncAgentMessage } from './async-questions.js';
+
+const NON_RETRYABLE_TRACE_ITEM_TYPES = new Set([
+  'commandExecution', 'fileChange', 'collabAgentToolCall', 'subAgentActivity',
+  'webSearch', 'imageGeneration', 'imageView', 'mcpToolCall', 'dynamicToolCall',
+]);
+
+export function itemLeavesNonRetryableTrace(item: any): boolean {
+  if (!item || typeof item !== 'object') return false;
+  if (NON_RETRYABLE_TRACE_ITEM_TYPES.has(item.type)) return true;
+  return item.type === 'agentMessage' && typeof item.text === 'string' && item.text.length > 0;
+}
+
+export function retireTurn(retired: Set<string>, turnId: string | null): void {
+  if (!turnId) return;
+  retired.add(turnId);
+  if (retired.size > 128) retired.delete(retired.values().next().value!);
+}
+
+export function extractAsyncAgentMessageNotification(method: string, params: any): RelayWSMessage | null {
+  if ((method !== 'item/started' && method !== 'item/completed')
+    || !isAsyncAgentMessage(params.item)) return null;
+  return method === 'item/started' ? { type: 'item_start', item: params.item }
+    : { type: 'item_complete', item: params.item, threadId: params.threadId, turnId: params.turnId };
+}
+
+export function isStaleTurnNotification(method: string, params: any, currentTurnId: string | null, retired: Set<string>): boolean {
+  const turnId = extractTurnId(params);
+  const mutatesTurn = method === 'turn/started' || method === 'turn/completed'
+    || method === 'item/started' || method === 'item/completed'
+    || method === 'item/agentMessage/delta' || method === 'model/rerouted'
+    || method === 'thread/tokenUsage/updated' || method === 'thread/compacted';
+  return Boolean(mutatesTurn && turnId && (retired.has(turnId) || (currentTurnId && currentTurnId !== turnId)));
+}
 
 export function extractPlanUpdate(params: any, currentTurnId: string | null, threadId: string | null): RelayWSMessage | null {
   const turnId = params.turnId;

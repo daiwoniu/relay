@@ -6,8 +6,8 @@ import {
   formatReasoningEffortLabel,
   getModelPreferenceLabel,
   reconcileReasoningEffort,
-  getFastServiceTier,
-  isFastServiceTier,
+  getServiceTierChoices,
+  isAcceleratedServiceTier,
   reconcileServiceTier,
 } from './model-settings-presentation.ts';
 
@@ -47,14 +47,25 @@ test('reasoning effort labels show canonical Chinese with the engine value', () 
 
 test('速度仅随声明 Fast 档位的模型显示，换到普通模型会回退', () => {
   const fastModel = { ...models[0], serviceTiers: [{ id: 'priority', label: 'Fast' }] };
-  assert.equal(getFastServiceTier(fastModel)?.id, 'priority');
-  assert.equal(getFastServiceTier({ ...fastModel, defaultServiceTier: 'fast', serviceTiers: [
-    { id: 'priority', label: 'Priority' }, { id: 'fast', label: 'Fast' },
-  ] })?.id, 'fast');
-  assert.equal(isFastServiceTier(fastModel, 'priority'), true);
-  assert.equal(isFastServiceTier(fastModel, 'default'), false);
-  assert.equal(getFastServiceTier(models[1]), null);
+  assert.deepEqual(getServiceTierChoices(fastModel), [{ id: 'default', label: '标准（default）' }, { id: 'priority', label: '快速（priority）' }]);
+  assert.equal(isAcceleratedServiceTier(fastModel, 'priority'), true);
+  assert.equal(isAcceleratedServiceTier(fastModel, 'default'), false);
+  assert.deepEqual(getServiceTierChoices(models[1]), []);
   assert.deepEqual(reconcileServiceTier(fastModel, 'priority'), { value: 'priority', changed: false });
   assert.deepEqual(reconcileServiceTier(models[1], 'priority'), { value: null, changed: true });
   assert.deepEqual(reconcileServiceTier(models[1], null), { value: null, changed: false });
+});
+
+test('Ultrafast 与后续目录档位可显示和保留，切换到不支持的模型才清空', () => {
+  const sol = { ...models[0], defaultServiceTier: 'ultrafast', serviceTiers: [
+    { id: 'priority', label: 'Fast' }, { id: 'ultrafast', label: 'Ultrafast' }, { id: 'future', label: 'Future tier' },
+  ] };
+  assert.deepEqual(getServiceTierChoices(sol), [
+    { id: 'default', label: '标准（default）' }, { id: 'priority', label: '快速（priority）' },
+    { id: 'ultrafast', label: '极速（ultrafast）' }, { id: 'future', label: 'Future tier（future）' },
+  ]);
+  assert.equal(isAcceleratedServiceTier(sol, 'ultrafast'), true);
+  assert.deepEqual(reconcileServiceTier(sol, 'ultrafast'), { value: 'ultrafast', changed: false });
+  assert.deepEqual(reconcileServiceTier({ ...sol, serviceTiers: [{ id: 'priority', label: 'Fast' }] }, 'ultrafast'), { value: null, changed: true });
+  assert.deepEqual(reconcileServiceTier(sol, 'unknown'), { value: null, changed: true });
 });

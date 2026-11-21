@@ -1,8 +1,11 @@
 import FailureNotice from '../ui/FailureNotice';
+import { useId } from 'react';
 import type { EngineId, EngineModelDto } from '../../generated/relay-contracts';
-import { buildModelChoices, formatContextWindow, formatReasoningEffortLabel, getFastServiceTier, isFastServiceTier } from './model-settings-presentation';
+import { buildModelChoices, formatContextWindow, formatReasoningEffortLabel, getServiceTierChoices } from './model-settings-presentation';
+import ServiceTierIcon from './ServiceTierIcon';
 
 interface Props {
+  embedded?: boolean;
   models: EngineModelDto[];
   modelId: string | null;
   reasoningEffort: string | null;
@@ -30,14 +33,15 @@ function getReasoningTone(id: string | null): string {
   return 'default';
 }
 
-export default function ModelSettingsPanel({ models, modelId, reasoningEffort, serviceTier, applyDisabled, submitting, notice, error, engineId, onModelChange, onReasoningChange, onServiceTierChange, onCancel, onApply }: Props) {
+export default function ModelSettingsPanel({ embedded = false, models, modelId, reasoningEffort, serviceTier, applyDisabled, submitting, notice, error, engineId, onModelChange, onReasoningChange, onServiceTierChange, onCancel, onApply }: Props) {
+  const modelSelectId = useId();
   const isAutomaticModel = modelId === null;
   const selectedModel = models.find((model) => model.id === modelId)
-    ?? models.find((model) => model.isDefault);
+    ?? (isAutomaticModel ? models.find((model) => model.isDefault) : undefined);
   const reasoningOptions = selectedModel?.reasoning.supported ? selectedModel.reasoning.options : [];
   const defaultReasoningId = selectedModel?.reasoning.defaultOptionId;
-  const fastTier = getFastServiceTier(selectedModel);
-  const fastSelected = Boolean(fastTier && isFastServiceTier(selectedModel, serviceTier ?? selectedModel?.defaultServiceTier ?? null));
+  const serviceTierChoices = getServiceTierChoices(selectedModel);
+  const selectedServiceTier = serviceTier ?? selectedModel?.defaultServiceTier ?? 'default';
   const knownDefaultReasoningIndex = reasoningOptions.findIndex((option) => option.id === defaultReasoningId);
   const reasoningSteps: Array<{ id: string | null; label: string }> = [
     ...(knownDefaultReasoningIndex >= 0 ? [] : [{ id: null, label: '模型默认' }]),
@@ -58,16 +62,17 @@ export default function ModelSettingsPanel({ models, modelId, reasoningEffort, s
   };
 
   return (
-    <div className="model-settings-panel">
-      <div className="model-settings-header sticky top-0">
+    <div className={`model-settings-panel${embedded ? ' model-settings-panel--embedded' : ''}`}>
+      {!embedded && <div className="model-settings-header sticky top-0">
         <div><div className="font-medium">模型设置</div><small>可先调整，待会话空闲后应用，不影响之前的回复。</small></div>
         <button type="button" onClick={onCancel} aria-label="关闭模型设置">×</button>
-      </div>
+      </div>}
 
       <div className="model-settings-body overflow-y-auto">
         <div className="model-settings-field">
-          <label htmlFor="model-settings-model"><b>模型选择</b></label>
-          <select id="model-settings-model" aria-label="模型选择" value={modelId ?? ''} onChange={(event) => onModelChange(event.target.value || null)}>
+          <label htmlFor={modelSelectId}><b>模型选择</b></label>
+          <select id={modelSelectId} aria-label="模型选择" value={modelId ?? ''} onChange={(event) => onModelChange(event.target.value || null)}>
+            {modelId && !models.some(model => model.id === modelId) && <option value={modelId} disabled>不可用 · {modelId}</option>}
             {buildModelChoices(models).map((choice) => (
               <option key={choice.id ?? 'default'} value={choice.id ?? ''}>
                 {choice.label}{choice.id !== null && choice.isDefault ? '（默认）' : ''}
@@ -127,11 +132,12 @@ export default function ModelSettingsPanel({ models, modelId, reasoningEffort, s
             </div>
           </> : <small>当前模型不提供推理强度选项</small>}
         </div>
-        {fastTier && <div className="model-settings-speed">
+        {serviceTierChoices.length > 0 && <div className="model-settings-speed">
           <div className="model-settings-speed-heading"><b>速度</b><span>快速模式会增加用量</span></div>
           <div className="model-settings-speed-options" role="group" aria-label="速度">
-            <button type="button" aria-pressed={!fastSelected} onClick={() => onServiceTierChange('default')}>标准</button>
-            <button type="button" aria-pressed={fastSelected} onClick={() => onServiceTierChange(fastTier.id)}>⚡ 快速</button>
+            {serviceTierChoices.map((tier) => <button key={tier.id} type="button" aria-pressed={selectedServiceTier === tier.id} onClick={() => onServiceTierChange(tier.id)}>
+              <ServiceTierIcon tier={tier.id} />{tier.id !== 'default' ? ' ' : ''}{tier.label}
+            </button>)}
           </div>
         </div>}
         {notice && <small role="status">{notice}</small>}

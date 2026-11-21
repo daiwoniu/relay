@@ -3,6 +3,7 @@ import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
+import { runCommand } from './lib/command.mjs';
 import {
   createCodexInstallationCache,
   inspectCodexInstallation,
@@ -160,4 +161,36 @@ test('Codex 健康检查拒绝 sandbox 失败、缺失诊断、损坏 JSON 和�
 
 test('非 Windows 平台跳过原生 Windows sandbox 健康检查', async () => {
   assert.deepEqual(await inspectCodexSandboxHealth({ platform: 'linux' }), { ok: true, skipped: true, reason: null });
+});
+
+test('doctor 失败区分执行、超时、空输出和非法 JSON，摘要不复制敏感输出', async () => {
+  const cases = [
+    [{ status: null, timedOut: true, error: new Error('secret-provider'), stdout: '' }, /执行超时/],
+    [{ status: null, error: Object.assign(new Error('secret-provider'), { code: 'ENOENT' }) }, /执行失败/],
+    [{ status: 0, stdout: '' }, /输出为空/],
+    [{ status: 2, stdout: '', stderr: 'secret-token' }, /执行失败且无 JSON 输出/],
+    [{ status: 2, stdout: '{secret-token' }, /JSON 无法解析/],
+  ];
+  for (const [doctor, expected] of cases) {
+    let calls = 0;
+    const result = await inspectCodexSandboxHealth({ platform: 'win32', now: () => 100,
+      runCommand: async () => { calls++; return doctor; } });
+    assert.equal(result.ok, false);
+    assert.equal(calls, 1);
+    assert.match(result.reason, expected);
+    assert.match(result.reason, /exit=.+durationMs=0, stdoutBytes=\d+, stderrBytes=\d+, error=/);
+    assert.doesNotMatch(result.reason, /secret/);
+  }
+});
+
+test('命令超时标识沿真实执行包装传递给 doctor 诊断', async () => {
+  const child = new EventEmitter();
+  child.kill = () => { queueMicrotask(() => child.emit('close', null, 'SIGTERM')); return true; };
+  const hold = setInterval(() => {}, 1_000);
+  try {
+    const result = await inspectCodexSandboxHealth({ platform: 'win32',
+      runCommand: (command, args) => runCommand(command, args, { platform: 'linux', spawnFn: () => child, timeoutMs: 5 }) });
+    assert.equal(result.ok, false);
+    assert.match(result.reason, /doctor 执行超时/);
+  } finally { clearInterval(hold); }
 });

@@ -54,10 +54,11 @@ function mapModel(entry: any, configuredReasoningEffort?: string, configuredServ
       ? [{ id: tier.id.trim(), label: typeof tier.name === 'string' && tier.name.trim() ? tier.name.trim() : tier.id.trim() }]
       : [])
     : [];
-  const configuredDefaultServiceTier = configuredServiceTier === 'fast' || configuredServiceTier === 'priority'
-    ? (serviceTiers.find((tier: { id: string }) => tier.id === configuredServiceTier)
-      ?? serviceTiers.find((tier: { id: string }) => tier.id === 'priority' || tier.id === 'fast'))?.id
-    : configuredServiceTier === 'default' ? 'default' : undefined;
+  const configuredDefaultServiceTier = configuredServiceTier === 'default' ? 'default'
+    : serviceTiers.find((tier: { id: string }) => tier.id === configuredServiceTier)?.id
+      ?? ((configuredServiceTier === 'fast' || configuredServiceTier === 'priority')
+        ? serviceTiers.find((tier: { id: string }) => tier.id === 'priority' || tier.id === 'fast')?.id
+        : undefined);
   const defaultServiceTier = configuredDefaultServiceTier
     || (typeof entry.defaultServiceTier === 'string' ? entry.defaultServiceTier.trim() : '');
   return {

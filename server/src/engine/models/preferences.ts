@@ -1,6 +1,14 @@
 import type { EngineModelCatalog } from './types.js';
 import { isSessionInProgress } from '../../services/session-runtime-status.js';
 
+export type ModelPreferences = { modelId: string | null; reasoningEffort: string | null; serviceTier: string | null };
+export function resolveModelPreferenceChange(current: ModelPreferences, next: { modelId: string | null; reasoningEffort?: string | null; serviceTier?: string | null }): ModelPreferences {
+  const sameModel = current.modelId === next.modelId;
+  return { modelId: next.modelId,
+    reasoningEffort: next.reasoningEffort === undefined ? sameModel ? current.reasoningEffort : null : next.reasoningEffort,
+    serviceTier: next.serviceTier === undefined ? sameModel ? current.serviceTier : null : next.serviceTier };
+}
+
 export function isEnginePreferencesLockedStatus(status: string): boolean {
   return isSessionInProgress(status);
 }

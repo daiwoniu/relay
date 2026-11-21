@@ -1226,6 +1226,65 @@ test('子线程完成事件不会生成主线程回复或清空主线程状态',
   assert.deepEqual(events.filter((event) => event.type === 'message_complete').map((event) => event.content), ['主任务最终回答']);
 });
 
+for (const interrupted of [false, true]) test(`旧回合迟到事件不污染下一回合（${interrupted ? '中断' : '完成'}）且保留异步问题`, async (t) => {
+  const server = new WebSocketServer({ port: 0 });
+  await new Promise<void>((resolve) => server.once('listening', resolve));
+  t.after(() => server.close());
+  const address = server.address();
+  assert(address && typeof address === 'object');
+  let peer: any;
+  let turns = 0;
+  const send = (method: string, params: any) => peer.send(JSON.stringify({ method, params: { threadId: 'root', ...params } }));
+  const delta = (turnId: string, delta: string) => send('item/agentMessage/delta', { turnId, itemId: turnId, phase: 'final_answer', delta });
+  server.on('connection', (socket) => {
+    peer = socket;
+    socket.on('message', (raw) => {
+      const request = JSON.parse(raw.toString());
+      if (request.method === 'initialized') return;
+      const result = request.method === 'thread/start' ? { thread: { id: 'root' } }
+        : request.method === 'turn/start' ? { turn: { id: `turn-${++turns}` } } : {};
+      socket.send(JSON.stringify({ id: request.id, result }));
+      if (request.method === 'turn/start') send('turn/started', { turn: { id: `turn-${turns}` } });
+    });
+  });
+  const events: any[] = [];
+  const connection = createCodexConnection((event) => events.push(event), { wsUrl: `ws://127.0.0.1:${address.port}` });
+  t.after(() => connection.close());
+  connection.send('first');
+  await waitFor(() => events.some((event) => event.type === 'turn_start' && event.turnId === 'turn-1'));
+  if (interrupted) await connection.interrupt();
+  else {
+    delta('turn-1', 'FIRST');
+    send('turn/completed', { turn: { id: 'turn-1', status: 'completed' } });
+    await waitFor(() => events.some((event) => event.type === 'message_complete'));
+  }
+  // Old started/delta/completed events also arrive while the next RPC has not
+  // yet established its turn id, and must not revive the retired turn.
+  send('turn/started', { turn: { id: 'turn-1' } });
+  delta('turn-1', 'STALE-IDLE');
+  send('turn/completed', { turn: { id: 'turn-1', status: 'completed' } });
+  connection.send('second');
+  await waitFor(() => events.some((event) => event.type === 'turn_start' && event.turnId === 'turn-2'));
+  delta('turn-2', 'SECOND-BEGIN');
+  await waitFor(() => events.some((event) => event.type === 'delta' && event.content === 'SECOND-BEGIN'));
+  send('turn/started', { turn: { id: 'turn-1' } });
+  delta('turn-1', 'STALE');
+  send('item/completed', { turnId: 'turn-1', item: { id: 'old', type: 'agentMessage', phase: 'final_answer', text: 'STALE-COMPLETE' } });
+  send('turn/completed', { turn: { id: 'turn-1', status: interrupted ? 'interrupted' : 'completed' } });
+  send('item/completed', { turnId: 'turn-1', item: { id: 'question', type: 'agentMessage', delivery: 'async', text: 'QUESTION-TEXT', questions: [{ title: 'Continue?' }] } });
+  send('serverRequest/resolved', { threadId: 'child', requestId: 42 });
+  delta('turn-2', '-END');
+  send('turn/completed', { turn: { id: 'turn-2', status: 'completed' } });
+  await waitFor(() => events.some((event) => event.type === 'message_complete' && event.turnId === 'turn-2'));
+  assert.equal(events.find((event) => event.type === 'message_complete' && event.turnId === 'turn-2').content, 'SECOND-BEGIN-END');
+  assert.deepEqual(events.filter((event) => event.type === 'delta').map((event) => event.content), interrupted ? ['SECOND-BEGIN', '-END'] : ['FIRST', 'SECOND-BEGIN', '-END']);
+  assert.equal(events.filter((event) => event.type === 'turn_start').length, 2);
+  assert.equal(events.filter((event) => event.type === 'turn_complete').length, interrupted ? 1 : 2);
+  assert(events.some((event) => event.type === 'item_complete' && event.item.id === 'question'));
+  assert(events.some((event) => event.type === 'server_request_resolved' && event.requestId === 42));
+  assert(!events.some((event) => event.type === 'error'));
+});
+
 test('计划通知只接收当前根回合并使用稳定 ID 更新，结束后忽略迟到通知', async (t) => {
   const server = new WebSocketServer({ port: 0 });
   await new Promise<void>((resolve) => server.once('listening', resolve));

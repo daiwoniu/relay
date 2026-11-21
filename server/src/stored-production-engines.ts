@@ -12,11 +12,12 @@ import { openCodeProcessManager } from './opencode/process-manager.js';
 import { inspectOpenCodeInstallation } from './opencode/installation.js';
 import { readNpmGlobalInstalledAt } from './system/npm-install-time.js';
 import { listCodexModels } from './codex/model-catalog.js';
+import { readCodexRunningVersion } from './codex/running-version.js';
 import type { EngineId } from './contracts/index.js';
 
 /** Real provider adapters without the legacy default-system singleton or startup side effects. */
 export function createStoredProductionEngines(options:{root:string;withCodexReady:<T>(work:()=>Promise<T>)=>Promise<T>;
-  statusOptions?:EngineStatusServiceOptions;codexModelReader?:typeof listCodexModels;
+  statusOptions?:EngineStatusServiceOptions;codexModelReader?:typeof listCodexModels;codexRunningVersionReader?:()=>Promise<string|null>;
 }){
   const status=createEngineStatusService({...options.statusOptions,root:options.root});
   const engines=createDefaultEngineSystem({codex:{inspectLocalHealth:()=>status.inspectCodexLocalHealth(),
@@ -25,15 +26,23 @@ export function createStoredProductionEngines(options:{root:string;withCodexRead
     opencode:{getAvailability:()=>status.getOpenCodeAvailability(),inspectLocalHealth:()=>status.inspectOpenCodeLocalHealth()},
     zcode:{getAvailability:()=>status.getZcodeAvailability(),inspectLocalHealth:()=>status.inspectZcodeLocalHealth()}});
   const unsubscribe=status.subscribeAvailabilityChanges(engine=>engines.modelCatalog.invalidate(engine));
-  let runningCodexVersion=process.env.RELAY_CODEX_RUNNING_VERSION??null;
+  let runningCodexVersion:Promise<string|null>|null=null;
+  const readRunningVersion=async()=>{
+    if(!(await status.getSnapshot()).engines.find(engine=>engine.id==='codex')?.processReady){runningCodexVersion=null;return null;}
+    // Share one passive handshake across concurrent panel reads. Maintenance or
+    // an observed stopped process invalidates it; installed CLI version is unrelated.
+    const reading=runningCodexVersion??=Promise.resolve().then(()=> (options.codexRunningVersionReader??readCodexRunningVersion)()).catch(()=>null);
+    const version=await reading;
+    return reading===runningCodexVersion?version:null;
+  };
   const readiness=async(id:'codex'|'codebuddy')=>{
     const engine=(await status.getSnapshot()).engines.find(value=>value.id===id);
     return{readiness:engine?.available?'ready' as const:engine?.availabilityStage==='readiness_stale'?'stale' as const:'failed' as const,
-      checkedAt:engine?.available?Date.now():null,availabilityStage:engine?.availabilityStage,message:engine?.message};
+      checkedAt:engine?.available?Date.now():null,processReady:engine?.processReady===true,availabilityStage:engine?.availabilityStage,message:engine?.message};
   };
   const adapters=[
-    new CodexMaintenanceAdapter({getVersionSnapshot:codexVersionService.getReadySnapshot,checkLatestVersion:codexVersionService.checkLatest,
-      readRunningVersion:async()=> (await status.getSnapshot()).engines.find(engine=>engine.id==='codex')?.processReady?runningCodexVersion:null,
+    new CodexMaintenanceAdapter({getVersionSnapshot:codexVersionService.getReadySnapshot,checkLatestVersion:()=>{runningCodexVersion=null;return codexVersionService.checkLatest();},
+      readRunningVersion,
       readActiveTaskCount:()=>0,readInstallSource:()=>status.getInstallSource('codex'),readInstalledAt:()=>readNpmGlobalInstalledAt('@openai/codex'),readReadiness:()=>readiness('codex')}),
     new CodeBuddyMaintenanceAdapter({getVersionSnapshot:codeBuddyVersionService.getSnapshot,checkLatestVersion:codeBuddyVersionService.checkLatest,
       readInstallSource:()=>status.getInstallSource('codebuddy'),readInstalledAt:()=>readNpmGlobalInstalledAt('@tencent-ai/codebuddy-code'),
@@ -56,7 +65,7 @@ export function createStoredProductionEngines(options:{root:string;withCodexRead
     models:{getAvailability:availability,getCatalog:(engineId:EngineId,settings:{refresh:boolean})=>engines.modelCatalog.get(engineId,settings)},
     onTerminal:({engineId}:{engineId:EngineId})=>{
       engines.modelCatalog.invalidate(engineId);
-      if(engineId==='codex'){codexVersionService.refreshCurrentVersion();runningCodexVersion=codexVersionService.getSnapshot().currentVersion;}
+      if(engineId==='codex'){runningCodexVersion=null;codexVersionService.refreshCurrentVersion();}
       if(engineId==='codebuddy')codeBuddyVersionService.refreshInstalled();
-    },close:()=>{unsubscribe();}};
+    },close:()=>{runningCodexVersion=null;unsubscribe();}};
 }

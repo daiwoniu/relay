@@ -31,12 +31,12 @@ test('新对话设置使用默认项目、联动引擎与模型选择', () => {
   assert.match(component, /<SessionEngineBadge engine=\{id\} size="panel"/);
   assert.match(component, /不可用时会临时使用其他可用引擎，不会修改这里的选择/);
   assert.match(component, /setDefaultEngine\(engine\)/);
-  assert.match(component, /aria-label="默认模型"/);
   assert.match(component, /loadModels\(user\.defaultEngine, \{ refresh: true \}\)/);
-  assert.match(component, /setDefaultModel\(event\.target\.value \|\| null\)/);
-  assert.match(component, /buildModelChoices\(defaultModelCatalog\?\.catalog\?\.models \?\? \[\]\)/);
-  assert.match(component, /htmlFor="account-default-model"/);
-  assert.match(component, /disabled=\{defaultPending \|\| defaultModelCatalogUnavailable\}/);
+  assert.match(component, /<AccountModelSettings/);
+  assert.match(component, /key=\{`\$\{user.id\}:\$\{user.defaultEngine\}`\}/);
+  assert.match(component, /setDefaultModel\(preferences.modelId, preferences\)/);
+  assert.match(component, /unavailable=\{defaultModelCatalogUnavailable\}/);
+  assert.doesNotMatch(component, /account-default-reasoning|account-default-speed/);
   assert.match(component, /defaultModelCatalog\?\.error/);
 });
 

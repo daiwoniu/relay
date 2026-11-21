@@ -159,7 +159,7 @@ export interface CoreCommandInputs {
   'account.setDisplayName': { displayName: string | null };
   'account.setAvatar': { mime: import('../auth/avatar.js').AvatarMimeType | null; data: string | null };
   'account.setDefaultEngine': { engine: EngineId };
-  'account.setDefaultModel': { expectedEngine: EngineId; modelId: string | null };
+  'account.setDefaultModel': { expectedEngine: EngineId; modelId: string | null; reasoningEffort?: string | null; serviceTier?: string | null };
   'account.setNotifications':{changes:Partial<import('../contracts/index.js').NotificationPreferencesDto>};
   'account.setPreviewPreferences':{changes:Partial<import('../contracts/preview-preferences.js').PreviewPreferences>};
   'account.setTheme':{settings:import('../contracts/index.js').AccountThemeSettingsDto|import('../contracts/index.js').ThemeSettingsV1};

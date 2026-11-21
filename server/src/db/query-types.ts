@@ -175,6 +175,8 @@ export interface User {
   default_project_id?: string | null;
   default_engine?: EngineId;
   default_model_id?: string | null;
+  default_reasoning_effort?: string | null;
+  default_service_tier?: string | null;
   must_change_password?: number;
   disabled_at?: number | null;
   can_create_project?: number;

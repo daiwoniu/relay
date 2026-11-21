@@ -98,20 +98,32 @@ export async function inspectCodexSandboxHealth(options = {}) {
   const env = options.env || process.env;
   const cwd = options.cwd || process.cwd();
   const run = options.runCommand || runCommand;
+  const now = options.now || Date.now;
+  const startedAt = now();
   const doctor = await run('codex', ['doctor', '--json', '--summary'], { env, cwd, timeoutMs: 30_000 });
+  // Do not copy raw doctor output/errors: they can contain auth and provider data.
+  const code = ['ENOENT', 'EACCES', 'EPERM', 'EINVAL', 'E2BIG', 'ENOMEM', 'ENOBUFS', 'ETIMEDOUT', 'ABORT_ERR'].includes(doctor.error?.code)
+    ? doctor.error.code : doctor.error ? 'UNCLASSIFIED' : 'none';
+  const summary = `exit=${Number.isInteger(doctor.status) ? doctor.status : 'unknown'}, durationMs=${Math.max(0, now() - startedAt)}, stdoutBytes=${Buffer.byteLength(String(doctor.stdout || ''))}, stderrBytes=${Buffer.byteLength(String(doctor.stderr || ''))}, error=${code}`;
+  const failed = (reason) => ({ ok: false, skipped: false, reason: `${reason}（${summary}）` });
+  if (doctor.timedOut) return failed('Codex doctor 执行超时，无法验证 Windows sandbox');
+  if (doctor.error || doctor.signal) return failed('Codex doctor 执行失败，无法验证 Windows sandbox');
+  if (!String(doctor.stdout || '').trim()) return failed(doctor.status === 0
+    ? 'Codex doctor 输出为空，无法验证 Windows sandbox'
+    : 'Codex doctor 执行失败且无 JSON 输出，无法验证 Windows sandbox');
   let report;
   try {
     report = JSON.parse(String(doctor.stdout || ''));
   } catch {
-    return { ok: false, skipped: false, reason: 'Codex doctor JSON 无法解析，无法验证 Windows sandbox' };
+    return failed('Codex doctor JSON 无法解析，无法验证 Windows sandbox');
   }
   const sandboxChecks = Object.values(report?.checks || {}).filter((check) => check?.category === 'sandbox');
   if (sandboxChecks.length === 0) {
-    return { ok: false, skipped: false, reason: 'Codex doctor 未返回 sandbox 诊断，无法确认升级后环境' };
+    return failed('Codex doctor 未返回 sandbox 诊断，无法确认升级后环境');
   }
   const unhealthy = sandboxChecks.find((check) => check.status !== 'ok');
   if (unhealthy) {
-    return { ok: false, skipped: false, reason: 'Codex doctor 未确认 Windows sandbox 诊断全部正常' };
+    return failed('Codex doctor 未确认 Windows sandbox 诊断全部正常');
   }
 
   const roots = [cwd, ...(options.workspaceRoots || [])].filter((value, index, values) => {

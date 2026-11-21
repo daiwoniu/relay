@@ -14,6 +14,8 @@ function isAuthUser(value: unknown): value is AuthUser {
     && (user.defaultProjectId === null || typeof user.defaultProjectId === 'string')
     && (user.defaultEngine === 'codex' || user.defaultEngine === 'codebuddy' || user.defaultEngine === 'opencode' || user.defaultEngine === 'zcode')
     && (user.defaultModelId === null || typeof user.defaultModelId === 'string')
+    && (user.defaultReasoningEffort === undefined || user.defaultReasoningEffort === null || typeof user.defaultReasoningEffort === 'string')
+    && (user.defaultServiceTier === undefined || user.defaultServiceTier === null || typeof user.defaultServiceTier === 'string')
     && typeof user.mustChangePassword === 'boolean'
     && (user.disabledAt === null || typeof user.disabledAt === 'number');
 }

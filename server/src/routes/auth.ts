@@ -28,7 +28,7 @@ export { loginSchema, profilePatchSchema, changePasswordSchema, changeUsernameSc
 import { resolveRelayRoot } from '../default-project.js';
 import { recordAdminAudit, runAdminAuditedOutcome } from '../db/admin-audit.js';
 import { defaultEngineSystem } from '../engine/default-system.js';
-import { EnginePreferencesValidationError, validateEnginePreferences } from '../engine/models/preferences.js';
+import { EnginePreferencesValidationError, validateEnginePreferences, resolveModelPreferenceChange } from '../engine/models/preferences.js';
 
 const auth = new Hono();
 const clientLimiter = new LoginAttemptLimiter();
@@ -333,10 +333,11 @@ auth.patch('/default-model', async (c) => {
   if (!isAllowedOrigin(c.req.header('origin'))) return c.json(presentApiError('请求来源不受允许', { code: 'ACCOUNT_ORIGIN_FORBIDDEN' }), 403);
   const parsed = defaultModelPatchSchema.safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) return c.json(presentApiError('默认模型格式无效'), 400);
+  const preferences = resolveModelPreferenceChange({ modelId: user.defaultModelId, reasoningEffort: user.defaultReasoningEffort ?? null, serviceTier: user.defaultServiceTier ?? null }, parsed.data);
   try {
-    if (parsed.data.modelId !== null) {
+    if (preferences.modelId !== null || preferences.reasoningEffort !== null || preferences.serviceTier !== null) {
       const catalog = await defaultEngineSystem.modelCatalog.get(user.defaultEngine);
-      validateEnginePreferences(catalog, { modelId: parsed.data.modelId, reasoningEffort: null });
+      validateEnginePreferences(catalog, preferences);
     }
   } catch (error) {
     if (error instanceof EnginePreferencesValidationError) {
@@ -344,7 +345,7 @@ auth.patch('/default-model', async (c) => {
     }
     return c.json(presentApiError('模型目录暂时不可用，无法更新默认模型'), 503);
   }
-  const result = setOwnDefaultModel(user.id, user.defaultEngine, parsed.data.modelId);
+  const result = setOwnDefaultModel(user.id, user.defaultEngine, parsed.data.modelId, undefined, preferences);
   if (!result.ok) {
     if (result.reason === 'user_not_found') return c.json(presentApiError('账号不存在'), 404);
     if (result.reason === 'engine_changed') return c.json(presentApiError('默认引擎已变化，请重新选择模型', { code: 'DEFAULT_ENGINE_CHANGED' }), 409);

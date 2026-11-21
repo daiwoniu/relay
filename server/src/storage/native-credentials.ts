@@ -10,7 +10,7 @@ import { canonicalJson, StorageContractError } from './command-boundary.js';
 import { credentialIdentity, parseCredentialRequest, type CredentialRequest, type CredentialResult, type CredentialReason } from './credential-contracts.js';
 
 type DB = Pick<SQLiteDB, 'get' | 'all' | 'run' | 'exec' | 'saveToFile'>;
-const userColumns = 'id,username,password_hash,role,display_name,avatar_updated_at,default_project_id,default_engine,default_model_id,must_change_password,disabled_at,can_create_project';
+const userColumns = 'id,username,password_hash,role,display_name,avatar_updated_at,default_project_id,default_engine,default_model_id,default_reasoning_effort,default_service_tier,must_change_password,disabled_at,can_create_project';
 class CredentialError extends StorageContractError {
   constructor(code: ConstructorParameters<typeof StorageContractError>[0], readonly reason?: CredentialReason) { super(code); }
 }

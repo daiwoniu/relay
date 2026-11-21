@@ -1,4 +1,5 @@
 import { v4 as uuid } from 'uuid';
+import { resolveModelPreferenceChange } from '../engine/models/preferences.js';
 import type { AccountThemeSettingsDto } from '../contracts/index.js';
 import { createDefaultThemeSettings, projectThemeSettingsV1, readStoredThemeSettings } from '../theme/theme-settings.js';
 import { getDB, type SQLiteDB } from './index.js';
@@ -342,8 +343,11 @@ export function setUserDefaultEngineInDatabase(
   now = Date.now(),
 ): User {
   db.run(
-    'UPDATE users SET default_model_id = CASE WHEN default_engine = ? THEN default_model_id ELSE NULL END, default_engine = ?, updated_at = ? WHERE id = ?',
-    [engine, engine, now, userId],
+    `UPDATE users SET default_model_id = CASE WHEN default_engine = ? THEN default_model_id ELSE NULL END,
+      default_reasoning_effort = CASE WHEN default_engine = ? THEN default_reasoning_effort ELSE NULL END,
+      default_service_tier = CASE WHEN default_engine = ? THEN default_service_tier ELSE NULL END,
+      default_engine = ?, updated_at = ? WHERE id = ?`,
+    [engine, engine, engine, engine, now, userId],
   );
   db.saveToFile();
   const user = db.get('SELECT * FROM users WHERE id = ?', [userId]) as User | undefined;
@@ -360,16 +364,22 @@ export function setUserDefaultModelInDatabase(
   userId: string,
   modelId: string | null,
   now = Date.now(),
+  preferences: { reasoningEffort?: string | null; serviceTier?: string | null } = {},
 ): User {
-  db.run('UPDATE users SET default_model_id = ?, updated_at = ? WHERE id = ?', [modelId, now, userId]);
+  const current = db.get('SELECT * FROM users WHERE id = ?', [userId]) as User | undefined;
+  if (!current) throw new Error('用户不存在');
+  const resolved = resolveModelPreferenceChange({ modelId: current.default_model_id ?? null,
+    reasoningEffort: current.default_reasoning_effort ?? null, serviceTier: current.default_service_tier ?? null }, { modelId, ...preferences });
+  db.run('UPDATE users SET default_model_id = ?, default_reasoning_effort = ?, default_service_tier = ?, updated_at = ? WHERE id = ?',
+    [modelId, resolved.reasoningEffort, resolved.serviceTier, now, userId]);
   db.saveToFile();
   const user = db.get('SELECT * FROM users WHERE id = ?', [userId]) as User | undefined;
   if (!user) throw new Error('用户不存在');
   return user;
 }
 
-export function setUserDefaultModel(userId: string, modelId: string | null): User {
-  return setUserDefaultModelInDatabase(getDB(), userId, modelId);
+export function setUserDefaultModel(userId: string, modelId: string | null, preferences?: { reasoningEffort?: string | null; serviceTier?: string | null }): User {
+  return setUserDefaultModelInDatabase(getDB(), userId, modelId, Date.now(), preferences);
 }
 
 export function createUser(username: string, passwordHash: string, role: UserRole = 'member'): User {

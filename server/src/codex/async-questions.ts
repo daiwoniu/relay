@@ -2,11 +2,17 @@ import type { RuntimeTurnItem } from '../engine/runtime.js';
 
 type Question = { title: string; options?: string[] };
 
-export function toAsyncQuestionItem(input: unknown): RuntimeTurnItem | null {
-  if (!input || typeof input !== 'object') return null;
+/** Delivery classification is shared with buffering; question validation stays below. */
+export function isAsyncAgentMessage(input: unknown): input is Record<string, unknown> {
+  if (!input || typeof input !== 'object') return false;
   const source = input as Record<string, unknown>;
-  if (source.type !== 'agentMessage' || source.delivery !== 'async'
-    || typeof source.id !== 'string' || !source.id) return null;
+  return source.type === 'agentMessage' && source.delivery === 'async';
+}
+
+export function toAsyncQuestionItem(input: unknown): RuntimeTurnItem | null {
+  if (!isAsyncAgentMessage(input)) return null;
+  const source = input;
+  if (typeof source.id !== 'string' || !source.id) return null;
   if (!Array.isArray(source.questions) || source.questions.length === 0) return null;
   const questions: Question[] = [];
   for (const value of source.questions) {

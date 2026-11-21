@@ -11,11 +11,12 @@ test('本轮详情分别展示模型、推理强度和所选速度', () => {
   assert.deepEqual(modelDetailRows(modelInfo), [
     { label: '模型', value: 'GPT Test' },
     { label: '推理强度', value: '高' },
-    { label: '速度', value: '快速' },
+    { label: '速度', value: '快速（priority）' },
   ]);
-  assert.deepEqual(modelDetailRows({ ...modelInfo, serviceTier: 'default' })[2], { label: '速度', value: '标准' });
-  assert.deepEqual(modelDetailRows({ ...modelInfo, serviceTier: null, resolvedServiceTier: 'fast' })[2], { label: '速度', value: '快速' });
-  assert.deepEqual(modelDetailRows({ ...modelInfo, serviceTier: null, resolvedServiceTier: 'default' })[2], { label: '速度', value: '标准' });
+  assert.deepEqual(modelDetailRows({ ...modelInfo, serviceTier: 'default' })[2], { label: '速度', value: '标准（default）' });
+  assert.deepEqual(modelDetailRows({ ...modelInfo, serviceTier: 'ultrafast' })[2], { label: '速度', value: '极速（ultrafast）' });
+  assert.deepEqual(modelDetailRows({ ...modelInfo, serviceTier: null, resolvedServiceTier: 'fast' })[2], { label: '速度', value: '快速（fast）' });
+  assert.deepEqual(modelDetailRows({ ...modelInfo, serviceTier: null, resolvedServiceTier: 'default' })[2], { label: '速度', value: '标准（default）' });
   assert.deepEqual(modelDetailRows({ ...modelInfo, serviceTier: null })[2], { label: '速度', value: '未记录' });
   assert.deepEqual(modelDetailRows({ ...modelInfo, serviceTier: null, resolvedServiceTier: null })[2], { label: '速度', value: '未提供' });
 });

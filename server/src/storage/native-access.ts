@@ -5,7 +5,7 @@ import type { User } from '../db/query-types.js';
 import { presentPublicUser } from '../contracts/index.js';
 import { createApprovalTrustRepository } from '../db/approval-trust.js';
 import { createApprovalTrustService } from '../services/approval-trust.js';
-import { setUserDefaultProjectInDatabase,updateNotificationPreferencesInDatabase } from '../db/queries-account.js';
+import { setUserDefaultProjectInDatabase,updateNotificationPreferencesInDatabase,setUserDefaultEngineInDatabase,setUserDefaultModelInDatabase } from '../db/queries-account.js';
 import { StorageContractError } from './command-boundary.js';
 import type { CoreCommand, CoreCommandName } from './contracts.js';
 import { saveNativeTheme } from './native-theme.js';
@@ -49,7 +49,7 @@ export function authorizeAccess(db: DB, actor: AccessActor, name: Name, scope: A
 }
 function publicUser(db: DB, id: string) {
   const row = db.get(`SELECT id,username,role,display_name,avatar_updated_at,default_project_id,default_engine,
-    default_model_id,must_change_password,disabled_at,can_create_project FROM users WHERE id=?`, [id]);
+    default_model_id,default_reasoning_effort,default_service_tier,must_change_password,disabled_at,can_create_project FROM users WHERE id=?`, [id]);
   if (!row) deny('NOT_FOUND');
   return presentPublicUser(row as User);
 }
@@ -76,13 +76,11 @@ export function executeAccess(db: DB, actor: AccessActor, command: Command) {
       return{user:publicUser(db,actor.id)};
     }
     case 'account.setDefaultEngine': {
-      db.run('UPDATE users SET default_model_id=CASE WHEN default_engine=? THEN default_model_id ELSE NULL END,default_engine=?,updated_at=? WHERE id=?',[command.input.engine,command.input.engine,now,actor.id]);
-      return{user:publicUser(db,actor.id)};
+      return{user:presentPublicUser(setUserDefaultEngineInDatabase(db,actor.id,command.input.engine,now))};
     }
     case 'account.setDefaultModel': {
       if(db.get('SELECT default_engine FROM users WHERE id=?',[actor.id])?.default_engine!==command.input.expectedEngine)deny('CONFLICT');
-      db.run('UPDATE users SET default_model_id=?,updated_at=? WHERE id=?',[command.input.modelId,now,actor.id]);
-      return{user:publicUser(db,actor.id)};
+      return{user:presentPublicUser(setUserDefaultModelInDatabase(db,actor.id,command.input.modelId,now,command.input))};
     }
     case 'account.setPreviewPreferences':return saveNativePreviewPreferences(db,actor,command.input.changes);
     case 'account.setTheme':return saveNativeTheme(db,actor.id,command.input.settings,now);

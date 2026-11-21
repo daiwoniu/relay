@@ -12,7 +12,7 @@ export interface CodexMaintenanceDependencies {
   readActiveTaskCount(): number | Promise<number>;
   readInstallSource(): EngineMaintenanceInstallSource;
   readInstalledAt?: () => number | null;
-  readReadiness(): Promise<{ readiness: EngineMaintenanceStatusDto['readiness']; checkedAt: number | null }> | { readiness: EngineMaintenanceStatusDto['readiness']; checkedAt: number | null };
+  readReadiness(): Promise<{ readiness: EngineMaintenanceStatusDto['readiness']; checkedAt: number | null; processReady?: boolean }> | { readiness: EngineMaintenanceStatusDto['readiness']; checkedAt: number | null; processReady?: boolean };
 }
 
 export class CodexMaintenanceAdapter implements EngineMaintenanceAdapter {
@@ -63,7 +63,7 @@ export class CodexMaintenanceAdapter implements EngineMaintenanceAdapter {
       latestCheckedAt: version.checkedAt,
       installSource,
       activeTaskCount,
-      activeInstanceCount: runningVersion ? 1 : 0,
+      activeInstanceCount: (readiness.processReady ?? Boolean(runningVersion)) ? 1 : 0,
       instanceVersions: runningVersion ? [{ version: runningVersion, count: 1 }] : [],
       readiness: readiness.readiness,
       readinessCheckedAt: readiness.checkedAt,

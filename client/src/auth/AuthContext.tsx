@@ -39,12 +39,9 @@ export function AuthProvider({ children, skipInitialCheck = false }: { children:
   const userSyncRef = useRef<ReturnType<typeof createAuthUserSync> | null>(null);
 
   useEffect(() => {
-    userRef.current = user;
-  }, [user]);
-
-  useEffect(() => {
     const sync = createAuthUserSync((nextUser) => {
       if (!isAuthUserUpdateForCurrentUser(userRef.current, nextUser)) return;
+      userRef.current = nextUser;
       setUser(nextUser);
       setStatus('authenticated');
     });
@@ -56,6 +53,7 @@ export function AuthProvider({ children, skipInitialCheck = false }: { children:
   }, []);
 
   const becomeGuest = useCallback(() => {
+    userRef.current = null;
     tracker.reset();
     tracker.resume('guest');
     void resetAuthenticatedClientState().catch(() => undefined);
@@ -81,6 +79,7 @@ export function AuthProvider({ children, skipInitialCheck = false }: { children:
     getCurrentUser(controller.signal)
       .then(async (payload) => {
         await activateAuthenticatedClientState(payload.user.id);
+        userRef.current = payload.user;
         setUser(payload.user);
         setInitialError('');
         setStatus('authenticated');
@@ -109,6 +108,7 @@ export function AuthProvider({ children, skipInitialCheck = false }: { children:
       await resetAuthenticatedClientState().catch(() => undefined);
       const payload = await loginRequest(username, password);
       await activateAuthenticatedClientState(payload.user.id);
+      userRef.current = payload.user;
       setUser(payload.user);
       setStatus('authenticated');
       return null;
@@ -131,6 +131,8 @@ export function AuthProvider({ children, skipInitialCheck = false }: { children:
   }, [becomeGuest]);
 
   const updateUser = useCallback((nextUser: AuthUser) => {
+    if (!isAuthUserUpdateForCurrentUser(userRef.current, nextUser)) return;
+    userRef.current = nextUser;
     setUser(nextUser);
     setStatus('authenticated');
     userSyncRef.current?.broadcast(nextUser);

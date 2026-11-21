@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { canSubmitAsyncQuestionAnswer, hasUnansweredAsyncQuestion, toAsyncQuestionItem } from './async-questions.js';
+import { canSubmitAsyncQuestionAnswer, hasUnansweredAsyncQuestion, toAsyncQuestionItem, isAsyncAgentMessage } from './async-questions.js';
 import { presentProcessItem } from '../messages/presenter.js';
 
 test('Codex async agent message becomes a durable question item', () => {
@@ -39,6 +39,14 @@ test('async question survives the process item presenter', () => {
 test('ordinary agent messages cannot create async questions', () => {
   assert.equal(toAsyncQuestionItem({ id: 'msg-1', type: 'agentMessage', text: '请选择提交' }), null);
   assert.equal(toAsyncQuestionItem({ id: 'msg-2', type: 'agentMessage', delivery: 'async', questions: [] }), null);
+});
+
+test('异步投递标识与问题内容校验分离，未完整的问题仍不进入正文缓冲', () => {
+  const partial = { id: 'pending-question', type: 'agentMessage', delivery: 'async', text: 'QUESTION', questions: [] };
+  assert.equal(isAsyncAgentMessage(partial), true);
+  assert.equal(toAsyncQuestionItem(partial), null);
+  assert.equal(isAsyncAgentMessage({ ...partial, delivery: 'inline' }), false);
+  assert.equal(isAsyncAgentMessage(null), false);
 });
 
 test('运行态问题可回答，同一问题已有后续消息时拒绝重复回答', () => {

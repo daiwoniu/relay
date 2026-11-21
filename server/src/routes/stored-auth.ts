@@ -14,7 +14,7 @@ import { loginSchema, resolveLoginSessionPolicy, changePasswordSchema, changeUse
 import { MAX_AVATAR_BYTES,validateAvatarUpload } from '../auth/avatar.js';
 import type { EngineId } from '../engine/types.js';
 import type { EngineModelCatalog } from '../engine/models/types.js';
-import { EnginePreferencesValidationError,validateEnginePreferences } from '../engine/models/preferences.js';
+import { EnginePreferencesValidationError,validateEnginePreferences,resolveModelPreferenceChange } from '../engine/models/preferences.js';
 import { createClientId, getClientIdFromCookieHeader, getSessionTokenFromCookieHeader,
   serializeClientIdCookie, serializeSessionCookie, serializeClearSessionCookie } from '../auth/cookie.js';
 import { isAllowedOrigin, isSecureRelayRequest } from '../security.js';
@@ -199,12 +199,14 @@ export function createStoredAuthModule(options: {
     const denied=origin(c);if(denied)return denied;
     const body=defaultModelPatchSchema.safeParse(await accountSettingsBody(c));if(!body.success)return c.json(presentApiError('默认模型格式无效'),400);
     const expectedEngine=actor(c).user.defaultEngine;
-    if(body.data.modelId!==null){
-      try{if(!options.getCatalog)throw new StorageContractError('STORAGE_UNAVAILABLE');validateEnginePreferences(await options.getCatalog(expectedEngine),{modelId:body.data.modelId,reasoningEffort:null});}
+    const user=actor(c).user;
+    const preferences=resolveModelPreferenceChange({modelId:user.defaultModelId,reasoningEffort:user.defaultReasoningEffort??null,serviceTier:user.defaultServiceTier??null},body.data);
+    if(preferences.modelId!==null||preferences.reasoningEffort!==null||preferences.serviceTier!==null){
+      try{if(!options.getCatalog)throw new StorageContractError('STORAGE_UNAVAILABLE');validateEnginePreferences(await options.getCatalog(expectedEngine),preferences);}
       catch(failure){return failure instanceof EnginePreferencesValidationError?c.json(presentApiError(failure.message,{code:failure.code}),422):unavailable(c);}
     }
     const id=key(c);if(id instanceof Response)return id;
-    const result=await core(c,id,'account.setDefaultModel',{expectedEngine,modelId:body.data.modelId});
+    const result=await core(c,id,'account.setDefaultModel',{expectedEngine,...preferences});
     if(result.state==='rejected'&&result.code==='CONFLICT'){
       const current=await options.port.readPublicUser({principal:principal(c),userId:actor(c).user.id});
       if(current.defaultEngine!==expectedEngine)return c.json(presentApiError('默认引擎已变化，请重新选择模型',{code:'DEFAULT_ENGINE_CHANGED'}),409);

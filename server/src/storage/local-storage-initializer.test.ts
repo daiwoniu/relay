@@ -43,6 +43,29 @@ test('published Native v1 upgrades workspace links with one verified backup and 
   }finally{f.cleanup();}
 });
 
+test('旧Native库追加账号默认偏好列前备份，保留用户与消息并幂等',async()=>{
+  const f=fixture();
+  try{
+    legacy(f.filename);
+    const initial=await initializeLocalStorage(f.filename);await initial.owner.release();
+    const db=new DatabaseSync(f.filename);
+    db.exec("ALTER TABLE users DROP COLUMN default_reasoning_effort; ALTER TABLE users DROP COLUMN default_service_tier; UPDATE users SET default_model_id='sol' WHERE id='owner';");
+    const before=db.prepare('SELECT id,username,avatar_data,default_model_id FROM users ORDER BY id').all();db.close();
+    const upgraded=await initializeLocalStorage(f.filename);
+    assert.equal(upgraded.action,'migrated');assert.equal(upgraded.backups.length,1);
+    const saved=new DatabaseSync(f.filename);
+    assert.deepEqual(saved.prepare('SELECT id,username,avatar_data,default_model_id FROM users ORDER BY id').all(),before);
+    assert.equal(saved.prepare("SELECT content FROM messages WHERE id='message'").get()!.content,'不能丢失的正文');
+    assert.deepEqual({...saved.prepare("SELECT default_reasoning_effort,default_service_tier FROM users WHERE id='owner'").get()},{default_reasoning_effort:null,default_service_tier:null});
+    saved.close();
+    const backup=new DatabaseSync(upgraded.backups[0],{readOnly:true});
+    assert.equal(backup.prepare("SELECT count(*) AS n FROM pragma_table_info('users') WHERE name='default_service_tier'").get()!.n,0);backup.close();
+    await upgraded.owner.release();
+    const repeated=await initializeLocalStorage(f.filename);
+    try{assert.equal(repeated.action,'current');assert.equal(repeated.backups.length,0);}finally{await repeated.owner.release();}
+  }finally{f.cleanup();}
+});
+
 for (const format of ['legacy', 'native'] as const) test(`${format} startup upgrades old audit actions, preserves history and permits membership writes`, async () => {
   const f = fixture();
   try {

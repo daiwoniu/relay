@@ -109,7 +109,7 @@ export function runCommand(command, args, options = {}) {
     child.once('close', (status, signal) => finish({
       status,
       signal,
-      ...(timedOut ? { error: new Error(`命令执行超时（${options.timeoutMs}ms）`) } : {}),
+      ...(timedOut ? { timedOut: true, error: new Error(`命令执行超时（${options.timeoutMs}ms）`) } : {}),
     }));
   });
 }

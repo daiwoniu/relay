@@ -130,6 +130,33 @@ test('Native conversation defaults retain same-engine model, clear on engine cha
   }finally{await p.cleanup();}
 });
 
+test('账号默认推理与速度按模型校验、持久保存和同步读取，切换引擎清空且账号隔离',async()=>{
+  const p=await prepared({getCatalog:async engine=>({engineId:engine,fetchedAt:1,stale:false,models:[
+    {id:'sol',isDefault:true,reasoning:{supported:true,options:[{id:'medium'},{id:'high'}]},serviceTiers:[{id:'priority'},{id:'ultrafast'}]},
+    {id:'astra',reasoning:{supported:true,options:[{id:'medium'}]},serviceTiers:[{id:'priority'}]},
+  ]}) as any});
+  const patch=(body:unknown)=>p.request('/default-model','PATCH',body,'owner');
+  try{
+    assert.equal((await patch({modelId:'sol',reasoningEffort:'medium',serviceTier:'ultrafast'})).status,200);
+    const owner=(await(await p.request('/me','GET',undefined,'owner')).json() as any).user;
+    assert.equal(owner.defaultReasoningEffort,'medium');assert.equal(owner.defaultServiceTier,'ultrafast');
+    assert.equal(p.f.scalar("SELECT default_reasoning_effort FROM users WHERE id='admin'"),null);
+    assert.equal((await patch({modelId:'sol',reasoningEffort:'invalid',serviceTier:'ultrafast'})).status,422);
+    assert.equal((await patch({modelId:'astra',serviceTier:'ultrafast',reasoningEffort:'medium'})).status,422);
+    assert.equal(p.f.scalar("SELECT default_model_id FROM users WHERE id='owner'"),'sol');
+    assert.equal((await patch({modelId:null,reasoningEffort:'medium',serviceTier:null})).status,422);
+    assert.equal((await patch({modelId:'sol'})).status,200);
+    assert.equal(p.f.scalar("SELECT default_service_tier FROM users WHERE id='owner'"),'ultrafast');
+    assert.equal((await patch({modelId:'astra'})).status,200);
+    assert.equal(p.f.scalar("SELECT default_reasoning_effort FROM users WHERE id='owner'"),null);
+    assert.equal(p.f.scalar("SELECT default_service_tier FROM users WHERE id='owner'"),null);
+    assert.equal((await patch({modelId:'sol',reasoningEffort:'high',serviceTier:'priority'})).status,200);
+    assert.equal((await p.request('/default-engine','PATCH',{engine:'codebuddy'},'owner')).status,200);
+    const changed=(await(await p.request('/me','GET',undefined,'owner')).json() as any).user;
+    assert.equal(changed.defaultModelId,null);assert.equal(changed.defaultReasoningEffort,null);assert.equal(changed.defaultServiceTier,null);
+  }finally{await p.cleanup();}
+});
+
 test('default model cannot commit after a concurrent default-engine change during catalog lookup',async()=>{
   let change=()=>{};
   const p=await prepared({getCatalog:async engine=>{change();return{engineId:engine,fetchedAt:1,stale:false,models:[{id:'synthetic-model'}]} as any;}});

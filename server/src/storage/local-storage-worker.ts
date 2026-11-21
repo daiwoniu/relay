@@ -18,6 +18,7 @@ import { createMemberWithDefaultProjectInDatabase } from '../db/queries-account.
 import { hashPassword } from '../auth/password.js';
 import { assertStorageRuntime } from '../../../scripts/lib/storage-runtime.mjs';
 import { ensureAdminAuditTable, needsAdminAuditTableUpgrade } from '../db/admin-audit.js';
+import { ensureUserProfileColumns, MODEL_DEFAULT_PROFILE_COLUMNS } from '../db/user-profile.js';
 
 const quote = (name: string) => '"' + name.replaceAll('"', '""') + '"';
 const schema = fs.readFileSync(new URL('./application-schema-v1.sql', import.meta.url), 'utf8');
@@ -25,13 +26,14 @@ const assertOwner = () => assertWorkerWriter(workerData.proof);
 const has = (db: DatabaseSync, name: string) => !!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(name);
 
 /** Compare existing business rows inside the migration transaction, before committing any change. */
-function contents(db: DatabaseSync) {
+function contents(db: DatabaseSync, ignoreModelDefaults = false) {
   const hash = createHash('sha256');
   const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND substr(name,1,7)<>'_relay_' ORDER BY name").all();
   for (const table of tables) {
     const name = String(table.name);
     const columns = db.prepare(`PRAGMA table_info(${quote(name)})`).all().map(row => String(row.name))
-      .filter(column=>name!=='workspace_console_links'||!['workspace_id','connection_scope','target_ref'].includes(column));
+      .filter(column=>(name!=='workspace_console_links'||!['workspace_id','connection_scope','target_ref'].includes(column))
+        && (!ignoreModelDefaults||name!=='users'||!MODEL_DEFAULT_PROFILE_COLUMNS.some(([field])=>field===column)));
     const projection = auditRowProjection(columns);
     hash.update(JSON.stringify([name, columns]));
     const statement = db.prepare(`SELECT ${projection.select} FROM ${quote(name)} ORDER BY ${projection.order}`);
@@ -70,14 +72,14 @@ async function makeBackup(db: DatabaseSync, filename: string, backups: string[],
   try { fs.fsyncSync(handle); } finally { fs.closeSync(handle); }
   backups.push(target);
 }
-function transaction(db: DatabaseSync, migrate: () => void, expectedContents: string | null) {
+function transaction(db: DatabaseSync, migrate: () => void, expectedContents: string | null, ignoreModelDefaults = false) {
   assertOwner();
   db.exec('PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=1000');
   if (db.prepare('PRAGMA journal_mode').get()?.journal_mode !== 'wal') throw Error('STORAGE_WAL_REQUIRED');
   db.exec('BEGIN IMMEDIATE');
   try {
     migrate(); check(db);
-    if (expectedContents !== null && contents(db) !== expectedContents) throw Error('STORAGE_MIGRATION_CONTENT_CHANGED');
+    if (expectedContents !== null && contents(db, ignoreModelDefaults) !== expectedContents) throw Error('STORAGE_MIGRATION_CONTENT_CHANGED');
     assertOwner(); db.exec('COMMIT');
   } catch (error) { if (db.isTransaction) db.exec('ROLLBACK'); throw error; }
 }
@@ -137,6 +139,13 @@ async function initialize() {
     }
     // Additive business schema upgrade; historical Native support migration SQL stays immutable.
     const bridge = nativeQueries(db);
+    const userColumns = new Set(bridge.all('PRAGMA table_info(users)').map(row=>String(row.name)));
+    if (MODEL_DEFAULT_PROFILE_COLUMNS.some(([name])=>!userColumns.has(name))) {
+      const before = contents(db, true);
+      if (!workerData.fresh && backups.length === 0) await makeBackup(db, filename, backups, contents(db));
+      transaction(db, () => { ensureUserProfileColumns(bridge, MODEL_DEFAULT_PROFILE_COLUMNS); }, before, true);
+      if (action === 'current') action = 'migrated';
+    }
     if (needsAdminAuditTableUpgrade(bridge)) {
       const before = contents(db);
       if (!workerData.fresh && backups.length === 0) await makeBackup(db, filename, backups, before);
