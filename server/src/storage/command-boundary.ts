@@ -180,7 +180,8 @@ const inputs = {
   'turn.enqueue': z.object({ sessionId: id, attemptId: id, messageId: id, engineId: engine, resourceKey,
     content: z.string(), metadata: object.nullable(), expectedPreferencesRevision: nonnegative,clientIntentDigest:z.string().regex(/^[a-f0-9]{64}$/).optional(),
     origin: z.discriminatedUnion('kind', [z.object({ kind: z.literal('direct') }).strict(),
-      z.object({ kind: z.literal('followup'), followupId: id }).strict()]),
+      z.object({ kind: z.literal('followup'), followupId: id }).strict(),
+      z.object({ kind: z.literal('feishu'), botId: id, tenantKey: id, sequence: z.number().int().positive().safe() }).strict()]),
     draft: z.object({ projectId: id, title: z.string(), titleManuallySet: z.boolean() }).strict().optional(),
     workspaceTaskLink: z.object({ taskId: id, workspacePath: z.string().min(1).max(32768),workspaceId:z.string().min(1).max(128).optional(),connectionScope:z.string().regex(/^(?:[a-f0-9]{64})?$/).optional(),targetRef:z.string().max(128).optional() }).strict().optional(),
     bind: z.object({ modelId: id.nullable(), reasoningEffort: id.nullable(), serviceTier: id.nullable() }).strict().optional() }).strict(),
@@ -240,7 +241,7 @@ const inputs = {
   'turn.projectTerminal': z.object({ decision, message: z.object({ id, turnId: id, content: z.string(),
     items: z.string().nullable(), metadata: object.nullable(), durationMs: nonnegative.nullable() }).strict() }).strict(),
   'turn.setHostContext': z.object({ sessionId: id, engineId: engine, externalSessionId: id,
-    compactionCount: nonnegative, delivered: z.boolean() }).strict(),
+    compactionCount: nonnegative, delivered: z.boolean(), privatePeerIncluded: z.literal(true).optional() }).strict(),
   'turn.bindExternalSession': z.object({ sessionId: id, engineId: engine, expectedExternalSessionId: id.nullable(), externalSessionId: id }).strict(),
   'session.markRead': z.object({ sessionId: id, messageId: id }).strict(),
   'turn.updateUsage': z.object({ sessionId: id, attemptId: id, usage: object.nullable(),sessionUsage:object.optional() }).strict(),
@@ -419,7 +420,7 @@ export function parseCommandEnvelope(input: unknown, maxBytes = 8 * 1024 * 1024)
   };
   if (value.principal.kind === 'system' && !purposes[value.command.name]?.includes(value.principal.purpose)) throw new StorageContractError('FORBIDDEN');
   if (command.name === 'turn.enqueue') {
-    if (value.principal.kind === 'system' && command.input.origin.kind !== 'followup'
+    if (value.principal.kind === 'system' && !['followup', 'feishu'].includes(command.input.origin.kind)
       || value.principal.kind === 'user' && command.input.origin.kind !== 'direct') throw new StorageContractError('FORBIDDEN');
   }
   if (value.principal.kind === 'runtime') {

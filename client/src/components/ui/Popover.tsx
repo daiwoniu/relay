@@ -2,6 +2,7 @@ import { useCallback, useEffect, useId, useRef, useState, type CSSProperties, ty
 import { createPortal } from 'react-dom';
 import { computeFloatingPosition, type FloatingPlacement } from './floating-position';
 import { useOverlay } from './OverlayProvider';
+import { shouldRestoreOverlayFocus } from './focus-restoration';
 import { shouldClosePopoverForWindowResize } from './popover-resize';
 import { shouldClosePopoverForScroll } from './popover-scroll';
 
@@ -16,6 +17,7 @@ interface PopoverProps {
   label?: string;
   className?: string;
   closeOnMouseLeave?: boolean;
+  manageFocus?: boolean;
   desktopStyle?: CSSProperties;
   gap?: number;
 }
@@ -31,6 +33,7 @@ export default function Popover({
   label = '弹出内容',
   className = '',
   closeOnMouseLeave = false,
+  manageFocus = false,
   desktopStyle,
   gap = 6,
 }: PopoverProps) {
@@ -48,27 +51,32 @@ export default function Popover({
   const { openOverlay, closeOverlay, registerOverlayCloser, isOverlayOpen } = useOverlay();
   const visible = open && isOverlayOpen('popover', overlayId);
   const mobileSheet = mobile && mobilePresentation === 'sheet';
+  const focusManaged = mobileSheet || manageFocus;
 
   useEffect(() => {
-    if (!open || !mobileSheet) return;
+    if (!open || !focusManaged) return;
     restoreFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     return () => {
       const restoreTarget = restoreFocusRef.current;
       restoreFocusRef.current = null;
-      if (restoreTarget?.isConnected) restoreTarget.focus();
+      if (restoreTarget?.isConnected && shouldRestoreOverlayFocus(document.activeElement, document.body)) restoreTarget.focus();
     };
-  }, [mobileSheet, open]);
+  }, [focusManaged, open]);
 
   useEffect(() => {
     if (!open || !mobileSheet) return;
     const viewport = window.visualViewport;
     const update = () => {
       const availableHeight = Math.min(viewport?.height ?? window.innerHeight, window.innerHeight);
-      setMobileSheetMaxHeight(`${Math.max(240, availableHeight - 16)}px`);
+      setMobileSheetMaxHeight(`${Math.max(0, availableHeight - 16)}px`);
     };
     update();
+    window.addEventListener('resize', update);
     viewport?.addEventListener('resize', update);
-    return () => viewport?.removeEventListener('resize', update);
+    return () => {
+      window.removeEventListener('resize', update);
+      viewport?.removeEventListener('resize', update);
+    };
   }, [mobileSheet, open]);
 
   const cancelLeaveClose = () => {
@@ -113,7 +121,7 @@ export default function Popover({
         requestClose();
         return;
       }
-      if (!mobileSheet || event.key !== 'Tab') return;
+      if (!focusManaged || event.key !== 'Tab') return;
       const focusable = [...(popoverRef.current?.querySelectorAll<HTMLElement>('button:not(:disabled), [href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])') ?? [])];
       if (focusable.length === 0) {
         event.preventDefault();
@@ -151,16 +159,16 @@ export default function Popover({
       unregisterCloser();
       closeOverlay('popover', overlayId);
     };
-  }, [closeOverlay, mobile, mobileSheet, open, openOverlay, overlayId, registerOverlayCloser, requestClose, updatePosition]);
+  }, [closeOverlay, focusManaged, mobile, open, openOverlay, overlayId, registerOverlayCloser, requestClose, updatePosition]);
 
   useEffect(() => {
-    if (!visible || !mobileSheet) return;
+    if (!visible || !focusManaged || (!mobile && !positioned)) return;
     const frame = requestAnimationFrame(() => {
       const firstFocusable = popoverRef.current?.querySelector<HTMLElement>('button:not(:disabled), [href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])');
       (firstFocusable ?? popoverRef.current)?.focus();
     });
     return () => cancelAnimationFrame(frame);
-  }, [mobileSheet, visible]);
+  }, [focusManaged, mobile, positioned, visible]);
 
   useEffect(() => {
     if (!visible || mobile) return;
@@ -195,7 +203,7 @@ export default function Popover({
       className={mobile
         ? `popover-surface ${mobileSheet ? 'popover-surface--mobile-sheet' : 'popover-surface--mobile-floating'} fixed z-[1150] overflow-hidden ${className}`
         : `popover-surface popover-surface--desktop fixed z-[1150] overflow-hidden ${className}`}
-      style={mobile ? (mobileSheet ? { maxHeight: mobileSheetMaxHeight } : undefined) : { ...desktopStyle, ...position, visibility: positioned ? 'visible' : 'hidden' }}
+      style={mobile ? (mobileSheet ? ({ '--popover-visible-height': mobileSheetMaxHeight } as CSSProperties) : undefined) : { ...desktopStyle, ...position, visibility: positioned ? 'visible' : 'hidden' }}
     >
       {children}
     </div>

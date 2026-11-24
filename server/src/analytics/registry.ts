@@ -6,13 +6,30 @@ export const ANALYTICS_SURFACES = [
   'unknown','sidebar','user_menu','header','button','keyboard','context_menu','mobile_sheet',
   'composer','add_content','device_picker','host_picker','drop','paste','message','message_file',
   'message_menu','preview_toolbar','preview_tab','preview_content','settings','notification',
-  'share_page','tools','workbench','news','admin','system',
+  'share_page','tools','workbench','news','admin','system','session_details',
 ] as const;
-export const ANALYTICS_TOOL_IDS = ['news','calendar','weather','greeting','timestamp','json','qr','diff','pomodoro','units','dates','shopping','random'] as const;
+export const MEDIA_TOOL_IDS = [
+  'image-edit', 'image-stitch', 'image-layout', 'audio-edit',
+  'subtitle-edit', 'image-motion', 'video-edit', 'tone-generator',
+] as const;
+
+export type MediaToolId = typeof MEDIA_TOOL_IDS[number];
+
+export function isMediaToolId(id: string): id is MediaToolId {
+  return MEDIA_TOOL_IDS.some((value) => value === id);
+}
+
+export const ANALYTICS_TOOL_IDS = ['news','calendar','weather','greeting','timestamp','json','qr','diff','pomodoro','units','dates','shopping','random', ...MEDIA_TOOL_IDS] as const;
 export const ANALYTICS_RESULTS = [
   'success','invalid_input','error','cancelled','rejected','throttled','unknown',
 ] as const;
 export const ANALYTICS_MAX_DURATION = 86_400_000;
+export const FEISHU_ADMIN_MUTATION_ACTIONS = {
+  retry: 'retry', archive: 'archive', restore: 'restore', convert: 'convert_matter', link: 'link_session', handoff: 'handoff',
+} as const;
+export function feishuBotSaveMode(previousEnabled: boolean | undefined, enabled: boolean) {
+  return previousEnabled === undefined ? 'create_bot' : previousEnabled === enabled ? 'edit_bot' : enabled ? 'enable_bot' : 'disable_bot';
+}
 export const ANALYTICS_ATTRIBUTE_VALUES = {
   fileKind: ['text','code','markdown','html','image','pdf','word','spreadsheet','archive','audio','video','other'],
   sizeBucket: ['empty','under_1mb','1_5mb','5_20mb','over_20mb'],
@@ -25,8 +42,10 @@ export const ANALYTICS_ATTRIBUTE_VALUES = {
   mode: [
     'source','rendered','git_diff','compressed','original','light','dark','system',
     'all','following','frequent','project','session','single','selection','desktop','mobile',
+    'create_bot','edit_bot','enable_bot','disable_bot',
   ],
-  section: ['profile','security','project','appearance','notifications','preview'],
+  section: ['profile','security','project','appearance','notifications','preview',
+    'feishu_settings','feishu_users','feishu_messages','feishu_matters','feishu_stats'],
   trigger: ['user','automatic'],
   reasonCode: [
     'INVALID_INPUT','UNAVAILABLE','PERMISSION_DENIED','RATE_LIMITED','NETWORK_ERROR','TIMEOUT',
@@ -69,10 +88,11 @@ export const ANALYTICS_FEATURES = {
   hosting: { label:'页面托管管理',surfaces:['user_menu','admin','drop','device_picker','host_picker'] },
   auth: { label:'登录与认证',surfaces:['button','keyboard','user_menu','settings','system'] },
   account_admin: { label:'账号管理',surfaces:['user_menu','admin'] },
-  maintenance: { label:'Relay与引擎维护',surfaces:['user_menu','admin','notification','system'] },
+  maintenance: { label:'Relay与引擎维护',surfaces:['user_menu','composer','admin','notification','system'] },
   notifications: { label:'提醒与通知',surfaces:['notification','settings','system'] },
   connection: { label:'连接与故障恢复',surfaces:['system','notification','button'] },
   analytics: { label:'访问统计',surfaces:['admin','user_menu','keyboard'] },
+  feishu_admin: { label:'飞书管理',surfaces:['admin','user_menu','session_details'] },
   conversation: { label:'回合运行',surfaces:['composer','button','keyboard','system'] },
 } as const satisfies Record<string,FeatureDefinition>;
 export type AnalyticsFeature = keyof typeof ANALYTICS_FEATURES;
@@ -131,6 +151,15 @@ const actionLabels: Readonly<Record<string,string>> = {
   dismiss:'关闭提醒',request_permission:'申请通知权限',permission:'通知权限结果',deliver:'通知投递',retry:'重试',
   initialize:'初始化',disconnect:'连接中断',recover:'连接恢复',page_error:'页面失败',range:'选择时间范围',
   metric:'切换指标',run:'回合运行',paginate:'翻页',refresh_calendar:'刷新日历',
+  open_admin_center:'打开管理中心',
+  open_feishu:'打开飞书管理',open_service:'打开 Relay 维护',open_engine:'打开引擎维护',
+  select_bot:'切换机器人',select_chat:'切换飞书会话',edit_bot:'打开机器人配置',
+  retry_groups:'刷新群聊和联系人',retry_models:'重试读取模型',view_matter:'查看关联事项',
+  save_bot:'保存机器人配置',save_concurrency:'保存飞书引擎并发',configuration_options:'展开机器人配置选项',pause_bot:'停用机器人',convert_matter:'转为事项',
+  decide_approval:'审核飞书执行授权',set_user_access:'修改飞书用户使用权限',
+  handoff:'交接会话',archive:'归档',retry_queued:'补发已入队',retry_delivery:'补发投递结果',
+  return_list:'返回列表',connection_details:'展开连接详情',notice_details:'展开通知详情',diagnostics:'展开排查信息',
+  open_retry:'打开补发确认',open_pause:'打开停用确认',cancel_retry:'取消补发',cancel_pause:'取消停用',cancel_edit:'取消机器人配置',
 };
 function register(
   feature: AnalyticsFeature, name: AnalyticsGenericEventName, actions: readonly string[],
@@ -166,7 +195,7 @@ function remote(feature: AnalyticsFeature, actions: readonly string[], attribute
 }
 
 action('layout',['toggle_sidebar','toggle_wide','resize','expand','collapse']);
-view('user_menu'); action('user_menu',['show_quota_warning']); local('user_menu',['refresh_quota']);
+view('user_menu'); action('user_menu',['show_quota_warning']); register('user_menu','feature_view',['open_admin_center'],'client','none'); local('user_menu',['refresh_quota']);
 view('project'); action('project',['select','expand','collapse']);
 remote('project',['create','rename','pin','unpin','reorder','protect','unprotect','update']);
 view('project_members'); remote('project_members',['remove','change_role'],['countBucket']);
@@ -232,6 +261,14 @@ register('auth','operation_result',['logout'],'server','required',['reasonCode']
 view('account_admin'); action('account_admin',['cancel']);
 remote('account_admin',['create','disable','enable','change_project_permission','reset_password']);
 view('maintenance',['engine']); action('maintenance',['select_action','confirm','cancel','service_restart','service_repair'],['engine']);
+register('maintenance','feature_view',['open_service','open_engine'],'client','none');
+action('feishu_admin',['open_feishu','select_bot','select_chat','range','refresh','paginate','details','view_matter','edit_bot','retry_groups','retry_models','open_session']);
+action('feishu_admin',['return_list','connection_details','notice_details','diagnostics','configuration_options','open_retry','open_pause','cancel_retry','cancel_pause','cancel_edit']);
+action('feishu_admin',['section'],['section']);
+remote('feishu_admin',['save_bot'],['mode']);
+remote('feishu_admin',['pause_bot','save_concurrency','decide_approval','set_user_access',...Object.values(FEISHU_ADMIN_MUTATION_ACTIONS)]);
+register('feishu_admin','operation_result',['retry_queued'],'server','required',[],true,'system');
+register('feishu_admin','operation_result',['retry_delivery'],'server','required',['reasonCode'],true);
 remote('maintenance',['recheck','install','upgrade','upgrade_and_restart','restart','apply_repair'],['engine']);
 local('maintenance',['check_version','preview_repair'],['engine']);action('maintenance',['abort'],['engine']);
 view('notifications'); action('notifications',['dismiss','activate','request_permission']);

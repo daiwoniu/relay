@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useState, useRef } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { flushSync } from 'react-dom';
 import { DndContext, KeyboardSensor, PointerSensor, TouchSensor, closestCenter, useSensor, useSensors,
@@ -24,18 +24,13 @@ import Tooltip from '../ui/Tooltip';
 import ContextMenuPopup, { type ContextMenuItem } from '../ui/ContextMenu';
 import type { ServiceStatus } from '../ui/ServiceStatusIndicator';
 import { useOverlay } from '../ui/OverlayProvider';
-import { resolveDefaultProjectId, resolveSessionProjectId, hideEmptyProjectsInAllScope, readShowAllProjectsPreference, storeShowAllProjectsPreference } from './session-project';
+import { resolveDefaultProjectId, resolveSessionProjectId, readShowAllProjectsPreference, storeShowAllProjectsPreference } from './session-project';
 import {featureAction,localAction} from '../../analytics/features';
 import { copyToClipboard } from '../../utils/clipboard';
-import type { EngineId, EngineMaintenanceResponseDto, EngineStatusDto, ProjectDeletionImpactDto, PublicUserDto, SessionDeletionImpactDto, SessionSearchResultDto } from '../../generated/relay-contracts';
+import type { EngineId, EngineStatusDto, ProjectDeletionImpactDto, PublicUserDto, SessionDeletionImpactDto, SessionSearchResultDto } from '../../generated/relay-contracts';
 import { getEngineStatuses } from '../../api/system';
-import { getEngineMaintenance } from '../../api/engine-maintenance';
 import { listSidebarOrders, moveSidebarItem } from '../../api/sidebar-order';
-import {
-  applySidebarOrder,
-  projectSidebarOrderScope,
-  resolveSidebarItems,
-} from './sidebar-order';
+import { resolveSidebarItems } from './sidebar-order';
 import { createSidebarDropMove, isMatchingSidebarDropTarget, isSidebarDragData, sidebarDragId } from './sidebar-drag';
 import { truncateMiddlePath } from '../../utils/path-display';
 import { createSessionMenuItems } from '../chat/session-menu-items';
@@ -46,7 +41,6 @@ import MySharesDialog from '../sharing/MySharesDialog';
 import ShareCreateDialog, { type ShareDraft } from '../sharing/ShareCreateDialog';
 import ServiceMaintenanceDialog from '../system/ServiceMaintenanceDialog';
 import EngineMaintenanceDialog from '../system/EngineMaintenanceDialog';
-import { isManualRestartVisible } from '../../recovery/manual-service-restart';
 import DetailsDialog from './DetailsDialog';
 import ProjectDetailsContent from './ProjectDetailsContent';
 import SessionDetailsContent from './SessionDetailsContent';
@@ -63,6 +57,8 @@ import {
 } from './sidebar-width';
 import { useSessionSearchStore } from '../../stores/session-search';
 import UserMenu from './UserMenu';
+import AdministrationCenter, { type AdministrationPanel } from './AdministrationCenter';
+import { PanelReturnContext } from '../ui/PanelShell';
 import UserResourceDialog, { type UserResourceSelection } from './UserResourceDialog';
 import SidebarWorkbench from './SidebarWorkbench';
 import ProjectUploadsDialog from '../projects/ProjectUploadsDialog';
@@ -71,16 +67,16 @@ import TrashDialog from '../trash/TrashDialog';
 import { restoreMinimizedPanel } from '../ui/minimizedPanelRegistry';
 import {
   getFallbackTitleMatches,
-  getVisibleSearchProjectIds,
   SIDEBAR_SEARCH_DEBOUNCE_MS,
 } from './session-search-view';
 import SidebarLoadingState from './SidebarLoadingState';
 import { ProjectBlock, SessionRow, TopGroup } from './SidebarNavigationItems';
+import { getSidebarNavigation } from './sidebar-navigation';
 import type { ComposerFocusReason } from '../chat/composer-focus';
 import useMobileSidebarSwipe from './useMobileSidebarSwipe';
 
-import { filterOwnedSidebarItems } from './sidebar-account-filter';
-import { getSidebarAccountInteractionPolicy } from './sidebar-account-interactions';
+import { getSidebarOwnerFilter, resolveSidebarOwnerId } from './sidebar-account-filter';
+import { canCreateSidebarProjectSession, getSidebarAccountInteractionPolicy } from './sidebar-account-interactions';
 import { getMobileSidebarTranslateClass } from './mobile-sidebar-swipe';
 import { getProjectDeleteMenuState, type ProjectDeletionImpactState } from './project-delete-state';
 // 上下文菜单类型
@@ -91,6 +87,10 @@ interface ContextMenu {
   anchorRect: DOMRect;
 }
 const PageHostingPanel = lazy(() => import('../page-hosting/PageHostingPage'));
+
+function openSidebarPanel(panelId: string, setOpen: (value: boolean) => void) {
+  if (!restoreMinimizedPanel(panelId)) setOpen(true);
+}
 
 export default function Sidebar({
   serviceStatus = 'checking',
@@ -169,31 +169,19 @@ export default function Sidebar({
     : null);
   const clearDeleteProgressStage = useSessionDeletionProgressStore((state) => state.clearStage);
   const [userMenuAnchor, setUserMenuAnchor] = useState<DOMRect | null>(null);
-  const userMenuOpen = userMenuAnchor !== null;
   const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
   const [mySharesOpen, setMySharesOpen] = useState(false);
   const [trashOpen, setTrashOpen] = useState(false);
   const [shareDraft, setShareDraft] = useState<ShareDraft | null>(null);
   const [serviceMaintenanceOpen, setServiceMaintenanceOpen] = useState(false);
   const [engineMaintenanceOpen, setEngineMaintenanceOpen] = useState(false);
-  const [selectedMaintenanceEngine, setSelectedMaintenanceEngine] = useState<EngineId>('codex');
-  const [engineMaintenanceSummary, setEngineMaintenanceSummary] = useState<EngineMaintenanceResponseDto | null>(null);
+  const [requestedMaintenanceEngine, setRequestedMaintenanceEngine] = useState<{ engineId: EngineId } | null>(null);
+  const [administrationOpen, setAdministrationOpen] = useState(false);
+  const [administrationOrigins, setAdministrationOrigins] = useState<Partial<Record<AdministrationPanel, boolean>>>({});
   const [accountSettingsOpen, setAccountSettingsOpen] = useState(false);
   const [accountManagementOpen, setAccountManagementOpen] = useState(false);
   const [pageHostingOpen, setPageHostingOpen] = useState(false);
   const [hostingRequest, setHostingRequest] = useState<{path:string;requestId:number}|null>(null);
-  useEffect(() => {
-    const openHosting = (event: Event) => {
-      if (user?.role !== 'admin') return;
-      const path = (event as CustomEvent<{path?:string}>).detail?.path;
-      if (!path) return;
-      restoreMinimizedPanel('page-hosting-title');
-      setHostingRequest({path,requestId:Date.now()});
-      setPageHostingOpen(true);
-    };
-    window.addEventListener('relay:open-page-hosting', openHosting);
-    return () => window.removeEventListener('relay:open-page-hosting', openHosting);
-  }, [user?.role]);
   const [userResourceDialogOpen, setUserResourceDialogOpen] = useState(false);
   const [selectedResourceUser, setSelectedResourceUser] = useState<PublicUserDto | null>(null);
   const [uploadsProjects, setUploadsProjects] = useState<Project[]>([]);
@@ -230,14 +218,6 @@ export default function Sidebar({
     window.addEventListener('resize', onResize);
     return () => window.removeEventListener('resize', onResize);
   }, []);
-  useEffect(() => {
-    if (!userMenuOpen) return;
-    const controller = new AbortController();
-    void getEngineMaintenance(controller.signal)
-      .then(setEngineMaintenanceSummary)
-      .catch((error) => { if (!(error instanceof Error && error.name === 'AbortError')) setEngineMaintenanceSummary(null); });
-    return () => controller.abort();
-  }, [userMenuOpen]);
   const openSessionDetails = useCallback((session: Session) => {
     setMobileDetails({ type: 'session', session });
     void getSession(session.id)
@@ -396,34 +376,74 @@ export default function Sidebar({
     };
   }, [beginNavigationLoad, completeNavigationLoad, failNavigationLoad, navigationReloadVersion, setActiveSession, setCurrentProject, setProjects, setSessions, setSidebarOrders, user?.defaultProjectId]);
 
+  const sidebarOwnerId = user?.role === 'admin' ? resolveSidebarOwnerId(user.id, accountScope, ownerFilterId) : null;
   useEffect(() => {
     const normalizedQuery = searchQuery.trim();
     if (!normalizedQuery) return;
     const requestId = useSessionSearchStore.getState().requestId;
+    const controller = new AbortController();
     const timer = window.setTimeout(() => {
-      void searchSessions(normalizedQuery)
-        .then((response) => applySearchResults(requestId, response))
-        .catch((error) => failSearch(requestId, error instanceof Error ? error.message : '搜索会话失败'));
+      void searchSessions(normalizedQuery, { ownerUserId: sidebarOwnerId, signal: controller.signal })
+        .then((response) => {
+          if (!controller.signal.aborted) applySearchResults(requestId, response);
+        })
+        .catch((error) => {
+          if (!controller.signal.aborted) failSearch(requestId, error instanceof Error ? error.message : '搜索会话失败');
+        });
     }, SIDEBAR_SEARCH_DEBOUNCE_MS);
-    return () => window.clearTimeout(timer);
-  }, [applySearchResults, failSearch, searchQuery]);
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [applySearchResults, failSearch, searchQuery, sidebarOwnerId]);
 
   const closeContextMenu = useCallback(() => setContextMenu(null), []);
   const closeUserMenu = useCallback(() => setUserMenuAnchor(null), []);
-  const openEngineMaintenance = useCallback((engineId: EngineId = 'codex') => {
+  const administrationPanels = useMemo(() => ({
+    accounts: { id: 'account-management-title', open: setAccountManagementOpen, close: () => setAccountManagementOpen(false) },
+    pages: { id: 'page-hosting-title', open: setPageHostingOpen, close: () => { setPageHostingOpen(false); setHostingRequest(null); } },
+    server: { id: 'service-maintenance-title', open: setServiceMaintenanceOpen, close: () => setServiceMaintenanceOpen(false) },
+    engines: { id: 'engine-maintenance-title', open: setEngineMaintenanceOpen, close: () => { setEngineMaintenanceOpen(false); setRequestedMaintenanceEngine(null); } },
+  }), []);
+  const openAdministrationPanel = useCallback((panel: AdministrationPanel, fromCenter: boolean) => {
+    if (!user || ((fromCenter || panel !== 'engines') && user.role !== 'admin')) return;
     closeUserMenu();
-    if (restoreMinimizedPanel('engine-maintenance-title')) return;
-    setSelectedMaintenanceEngine(engineId);
-    setEngineMaintenanceOpen(true);
-  }, [closeUserMenu]);
+    setAdministrationOpen(false);
+    setAdministrationOrigins(current => ({ ...current, [panel]: fromCenter }));
+    const destination = administrationPanels[panel];
+    openSidebarPanel(destination.id, destination.open);
+  }, [administrationPanels, closeUserMenu, user]);
+
   useEffect(() => {
-    const openFromSelector = (event: Event) => {
+    const openEngineStatus = (event: Event) => {
       const engineId = (event as CustomEvent<{ engineId?: EngineId }>).detail?.engineId;
-      if (engineId === 'codex' || engineId === 'codebuddy' || engineId === 'opencode' || engineId === 'zcode') openEngineMaintenance(engineId);
+      if (engineId) setRequestedMaintenanceEngine({ engineId });
+      openAdministrationPanel('engines', false);
     };
-    window.addEventListener('relay:open-engine-maintenance', openFromSelector);
-    return () => window.removeEventListener('relay:open-engine-maintenance', openFromSelector);
-  }, [openEngineMaintenance]);
+    const openHosting = (event: Event) => {
+      if (user?.role !== 'admin') return;
+      const path = (event as CustomEvent<{ path?: string }>).detail?.path;
+      if (!path) return;
+      setHostingRequest({ path, requestId: Date.now() });
+      openAdministrationPanel('pages', false);
+    };
+    window.addEventListener('relay:open-engine-maintenance', openEngineStatus);
+    window.addEventListener('relay:open-page-hosting', openHosting);
+    return () => {
+      window.removeEventListener('relay:open-engine-maintenance', openEngineStatus);
+      window.removeEventListener('relay:open-page-hosting', openHosting);
+    };
+  }, [openAdministrationPanel, user?.role]);
+
+  const getAdministrationReturn = (id: string) => {
+    if (user?.role !== 'admin') return undefined;
+    const panel = (Object.keys(administrationPanels) as AdministrationPanel[]).find(key => administrationPanels[key].id === id);
+    if (!panel || !administrationOrigins[panel]) return undefined;
+    return () => {
+      administrationPanels[panel].close();
+      setAdministrationOpen(true);
+    };
+  };
   const closeMobileSidebar = useCallback(() => {
     setSidebarOpen(false);
     setMobileDetails(null);
@@ -504,7 +524,7 @@ export default function Sidebar({
 
   const handleSelectSession = (id: string) => {
     const normalizedQuery = searchQuery.trim();
-    const searchResult = searchResultsForDisplay.find((result) => result.session.id === id);if(normalizedQuery&&searchResult)featureAction('session','search_result','sidebar');
+    const searchResult = resultBySessionId.get(id);if(normalizedQuery&&searchResult)featureAction('session','search_result','sidebar');
     if (searchResult) ensureSession(searchResult.session);
     setActiveSession(id);
     navigate('/');
@@ -543,12 +563,14 @@ export default function Sidebar({
         : current));
   };
 
-  const handleProjectNewChat = (projectId: string, projectSelectionLocked: boolean) => {
-    if (accountScope === 'all') return;featureAction('project','select','sidebar');
+  const handleProjectNewChat = (projectId: string) => {
+    const project = projects.find((candidate) => candidate.id === projectId);
+    if (!project || !canCreateSidebarProjectSession(project, accountInteractionPolicy.canOrganize)) return;
+    featureAction('project', 'select', 'sidebar');
     clearSearch();
     flushSync(() => {
       setCurrentProject(projectId);
-      setActiveSession('', { autoOpenProjectPicker: false, projectSelectionLocked });
+      setActiveSession('', { autoOpenProjectPicker: false, projectSelectionLocked: false });
     });
     if (isWorkspaceConsole || location.pathname === '/admin/page-hosting') navigate('/');
     onRequestComposerFocus('new-chat');
@@ -743,77 +765,88 @@ export default function Sidebar({
   };
 
   // ---- 数据分类 ----
-  const scopedSessions = user?.role === 'admin'
-    ? filterOwnedSidebarItems(sessions, user.id, accountScope, ownerFilterId)
-    : sessions;
-  const scopedProjects = user?.role === 'admin'
-    ? filterOwnedSidebarItems(projects, user.id, accountScope, ownerFilterId)
-    : projects;
   // 全部用户视图隐藏没有会话的空项目（可用开关显示全部）；会话归属按完整项目列表解析
   const [showAllProjects, setShowAllProjects] = useState(readShowAllProjectsPreference);
   const toggleShowAllProjects = () => setShowAllProjects((previous) => (storeShowAllProjectsPreference(!previous), !previous));
-  const visibleProjects = accountScope === 'all' && !ownerFilterId && !showAllProjects ? hideEmptyProjectsInAllScope(scopedProjects, scopedSessions) : scopedProjects;
+  const hidingEmptyProjects = accountScope === 'all' && !ownerFilterId && !showAllProjects;
   const searchMode = Boolean(searchQuery.trim());
-  const fallbackTitleResults: SessionSearchResultDto[] = getFallbackTitleMatches(scopedSessions, searchQuery).map((session) => ({
-    session,
-    titleMatched: true,
-    messageMatchCount: 0,
-    latestMessageMatch: null,
-  }));
-  const searchResultsForDisplay = searchMode
-    ? (searchStatus === 'error' ? fallbackTitleResults : searchResults.filter((result) => scopedSessions.some((session) => session.id === result.session.id)))
-    : [];
-  const resultBySessionId = new Map(searchResultsForDisplay.map((result) => [result.session.id, result]));
-  const filteredSessions = searchMode
-    ? searchResultsForDisplay.map((result) => {
-        const current = scopedSessions.find((session) => session.id === result.session.id);
-        return current ? { ...result.session, ...current } : result.session;
-      })
-    : scopedSessions;
-  const visibleProjectIds = getVisibleSearchProjectIds(searchResultsForDisplay);
+  const { navigation, scopedProjectCount, resultBySessionId } = useMemo(() => {
+    const ownerFilter = sidebarOwnerId ? getSidebarOwnerFilter(sidebarOwnerId) : null;
+    const scopedSessions = ownerFilter ? sessions.filter(ownerFilter) : sessions;
+    const scopedProjects = ownerFilter ? projects.filter(ownerFilter) : projects;
+    const sessionsById = searchMode ? new Map(sessions.map((session) => [session.id, session])) : null;
+    const fallbackTitleResults: SessionSearchResultDto[] = searchMode && searchStatus === 'error' ? getFallbackTitleMatches(scopedSessions, searchQuery).map((session) => ({
+      session,
+      titleMatched: true,
+      messageMatchCount: 0,
+      latestMessageMatch: null,
+    })) : [];
+    const searchResultsForDisplay = searchMode
+      ? (searchStatus === 'error' ? fallbackTitleResults : searchResults.filter(({ session }) => !ownerFilter || ownerFilter(sessionsById?.get(session.id) ?? session)))
+      : [];
+    return {
+      navigation: getSidebarNavigation({
+        projects: scopedProjects,
+        sessions: scopedSessions,
+        matchingSessions: searchMode ? searchResultsForDisplay.map(({ session }) => sessionsById?.get(session.id) ?? session) : null,
+        hideEmptyProjects: hidingEmptyProjects,
+        orders: sidebarOrders,
+      }),
+      scopedProjectCount: scopedProjects.length,
+      resultBySessionId: new Map(searchResultsForDisplay.map((result) => [result.session.id, result])),
+    };
+  }, [hidingEmptyProjects, projects, searchMode, searchQuery, searchResults, searchStatus, sessions, sidebarOrders, sidebarOwnerId]);
+  const { pinnedItems, projectItems, projectRows, visibleSessionsById, sessionsOutsideServerOrder, hasContent: hasNavigationContent, showAllProjectsAction } = navigation;
 
-  const pinnedOrderItems = resolveSidebarItems('pinned', visibleProjects, filteredSessions, sidebarOrders.pinned);
-  const projectOrderItems = resolveSidebarItems('projects', visibleProjects, filteredSessions, sidebarOrders.projects);
-  const pinnedProjects = applySidebarOrder(visibleProjects.filter((p) => p.pinned), pinnedOrderItems, 'project');
-  const normalProjects = applySidebarOrder(visibleProjects.filter((p) => !p.pinned), projectOrderItems, 'project');
-  const visiblePinnedProjects = searchMode ? pinnedProjects.filter((project) => visibleProjectIds.has(project.id)) : pinnedProjects;
-  const visibleNormalProjects = searchMode ? normalProjects.filter((project) => visibleProjectIds.has(project.id)) : normalProjects;
-  // 置顶分组中的独立会话：project 未置顶但 session 已置顶
-  const pinnedStandaloneSessions = applySidebarOrder(filteredSessions.filter((s) => {
-    if (!s.pinned) return false;
-    const projectId = resolveSessionProjectId(s, scopedProjects);
-    const project = scopedProjects.find((p) => p.id === projectId);
-    return !project || !project.pinned;
-  }), pinnedOrderItems, 'session');
+  const navigationReady = navigationLoadState.status === 'ready';
+  const canShowProjectEmptyState = navigationReady && !searchMode;
+  const canShowAllProjects = navigationReady && showAllProjectsAction;
+  const hasNoProjects = canShowProjectEmptyState && scopedProjectCount === 0;
 
-  // 项目下的会话（排除置顶的独立会话）
-  const sessionsUnderProject = (projectId: string) => {
-    const projectSessions = filteredSessions.filter((s) => {
-      if (resolveSessionProjectId(s, scopedProjects) !== projectId) return false;
-      const project = scopedProjects.find((p) => p.id === projectId);
-      if (project?.pinned) return true;
-      return !s.pinned;
-    });
-    const scope = projectSidebarOrderScope(projectId);
-    return applySidebarOrder(
-      projectSessions,
-      resolveSidebarItems(scope, scopedProjects, filteredSessions, sidebarOrders[scope]),
-      'session',
-    );
-  };
-
-  // 项目下所有会话总数（含置顶，用于 tooltip 显示）
-  const totalSessionCount = (projectId: string) =>
-    scopedSessions.filter((s) => resolveSessionProjectId(s, scopedProjects) === projectId).length;
-
-  // 是否有置顶内容
-  const hasPinned = visiblePinnedProjects.length > 0 || pinnedStandaloneSessions.length > 0;
-  const hasNavigationContent = visibleProjects.length > 0 || scopedSessions.length > 0;
-  const showNavigationContent = hasNavigationContent || navigationLoadState.status === 'ready';
+  const showNavigationContent = hasNavigationContent || navigationReady;
   const accountInteractionPolicy = getSidebarAccountInteractionPolicy(accountScope, user?.id ?? '');
   const resourceViewType: UserResourceSelection['type'] = accountScope === 'mine' ? 'mine' : ownerFilterId ? 'user' : 'all';
   const showResourceOwner = accountScope === 'all' && !ownerFilterId;
-  const dragDisabled = !accountInteractionPolicy.canOrganize || Boolean(searchQuery.trim()) || Boolean(renamingTarget);
+  const dragDisabled = !accountInteractionPolicy.canOrganize || searchMode || Boolean(renamingTarget);
+  const isNavigationGroupExpanded = (key: string) => searchMode || isSidebarGroupExpanded(expandedGroups, key);
+
+  const renderProject = (projectId: string, scope: 'projects' | 'pinned') => {
+    const row = projectRows.get(projectId);
+    if (!row) return null;
+    const groupKey = `p-${projectId}`;
+    return (
+      <ProjectBlock
+        key={projectId}
+        scope={scope}
+        {...row}
+        sessionsOutsideServerOrder={sessionsOutsideServerOrder}
+        showEmptyState={canShowProjectEmptyState}
+        activeSessionId={activeSessionId}
+        expanded={isNavigationGroupExpanded(groupKey)}
+        onToggle={() => toggleGroup(groupKey)}
+        onSelectSession={handleSelectSession}
+        onProjectMenu={openProjectMenu}
+        onProjectPin={handleProjectPin}
+        onProjectNewChat={handleProjectNewChat}
+        onSessionMenu={openSessionMenu}
+        onSessionPin={handleSessionPin}
+        renamingTarget={renamingTarget}
+        renameValue={renameValue}
+        onRenameChange={setRenameValue}
+        onRenameSubmit={renamingTarget?.type === 'project' ? handleProjectRenameSubmit : handleSessionRenameSubmit}
+        onRenameCancel={() => setRenamingTarget(null)}
+        contextMenuActive={contextMenu?.type === 'project' && contextMenu.projectId === projectId}
+        contextMenuSessionId={contextMenu?.type === 'session' ? contextMenu.sessionId : undefined}
+        isMobile={isMobile}
+        dragDisabled={dragDisabled}
+        canOrganize={accountInteractionPolicy.canOrganize}
+        showOwner={showResourceOwner}
+        dragging={activeDragId !== null}
+        searchQuery={searchMode ? searchQuery : ''}
+        searchResults={resultBySessionId}
+      />
+    );
+  };
 
   const sidebarCollisionDetection: CollisionDetection = useCallback((args) => {
     const activeData = args.active.data.current;
@@ -931,7 +964,6 @@ export default function Sidebar({
   const menuResource = menuProject ?? menuSession;
   const menuInteractionPolicy = getSidebarAccountInteractionPolicy(accountScope, user?.id ?? '', menuResource?.owner);
   const canManageMenuProject = Boolean(menuProject && (user?.role === 'admin' || menuProject.access_role === 'owner' || (!menuProject.owner)));
-  const canCreateMenuSession = Boolean(menuProject && (user?.role === 'admin' || menuProject.access_role === 'owner' || menuProject.access_role === 'collaborator' || menuProject.access_role === 'manager' || !menuProject.access_role));
   const contextMenuItems: ContextMenuItem[] = contextMenu?.type === 'project' && menuProject
     ? [
         ...(menuInteractionPolicy.canOrganize ? [{
@@ -940,11 +972,11 @@ export default function Sidebar({
           icon: <MenuIcon type="pin" pinned={!!menuProject.pinned} />,
           onSelect: () => handleProjectPin(menuProject.id),
         } satisfies ContextMenuItem] : []),
-        ...(accountScope !== 'all' && canCreateMenuSession ? [{
+        ...(canCreateSidebarProjectSession(menuProject, menuInteractionPolicy.canOrganize) ? [{
           id: 'new-session',
           label: '新会话',
           icon: <MenuIcon type="plus" />,
-          onSelect: () => handleProjectNewChat(menuProject.id, false),
+          onSelect: () => handleProjectNewChat(menuProject.id),
         } satisfies ContextMenuItem] : []),
         {
           id: 'details',
@@ -1055,7 +1087,7 @@ export default function Sidebar({
           </Tooltip>
         )}
         {/* 顶部：固定在头部 */}
-        <SidebarWorkbench serviceStatus={serviceStatus} isAdmin={user?.role === 'admin'} resourceViewType={resourceViewType} selectedResourceUser={selectedResourceUser} searchQuery={searchQuery} onNewChat={handleNewChat} onOpenUserResources={() => { restoreMinimizedPanel('user-resource-dialog-title'); setUserResourceDialogOpen(true); }} onExitUserResources={restorePersonalResourceView} onSearch={beginSearch} onClearSearch={clearSearch} showAllProjectsToggle={resourceViewType === 'all' ? { checked: showAllProjects, onToggle: toggleShowAllProjects } : null} />
+        <SidebarWorkbench serviceStatus={serviceStatus} isAdmin={user?.role === 'admin'} resourceViewType={resourceViewType} selectedResourceUser={selectedResourceUser} searchQuery={searchQuery} onNewChat={handleNewChat} onOpenUserResources={() => openSidebarPanel('user-resource-dialog-title', setUserResourceDialogOpen)} onExitUserResources={restorePersonalResourceView} onSearch={beginSearch} onClearSearch={clearSearch} showAllProjectsToggle={resourceViewType === 'all' ? { checked: showAllProjects, onToggle: toggleShowAllProjects } : null} />
         {/* 列表区域 */}
         <DndContext
           sensors={sensors}
@@ -1067,7 +1099,7 @@ export default function Sidebar({
           {showNavigationContent && searchMode && searchStatus === 'loading' && (
             <ListState kind="loading" title="正在搜索…" compact className="sidebar-navigation-state" />
           )}
-          {showNavigationContent && searchMode && searchStatus === 'ready' && filteredSessions.length === 0 && (
+          {showNavigationContent && searchMode && searchStatus === 'ready' && pinnedItems.length === 0 && projectItems.length === 0 && (
             <ListState kind="empty" title="没有匹配的会话或消息" detail="换个关键词试试" compact className="sidebar-navigation-state" />
           )}
           {showNavigationContent && searchMode && searchStatus === 'error' && (
@@ -1087,51 +1119,16 @@ export default function Sidebar({
             onRetry={() => setNavigationReloadVersion((version) => version + 1)}
           />
           {/* 置顶分组 —— 无置顶内容时隐藏 */}
-          {showNavigationContent && hasPinned && (
+          {showNavigationContent && pinnedItems.length > 0 && (
             <TopGroup
               title="置顶"
-              expanded={searchMode ? true : isSidebarGroupExpanded(expandedGroups, 'pinned')}
+              expanded={isNavigationGroupExpanded('pinned')}
               onToggle={() => toggleGroup('pinned')}
             >
-              <SortableContext items={pinnedOrderItems.map(sidebarDragId)} strategy={verticalListSortingStrategy}>
-                {pinnedOrderItems.map((item) => {
-                  if (item.type === 'project') {
-                    const project = visiblePinnedProjects.find((candidate) => candidate.id === item.id);
-                    if (!project) return null;
-                    return (
-                      <ProjectBlock
-                        key={sidebarDragId(item)}
-                        scope="pinned"
-                        project={project}
-                        sessions={sessionsUnderProject(project.id)}
-                        sessionCount={totalSessionCount(project.id)}
-                        activeSessionId={activeSessionId}
-                        expanded={searchMode ? true : isSidebarGroupExpanded(expandedGroups, `p-${project.id}`)}
-                        onToggle={() => toggleGroup(`p-${project.id}`)}
-                        onSelectSession={handleSelectSession}
-                        onProjectMenu={openProjectMenu}
-                        onProjectPin={handleProjectPin}
-                        onProjectNewChat={(projectId) => handleProjectNewChat(projectId, accountScope === 'all')}
-                        onSessionMenu={openSessionMenu}
-                        onSessionPin={handleSessionPin}
-                        renamingTarget={renamingTarget}
-                        renameValue={renameValue}
-                        onRenameChange={setRenameValue}
-                        onRenameSubmit={renamingTarget?.type === 'project' ? handleProjectRenameSubmit : handleSessionRenameSubmit}
-                        onRenameCancel={() => setRenamingTarget(null)}
-                        contextMenuActive={!!contextMenu && contextMenu.type === 'project' && contextMenu.projectId === project.id}
-                        contextMenuSessionId={contextMenu?.type === 'session' ? contextMenu.sessionId : undefined}
-                        isMobile={isMobile}
-                        dragDisabled={dragDisabled}
-                        canOrganize={accountInteractionPolicy.canOrganize}
-                        showOwner={showResourceOwner}
-                        dragging={activeDragId !== null}
-                        searchQuery={searchMode ? searchQuery : ''}
-                        searchResults={resultBySessionId}
-                      />
-                    );
-                  }
-                  const session = pinnedStandaloneSessions.find((candidate) => candidate.id === item.id);
+              <SortableContext items={pinnedItems.filter((item) => item.type === 'project' || !sessionsOutsideServerOrder.has(item.id)).map(sidebarDragId)} strategy={verticalListSortingStrategy}>
+                {pinnedItems.map((item) => {
+                  if (item.type === 'project') return renderProject(item.id, 'pinned');
+                  const session = visibleSessionsById.get(item.id);
                   if (!session) return null;
                   return (
                     <SessionRow
@@ -1150,6 +1147,7 @@ export default function Sidebar({
                       contextMenuActive={!!contextMenu && contextMenu.type === 'session' && contextMenu.sessionId === session.id}
                       isMobile={isMobile}
                       dragDisabled={dragDisabled}
+                      outsideServerOrder={sessionsOutsideServerOrder.has(item.id)}
                       canOrganize={accountInteractionPolicy.canOrganize}
                       showOwner={showResourceOwner}
                       dragging={activeDragId !== null}
@@ -1163,47 +1161,18 @@ export default function Sidebar({
           )}
 
           {/* 项目分组 */}
-          {showNavigationContent && (!searchMode || filteredSessions.length > 0) && <TopGroup
+          {showNavigationContent && (projectItems.length > 0 || canShowAllProjects || hasNoProjects) && <TopGroup
             title="项目"
-            expanded={searchMode ? true : isSidebarGroupExpanded(expandedGroups, 'projects')}
+            expanded={isNavigationGroupExpanded('projects')}
             onToggle={() => toggleGroup('projects')}
           >
-            {visibleNormalProjects.length === 0 ? (
-              <span className="sidebar-navigation-state sidebar-navigation-state--inline block">暂无项目，可从“新对话”选择或创建项目</span>
-            ) : (
-              <SortableContext items={projectOrderItems.map(sidebarDragId)} strategy={verticalListSortingStrategy}>
-              {visibleNormalProjects.map((project) => (
-                <ProjectBlock
-                  key={project.id}
-                  scope="projects"
-                  project={project}
-                  sessions={sessionsUnderProject(project.id)}
-                  sessionCount={totalSessionCount(project.id)}
-                  activeSessionId={activeSessionId}
-                  expanded={searchMode ? true : isSidebarGroupExpanded(expandedGroups, `p-${project.id}`)}
-                  onToggle={() => toggleGroup(`p-${project.id}`)}
-                  onSelectSession={handleSelectSession}
-                  onProjectMenu={openProjectMenu}
-                  onProjectPin={handleProjectPin}
-                  onProjectNewChat={(projectId) => handleProjectNewChat(projectId, accountScope === 'all')}
-                  onSessionMenu={openSessionMenu}
-                  onSessionPin={handleSessionPin}
-                  renamingTarget={renamingTarget}
-                  renameValue={renameValue}
-                  onRenameChange={setRenameValue}
-                  onRenameSubmit={renamingTarget?.type === 'project' ? handleProjectRenameSubmit : handleSessionRenameSubmit}
-                  onRenameCancel={() => setRenamingTarget(null)}
-                  contextMenuActive={!!contextMenu && contextMenu.type === 'project' && contextMenu.projectId === project.id}
-                  contextMenuSessionId={contextMenu?.type === 'session' ? contextMenu.sessionId : undefined}
-                  isMobile={isMobile}
-                  dragDisabled={dragDisabled}
-                  canOrganize={accountInteractionPolicy.canOrganize}
-                  showOwner={showResourceOwner}
-                  dragging={activeDragId !== null}
-                  searchQuery={searchMode ? searchQuery : ''}
-                  searchResults={resultBySessionId}
-                />
-              ))}
+            {canShowAllProjects && (
+              <button type="button" onClick={toggleShowAllProjects} className="sidebar-navigation-state sidebar-navigation-state--inline sidebar-navigation-state--action block">显示全部项目</button>
+            )}
+            {hasNoProjects && <span className="sidebar-navigation-state sidebar-navigation-state--inline block">暂无项目</span>}
+            {projectItems.length > 0 && (
+              <SortableContext items={projectItems.map(sidebarDragId)} strategy={verticalListSortingStrategy}>
+                {projectItems.map((item) => renderProject(item.id, 'projects'))}
               </SortableContext>
             )}
           </TopGroup>}
@@ -1219,17 +1188,12 @@ export default function Sidebar({
                 user={user}
                 anchorRect={userMenuAnchor}
                 mobile={isMobile}
-                showServiceMaintenance={isManualRestartVisible(user?.role)}
-                engineSummary={engineMaintenanceSummary}
                 onAnchorChange={(anchor) => { setContextMenu(null); setUserMenuAnchor(anchor); }}
                 onClose={closeUserMenu}
-                onOpenSettings={() => { restoreMinimizedPanel('account-settings-title'); setAccountSettingsOpen(true); }}
-                onOpenShares={() => { restoreMinimizedPanel('my-shares-title'); setMySharesOpen(true); }}
-                onOpenTrash={() => { restoreMinimizedPanel('trash-dialog-title'); setTrashOpen(true); }}
-                onOpenAccountManagement={() => { restoreMinimizedPanel('account-management-title'); setAccountManagementOpen(true); }}
-                onOpenPageHosting={() => { restoreMinimizedPanel('page-hosting-title'); setPageHostingOpen(true); }}
-                onOpenServiceMaintenance={() => { restoreMinimizedPanel('service-maintenance-title'); setServiceMaintenanceOpen(true); }}
-                onOpenEngineMaintenance={openEngineMaintenance}
+                onOpenSettings={() => openSidebarPanel('account-settings-title', setAccountSettingsOpen)}
+                onOpenShares={() => openSidebarPanel('my-shares-title', setMySharesOpen)}
+                onOpenTrash={() => openSidebarPanel('trash-dialog-title', setTrashOpen)}
+                onOpenAdministration={() => setAdministrationOpen(true)}
                 onLogout={() => setLogoutConfirmOpen(true)}
               />
             </div>
@@ -1304,13 +1268,18 @@ export default function Sidebar({
         />
 
         <MySharesDialog open={mySharesOpen} onClose={() => setMySharesOpen(false)} mobile={isMobile} />
-        <TrashDialog open={trashOpen} admin={user?.role === 'admin'} onClose={() => setTrashOpen(false)} onChanged={() => setNavigationReloadVersion((value) => value + 1)} />
+        <TrashDialog mobile={isMobile} open={trashOpen} admin={user?.role === 'admin'} onClose={() => setTrashOpen(false)} onChanged={() => setNavigationReloadVersion((value) => value + 1)} />
         <ShareCreateDialog draft={shareDraft} onClose={() => setShareDraft(null)} />
-        <ServiceMaintenanceDialog open={serviceMaintenanceOpen} onClose={() => setServiceMaintenanceOpen(false)} />
-        <EngineMaintenanceDialog engineId={selectedMaintenanceEngine} open={engineMaintenanceOpen} onClose={() => setEngineMaintenanceOpen(false)} />
+        <PanelReturnContext.Provider value={getAdministrationReturn}>
+          {user?.role === 'admin' && <>
+            <AdministrationCenter open={administrationOpen} mobile={isMobile} onClose={() => setAdministrationOpen(false)} onSelect={panel => openAdministrationPanel(panel, true)} />
+            <ServiceMaintenanceDialog mobile={isMobile} open={serviceMaintenanceOpen} onClose={administrationPanels.server.close} />
+            <AccountManagementDialog open={accountManagementOpen} onClose={administrationPanels.accounts.close} mobile={isMobile} />
+            {pageHostingOpen && <Suspense fallback={null}><PageHostingPanel importRequest={hostingRequest} onClose={administrationPanels.pages.close} mobile={isMobile} /></Suspense>}
+          </>}
+          <EngineMaintenanceDialog mobile={isMobile} surface={administrationOrigins.engines ? 'user_menu' : 'composer'} requestedEngine={requestedMaintenanceEngine} open={engineMaintenanceOpen} onClose={administrationPanels.engines.close} />
+        </PanelReturnContext.Provider>
         <SettingsCenterDialog open={accountSettingsOpen} onClose={() => setAccountSettingsOpen(false)} mobile={isMobile} />
-        {user?.role === 'admin' && <AccountManagementDialog open={accountManagementOpen} onClose={() => setAccountManagementOpen(false)} mobile={isMobile} />}
-        {user?.role === 'admin' && pageHostingOpen && <Suspense fallback={null}><PageHostingPanel importRequest={hostingRequest} onClose={() => {setPageHostingOpen(false);setHostingRequest(null);}} mobile={isMobile} /></Suspense>}
         {user?.role === 'admin' && <UserResourceDialog open={userResourceDialogOpen} onClose={() => setUserResourceDialogOpen(false)} mobile={isMobile} currentUser={user} selectedType={resourceViewType} selectedUserId={ownerFilterId} onSelect={selectUserResourceView} />}
         {uploadsProjects.map((project) => <ProjectUploadsDialog key={project.id} project={project} onClose={() => setUploadsProjects((current) => current.filter((item) => item.id !== project.id))} />)}
         {membersProjects.map((project) => <ProjectMembersDialog key={project.id} project={project} onClose={() => setMembersProjects((current) => current.filter((item) => item.id !== project.id))} onProjectUpdated={(updated) => { setMembersProjects((current) => current.map((item) => item.id === updated.id ? updated : item)); setProjects(projects.map((item) => item.id === updated.id ? updated : item)); }} />)}

@@ -30,7 +30,7 @@ test('登记表每个语义主点唯一、覆盖矩阵没有伪装已接入且�
   assert.deepEqual(new Set(covered),new Set(ANALYTICS_REGISTRY.map(entry=>entry.id)));
   assert.equal(covered.length,ANALYTICS_REGISTRY.length);
   assert.ok(ANALYTICS_COVERAGE.every(group=>group.registrations.length>0&&group.registrations.every(entry=>entry.status==='planned'||entry.status==='retired'||entry.source)));
-  assert.deepEqual(ANALYTICS_COVERAGE.flatMap(group=>group.registrations.filter(entry=>entry.status==='retired').map(entry=>entry.id)).sort(), ['maintenance.apply_repair','maintenance.preview_repair']);
+  assert.deepEqual(ANALYTICS_COVERAGE.flatMap(group=>group.registrations.filter(entry=>entry.status==='retired').map(entry=>entry.id)).sort(), ['maintenance.apply_repair','maintenance.open','maintenance.preview_repair']);
   assert.equal(ANALYTICS_COVERAGE.flatMap(group=>group.registrations).find(entry=>entry.id==='maintenance.apply_repair.result')?.status,'implemented');
   for(const item of ANALYTICS_IMPLEMENTATION_EVIDENCE){
     assert.ok(existsSync(new URL(`../../../${item.source}`,import.meta.url)),item.source);

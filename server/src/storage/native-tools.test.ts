@@ -8,6 +8,7 @@ import type { StorageCommandEnvelope } from './contracts.js';
 import { TOOLS_SCHEMA_SQL } from './tools-contract.js';
 import { hashSessionToken } from '../auth/session.js';
 import { createStoredAuthModule } from '../routes/stored-auth.js';
+import { MEDIA_TOOL_IDS } from '../analytics/registry.js';
 
 const token = (id: string) => `synthetic-tools-${id}`;
 const principal = (id = 'owner') => ({ kind: 'user' as const, userId: id, authSessionHash: hashSessionToken(token(id)) });
@@ -93,17 +94,18 @@ test('new tools extend existing account settings without dropping earlier pins o
   const p = await prepared();
   try {
     await p.port.execute(p.command({ action: 'use', toolId: 'weather' }));
-    for (const toolId of ['calendar', 'weather', 'greeting', 'timestamp', 'json', 'qr', 'diff', 'pomodoro', 'units', 'dates', 'shopping', 'random']) {
+    for (const toolId of ['calendar', 'weather', 'greeting', 'timestamp', 'json', 'qr', 'diff', 'pomodoro', 'units', 'dates', 'shopping', 'random', ...MEDIA_TOOL_IDS]) {
       assert.equal((await p.port.execute(p.command({ action: 'pin', toolId, pinned: true }))).state, 'committed');
     }
-    for (const toolId of ['timestamp', 'json', 'qr', 'diff', 'pomodoro', 'units', 'dates', 'shopping', 'random']) {
+    for (const toolId of ['timestamp', 'json', 'qr', 'diff', 'pomodoro', 'units', 'dates', 'shopping', 'random', ...MEDIA_TOOL_IDS]) {
       assert.equal((await p.port.execute(p.command({ action: 'use', toolId }))).state, 'committed');
     }
     const state = await p.read();
-    assert.equal(state.pinned.length, 13);
+    assert.equal(state.pinned.length, 13 + MEDIA_TOOL_IDS.length);
     assert.equal(state.usage.weather?.count, 1);
     assert.equal(state.usage.qr?.count, 1);
     assert.equal(state.usage.shopping?.count, 1);
+    assert.equal(state.usage['video-edit']?.count, 1);
     assert.deepEqual(await p.read('other'), { pinned: ['news'], usage: {} });
   } finally { await p.close(); }
 });

@@ -22,6 +22,8 @@ export function useEngineMaintenance(enabled: boolean, engineId: EngineId) {
   const [aborting, setAborting] = useState(false);
   const [operationOutput, setOperationOutput] = useState(emptyMaintenanceOutputState);
   const [error, setError] = useState<string | null>(null);
+  const selectedEngineRef = useRef(engineId);
+  selectedEngineRef.current = engineId;
   const abortRef = useRef<AbortController | null>(null);
   const operationAbortRef = useRef<AbortController | null>(null);
   useEffect(() => () => operationAbortRef.current?.abort(), []);
@@ -38,8 +40,11 @@ export function useEngineMaintenance(enabled: boolean, engineId: EngineId) {
     try {
       const next = await checkEngineMaintenanceLatest(engineId);
       setSnapshot((current) => current ? { engines: current.engines.map((engine) => engine.engineId === engineId ? next : engine) as EngineMaintenanceResponseDto['engines'] } : current);
-    } catch (next) { setError(next instanceof Error ? next.message : '检查最新版本失败'); }
-    finally { setChecking(null); }
+    } catch (next) {
+      if (selectedEngineRef.current === engineId) setError(next instanceof Error ? next.message : '检查最新版本失败');
+    } finally {
+      setChecking(current => current === engineId ? null : current);
+    }
   }, []);
   const trackOperation = useCallback(async (reserved: EngineMaintenanceOperationDto, resumed = false) => {
     const controller = new AbortController(); operationAbortRef.current?.abort(); operationAbortRef.current = controller;

@@ -1,6 +1,7 @@
 import { z } from 'zod';
+import { ANALYTICS_TOOL_IDS } from '../analytics/registry.js';
 
-export const ToolIdSchema = z.enum(['news', 'calendar', 'weather', 'greeting', 'timestamp', 'json', 'qr', 'diff', 'pomodoro', 'units', 'dates', 'shopping', 'random']);
+export const ToolIdSchema = z.enum(ANALYTICS_TOOL_IDS);
 export const ToolsStateSchema = z.object({
   pinned: z.array(ToolIdSchema).max(ToolIdSchema.options.length),
   usage: z.record(ToolIdSchema, z.object({ count: z.number().int().min(1).max(1_000_000), lastUsed: z.number().int().nonnegative().safe() }).strict()),

@@ -28,8 +28,10 @@ test('后续 WebSocket 协议握手增量合并会话快照且首次连接不重
   assert.match(chatStore, /mergeReconnectSessionSnapshot:/);
 });
 
-test('重连使用完整侧栏排序快照清理分页会话列表之外的残留资源', () => {
-  assert.match(source, /Promise\.all\(\[listSessions\(\), listSidebarOrders\(\)\]\)/);
+test('重连使用同一取消信号加载会话和排序，保留列表中仍可访问的会话', () => {
+  assert.match(source, /Promise\.all\(\[listSessions\(controller\.signal\), listSidebarOrders\(controller\.signal\)\]\)/);
+  assert.match(source, /ws\.addEventListener\('close', abort, \{ once: true \}\)/);
+  assert.match(source, /for \(const session of sessions\) inventory\.sessionIds\.add\(session\.id\)/);
   assert.match(source, /findMissingResourceIds/);
   assert.match(source, /for \(const projectId of missing\.projectIds\).*removeProject/);
   assert.match(source, /for \(const sessionId of missing\.sessionIds\).*removeSession/);

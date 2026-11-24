@@ -102,6 +102,13 @@ test('repository composition keeps provider payload pure, batches history lookup
   const registry = { schemaVersion: 1, generatedAt: null, tasks: [task, { ...task, id: 'delivery-b' }] };
   const source = projectFeishuSnapshot({ generatedAt: new Date().toISOString(), fetchedAt: 1000, retrievalComplete: true, classificationComplete: true, relationCoverage: 'not_queried', facts: [] }, 'me');
   const composition = new TaskRegistryComposition(async () => registry, {}, () => client, 'test');
+  const coldCache = await composition.compose({ ...source, servedFromCache: true });
+  assert.equal(calls.length, 0, 'reading a stored report must not contact Feishu even without a composed result');
+  assert.equal(coldCache.associationMeta?.state, 'partial');
+  assert.equal(coldCache.associationMeta?.checkedAt, null);
+  assert.deepEqual(coldCache.localAssociated[0].localTaskIds, ['delivery-a', 'delivery-b']);
+  assert.equal(coldCache.localAssociated[0].verified, false);
+  assert.equal(coldCache.fetchedAt, source.fetchedAt);
   const result = await composition.compose(source);
   assert.deepEqual(source.localAssociated, []); assert.deepEqual(source.workbenchItems, []);
   assert.equal(result.workbenchItems.length, 1); assert.equal(result.localAssociated.length, 2);
@@ -158,7 +165,7 @@ test('supplemented defects share the adapter collaborator rule without adding pe
   assert.deepEqual(result.items,[]);assert.deepEqual(source.workbenchItems,[]);
 });
 
-test('supplement failure preserves known native links and can recover without a pure snapshot refresh',async()=>{
+test('cached reads preserve known native links and a fresh report retries failed supplements',async()=>{
   let failed=true,catalogCalls=0;
   const client={config:{connectionId:'test',scope:'test',projectKey:'space',userKey:'me'},
     catalog:async()=>{catalogCalls++;if(failed)throw Error('offline');return[{type_key:'issue'}];},
@@ -171,7 +178,13 @@ test('supplement failure preserves known native links and can recover without a 
   const first=await composition.compose(source);
   assert.equal(first.localAssociated[0].verified,true);assert.equal(first.localAssociated[0].title,'known');
   assert.equal(first.localAssociated[1].verified,false);
-  failed=false;await composition.compose(source);assert.equal(catalogCalls,2);
+  failed=false;
+  const cached=await composition.compose({...source,servedFromCache:true});
+  assert.equal(catalogCalls,1);
+  assert.equal(cached.localAssociated[0].verified,true);
+  assert.equal(cached.localAssociated[1].verified,false);
+  assert.equal(cached.associationMeta?.state,'partial');
+  await composition.compose({...source,fetchedAt:source.fetchedAt+1});assert.equal(catalogCalls,2);
 });
 
 test('unbound connection performs no lookup and does not associate identical numeric IDs',async()=>{

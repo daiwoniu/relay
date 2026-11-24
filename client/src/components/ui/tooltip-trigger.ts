@@ -2,7 +2,7 @@ import type { HTMLAttributes, PointerEvent, FocusEvent } from 'react';
 
 export function tooltipTriggerProps(
   original: HTMLAttributes<HTMLElement>,
-  handlers: { enter(event: PointerEvent<HTMLElement>): void; focus(event: FocusEvent<HTMLElement>): void; hide(): void },
+  handlers: { enter(event: PointerEvent<HTMLElement>): void; focus(event: FocusEvent<HTMLElement>): void; hide(): void; press?(): void },
   descriptionId?: string,
   hint?: string | null,
 ): HTMLAttributes<HTMLElement> {
@@ -13,7 +13,7 @@ export function tooltipTriggerProps(
     onPointerEnter(event) { original.onPointerEnter?.(event); if (!event.defaultPrevented) handlers.enter(event); },
     onPointerLeave(event) { original.onPointerLeave?.(event); handlers.hide(); },
     onPointerCancel(event) { original.onPointerCancel?.(event); handlers.hide(); },
-    onPointerDown(event) { original.onPointerDown?.(event); handlers.hide(); },
+    onPointerDown(event) { original.onPointerDown?.(event); (handlers.press ?? handlers.hide)(); },
     onFocus(event) { original.onFocus?.(event); if (!event.defaultPrevented) handlers.focus(event); },
     onBlur(event) { original.onBlur?.(event); handlers.hide(); },
   };

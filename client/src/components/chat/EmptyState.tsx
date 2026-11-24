@@ -1,5 +1,6 @@
 import Tooltip from '../ui/Tooltip';
 import { Link } from 'react-router-dom';
+import { appPageRoutes } from '../../../../server/src/analytics/pages.ts';
 import type { Session } from '../../stores/chat';
 import RelayLogo from '../brand/RelayLogo';
 import ToolboxIcon from '../icons/ToolboxIcon';
@@ -7,12 +8,11 @@ import { useChinaDayGreeting } from '../../hooks/useChinaDayGreeting';
 import { buildEmptyStateToday } from './empty-state-today';
 
 interface Props {
-  isAdmin: boolean;
-  recentSession: Session | null;
+  recentSessions: readonly Session[];
   onOpenRecentSession: (id: string) => void;
 }
 
-export default function EmptyState({ isAdmin, recentSession, onOpenRecentSession }: Props) {
+export default function EmptyState({ recentSessions, onOpenRecentSession }: Props) {
   const { now, today, day, greeting, rotateGreeting } = useChinaDayGreeting();
   const view = buildEmptyStateToday(today, day, now.getHours());
 
@@ -38,28 +38,29 @@ export default function EmptyState({ isAdmin, recentSession, onOpenRecentSession
         {view.weather && <p className="mt-3 text-sm text-[var(--color-text-secondary)]">{view.weather}</p>}
         <span onClick={rotateGreeting} className="mt-3 inline-block cursor-pointer text-sm text-[var(--color-text-secondary)] hover:text-[var(--color-text)]">{greeting}</span>
 
-        <nav aria-label="快捷导航" className={`mt-7 w-full max-w-[320px] ${isAdmin ? 'sm:max-w-xl' : 'sm:max-w-sm'}`}>
-          <div className={`grid grid-cols-1 gap-3 ${isAdmin ? 'sm:grid-cols-2' : ''}`}>
-            {isAdmin && (
-              <Link to="/admin/task-workbench" target="_blank" rel="noopener noreferrer" className="group flex min-w-0 items-center gap-3 rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-4 py-3 text-left transition-colors hover:border-[var(--color-primary)]/45 hover:bg-[var(--color-bg-tertiary)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-primary)]">
-                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[var(--color-bg-tertiary)] text-[var(--color-text-secondary)] group-hover:text-[var(--color-text)]">
-                  <svg width="19" height="19" viewBox="0 0 20 20" fill="none" aria-hidden="true"><rect x="2.5" y="2.5" width="6" height="6" rx="1.25" stroke="currentColor" strokeWidth="1.5" /><rect x="11.5" y="2.5" width="6" height="6" rx="1.25" stroke="currentColor" strokeWidth="1.5" /><rect x="2.5" y="11.5" width="6" height="6" rx="1.25" stroke="currentColor" strokeWidth="1.5" /><rect x="11.5" y="11.5" width="6" height="6" rx="1.25" stroke="currentColor" strokeWidth="1.5" /></svg>
-                </span>
-                <span className="min-w-0"><span className="block text-sm font-medium text-[var(--color-text)]">任务工作台</span><span className="mt-0.5 block text-xs text-[var(--color-text-secondary)]">查看任务与用量</span></span>
-              </Link>
-            )}
-            <Link to="/tools" target="_blank" rel="noopener noreferrer" className="group flex min-w-0 items-center gap-3 rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-4 py-3 text-left transition-colors hover:border-[var(--color-primary)]/45 hover:bg-[var(--color-bg-tertiary)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-primary)]">
-              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[var(--color-bg-tertiary)] text-[var(--color-text-secondary)] group-hover:text-[var(--color-text)]">
-                <ToolboxIcon />
-              </span>
-              <span className="min-w-0"><span className="block text-sm font-medium text-[var(--color-text)]">工具集</span><span className="mt-0.5 block text-xs text-[var(--color-text-secondary)]">资讯、日历与日常工具</span></span>
-            </Link>
-          </div>
-          {recentSession && (
-            <Tooltip overflowOnly content={recentSession.title} asChild><button type="button" onClick={() => onOpenRecentSession(recentSession.id)} className="mx-auto mt-4 flex max-w-full items-center gap-1.5 rounded-lg px-2 py-1 text-sm text-[var(--color-text-secondary)] hover:text-[var(--color-text)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-primary)]">
-              <svg width="15" height="15" viewBox="0 0 16 16" fill="none" className="shrink-0" aria-hidden="true"><circle cx="8" cy="8" r="5.5" stroke="currentColor" strokeWidth="1.4" /><path d="M8 4.5V8l2.5 1.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" /></svg>
-              <span className="shrink-0">继续最近会话 ·</span><span className="truncate">{recentSession.title || '新对话'}</span>
-            </button></Tooltip>
+        <nav aria-label="快捷导航" className="mt-7 w-full max-w-[320px] sm:max-w-sm">
+          <Link to={appPageRoutes.tools.path} target="_blank" rel="noopener noreferrer" className="flex min-w-0 items-center gap-3 rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-4 py-3 text-left transition-colors hover:border-[var(--color-primary)]/45 hover:bg-[var(--color-bg-tertiary)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-primary)]">
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[var(--color-bg-tertiary)] text-[var(--color-text-secondary)]">
+              <ToolboxIcon />
+            </span>
+            <span className="min-w-0"><span className="block text-sm font-medium text-[var(--color-text)]">工具集</span><span className="mt-0.5 block text-xs text-[var(--color-text-secondary)]">资讯、日历与日常工具</span></span>
+          </Link>
+          {recentSessions.length > 0 && (
+            <section aria-labelledby="empty-state-recent-heading" className="mt-4 text-left">
+              <h3 id="empty-state-recent-heading" className="px-2 text-xs text-[var(--color-text-secondary)]">最近会话</h3>
+              <ul className="mt-1">
+                {recentSessions.map(session => (
+                  <li key={session.id}>
+                    <Tooltip overflowOnly content={session.title} asChild>
+                      <button type="button" onClick={() => onOpenRecentSession(session.id)} className="flex min-h-11 w-full min-w-0 items-center gap-2 rounded-lg px-2 text-left text-sm text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-text)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-primary)]">
+                        <svg width="15" height="15" viewBox="0 0 16 16" fill="none" className="shrink-0" aria-hidden="true"><circle cx="8" cy="8" r="5.5" stroke="currentColor" strokeWidth="1.4" /><path d="M8 4.5V8l2.5 1.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" /></svg>
+                        <span className="truncate">{session.title || '新对话'}</span>
+                      </button>
+                    </Tooltip>
+                  </li>
+                ))}
+              </ul>
+            </section>
           )}
         </nav>
       </div>

@@ -5,7 +5,7 @@ import { loadAcceptanceConfig } from './lib/config.mjs';
 import { runDpapi } from './lib/dpapi.mjs';
 import { createRunPaths } from './lib/run-state.mjs';
 import { runReadOnlyAcceptance } from './lib/read-only-scenarios.mjs';
-import { writeAcceptanceReport } from './lib/report.mjs';
+import { createScenarioResult, writeAcceptanceReport } from './lib/report.mjs';
 import { SESSION_PATH } from './lib/paths.mjs';
 import { parseAcceptanceArguments, runEngineScenarios } from './lib/engine-scenarios.mjs';
 
@@ -37,7 +37,7 @@ async function main(rawArgs) {
       workbench: options.workbench === true,
       runAdditionalScenarios: options.mode === 'engine'
         ? ({ page }) => runEngineScenarios({ page, engine: options.engine, scenario: options.scenario })
-        : undefined,
+        : options.accountSettings ? ({ page }) => runAccountSettings(page) : undefined,
     });
     console.log(`验收结论：${report.status}`);
     console.log(`运行目录：.relay-dev/acceptance/${report.runId}`);
@@ -48,10 +48,30 @@ async function main(rawArgs) {
   }
 }
 
+async function runAccountSettings(page) {
+  const scenarios = [];
+  await page.reload();
+  let stable = await page.waitForStable({ requireMetadata: true });
+  for (const [index, category] of ['新对话默认值', '通知与提示音', '新对话默认值', '通知与提示音'].entries()) {
+    if (index > 0 && scenarios.at(-1).status === 'failed') {
+      await page.reload();
+      stable = await page.waitForStable({ requireMetadata: true });
+    }
+    const result = await page.inspectAccountSettings(category);
+    scenarios.push(createScenarioResult({
+      id: `settings-${index + 1}-${category}`,
+      status: result.ready && !result.error ? 'passed' : 'failed',
+      detail: result.error || (result.ready ? '设置正文已显示' : '设置正文未显示'),
+      snapshot: { buildId: stable.buildId, scrollToReturnsPromise: result.scrollToReturnsPromise },
+    }));
+  }
+  return scenarios;
+}
+
 async function relayAvailable(origin) {
   try { const response = await fetch(`${origin}/__relay/frontend-status`, { signal: AbortSignal.timeout(2000), redirect: 'error' }); return response.ok; } catch { return false; }
 }
 
 function printHelp() {
-  console.log(`Relay Headless 页面验收\n\n用法：\n  npm run acceptance:page\n  npm run acceptance:page -- --workbench\n  npm run acceptance:page -- --allow-engine-run --engine <codex|codebuddy|all> --scenario <complete|stop|refresh>\n\n说明：\n  默认只读；不会创建会话、发送消息、停止任务或重启 Relay。\n  --workbench 检查当前正式工作台的桌面/窄屏列表、详情和横向溢出，不切换前端构建。\n  真实引擎必须同时显式提供 allow、engine、scenario，且不会自动重启服务或注入 Provider 故障。\n  使用独立 Edge profile，完成报告、截图和精确清理。`);
+  console.log(`Relay Headless 页面验收\n\n用法：\n  npm run acceptance:page\n  npm run acceptance:page -- --workbench\\n  npm run acceptance:page -- --account-settings\\n  npm run acceptance:page -- --allow-engine-run --engine <codex|codebuddy|all> --scenario <complete|stop|refresh>\n\n说明：\n  默认只读；不会创建会话、发送消息、停止任务或重启 Relay。\n  --workbench 检查当前正式工作台的桌面/窄屏列表、详情和横向溢出，不切换前端构建。\n  真实引擎必须同时显式提供 allow、engine、scenario，且不会自动重启服务或注入 Provider 故障。\n  使用独立 Edge profile，完成报告、截图和精确清理。`);
 }

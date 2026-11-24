@@ -1,6 +1,6 @@
 import type { SQLiteDB } from './index.js';
 import type { EngineId } from '../engine/types.js';
-import { RELAY_HOST_CONTEXT_VERSION, type HostContextDelivery } from '../engine/host-context.js';
+import { readRelayHostContextMarker, RELAY_HOST_CONTEXT_VERSION, type HostContextDelivery } from '../engine/host-context.js';
 
 function parseMetadata(raw: unknown): Record<string, unknown> | null {
   if (raw == null || raw === '') return {};
@@ -16,25 +16,26 @@ export function createSessionHostContextDelivery(
   sessionId: string,
   engine: EngineId,
   externalSessionId: string | null,
+  version = RELAY_HOST_CONTEXT_VERSION,
+  privatePeerIncluded = false,
 ): HostContextDelivery {
   const read = () => db.get(
     'SELECT engine, engine_session_id, engine_metadata, context_compaction_count FROM sessions WHERE id = ? AND deleted_at IS NULL',
     [sessionId],
   );
   const row = read();
-  const marker = parseMetadata(row?.engine_metadata)?.relayHostContext as Record<string, unknown> | undefined;
   return {
     delivered: Boolean(externalSessionId && row?.engine === engine
       && row.engine_session_id === externalSessionId
-      && marker?.version === RELAY_HOST_CONTEXT_VERSION && marker.externalSessionId === externalSessionId
-      && Number(marker.compactionCount ?? 0) === Number(row.context_compaction_count ?? 0)),
+      && readRelayHostContextMarker(row.engine_metadata, externalSessionId, Number(row.context_compaction_count ?? 0), version)),
     onDelivered(id) {
       const current = read();
       if (!current || current.engine !== engine || current.engine_session_id !== id) return;
       const metadata = parseMetadata(current.engine_metadata);
       // 损坏或未知格式的原始 metadata 不得被清空或覆盖。
       if (!metadata) return;
-      metadata.relayHostContext = { version: RELAY_HOST_CONTEXT_VERSION, externalSessionId: id, compactionCount: Number(current.context_compaction_count ?? 0) };
+      metadata.relayHostContext = { version, externalSessionId: id, compactionCount: Number(current.context_compaction_count ?? 0),
+        ...(privatePeerIncluded ? { privatePeerIncluded: true } : {}) };
       db.run('UPDATE sessions SET engine_metadata = ? WHERE id = ? AND engine = ? AND engine_session_id = ? AND deleted_at IS NULL',
         [JSON.stringify(metadata), sessionId, engine, id]);
       db.scheduleSaveToFile();

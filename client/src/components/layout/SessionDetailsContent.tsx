@@ -4,6 +4,7 @@ import { engineLabel } from '../../engine/catalog';
 import { getSessionStatusPresentation, getSessionDisplayStage, type DisplayedSessionStatus } from './session-status';
 import { useAuth } from '../../auth/AuthContext';
 import { formatResourcePerson } from '../../utils/resource-person';
+import FeishuSessionAssociation from '../feishu-im/FeishuSessionAssociation';
 
 export default function SessionDetailsContent({ session, project, status, engineSessionLoadFailed = false }: {
   session: Session & { engine_session_id?: string | null };
@@ -25,6 +26,7 @@ export default function SessionDetailsContent({ session, project, status, engine
   return (
     <div className="space-y-1.5 text-xs">
       <div className="break-words font-medium text-[var(--color-text)]">{session.title}</div>
+      {user?.role === 'admin' && <FeishuSessionAssociation sessionId={session.id} />}
       <div className="break-words text-[var(--color-text-secondary)]">项目：{project?.name ?? '未知项目'}</div>
       <div className="break-words text-[var(--color-text-secondary)]">创建人：{formatResourcePerson(session.owner)}</div>
       <div className="break-words text-[var(--color-text-secondary)]">引擎：{session.engine ? engineLabel(session.engine) : '尚未选择'} · 消息数量：{messageCount} · 助手：{assistantMessageCount}</div>

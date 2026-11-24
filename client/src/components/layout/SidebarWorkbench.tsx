@@ -1,3 +1,5 @@
+import { Link } from 'react-router-dom';
+import { appPageRoutes } from '../../../../server/src/analytics/pages.ts';
 import Tooltip from '../ui/Tooltip';
 import { featureAction } from '../../analytics/features';
 import type { PublicUserDto } from '../../generated/relay-contracts';
@@ -43,6 +45,9 @@ export default function SidebarWorkbench({
         <span className="text-[15px] font-semibold">Relay</span>
       </div>
       <ServiceStatusIndicator status={serviceStatus} />
+      {isAdmin && <Link to={appPageRoutes.task_workbench.path} target="_blank" rel="noopener noreferrer" className="ml-auto inline-flex min-h-11 shrink-0 items-center whitespace-nowrap rounded-lg px-2 text-xs text-[var(--color-text-secondary)] hover:bg-[var(--color-sidebar-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus-ring)]">
+        任务工作台<span aria-hidden="true" className="ml-1">↗</span><span className="sr-only">（新标签页打开）</span>
+      </Link>}
     </div>
 
     {resourceViewType === 'mine' ? <div className="flex items-center gap-1">

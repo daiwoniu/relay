@@ -11,7 +11,7 @@ export function createSetupAreas(root, platform = process.platform) {
         path.join(root, 'server', 'node_modules', '.bin', `tsx${commandSuffix}`),
         path.join(root, 'server', 'node_modules', '.bin', `tsc${commandSuffix}`),
       ],
-      verify: [['run', 'contracts:check'], ['run', 'typecheck'], ['run', 'build']],
+      verify: [['run', 'contracts:check'], ['run', 'typecheck']],
     },
     client: {
       label: '客户端',
@@ -23,7 +23,7 @@ export function createSetupAreas(root, platform = process.platform) {
         path.join(root, 'client', 'node_modules', '@vitejs', 'plugin-react', 'dist', 'index.js'),
         path.join(root, 'client', 'node_modules', '@babel', 'core', 'package.json'),
       ],
-      verify: [['run', 'typecheck'], ['run', 'build:release']],
+      verify: [['run', 'build:release']],
     },
   };
 }

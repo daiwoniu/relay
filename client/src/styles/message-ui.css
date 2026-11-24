@@ -440,7 +440,7 @@
   inset-inline: 0;
   bottom: 0;
   width: 100%;
-  max-height: min(calc(100dvh - env(safe-area-inset-top) - 1rem), 36rem);
+  max-height: min(var(--popover-visible-height, 100dvh), calc(100dvh - env(safe-area-inset-top) - 1rem), 36rem);
   border-bottom: 0;
   border-radius: 1.125rem 1.125rem 0 0;
   padding-bottom: env(safe-area-inset-bottom);

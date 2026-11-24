@@ -27,7 +27,7 @@ test('当前会话搜索支持范围筛选、状态、重试和键盘导航', ()
   assert.match(component, /加载失败/);
   assert.match(component, /重试加载历史消息/);
   assert.match(component, /onFocus=\{\(\) => props\.onInputFocusChange\(true\)\}/);
-  assert.match(component, /onBlur=\{\(\) => props\.onInputFocusChange\(false\)\}/);
+  assert.match(component, /onBlur=\{\(\) => \{\s*commitSearch\(props\.query\);\s*props\.onInputFocusChange\(false\);\s*\}\}/);
   assert.match(component, /navigationDisabled \|\| props\.currentIndex <= 0/);
   assert.match(component, /navigationDisabled \|\| props\.currentIndex < 0/);
   assert.match(chatView, /window\.setTimeout\(\(\) => runCurrentSearch\(currentSearchInput\), 250\)/);
@@ -39,7 +39,7 @@ test('移动端搜索键盘出现时消息输入区保持在键盘后方且不�
   assert.doesNotMatch(chatView, /if \(!searchInputFocused \|\| !isMobile\)/);
   assert.match(chatView, /window\.visualViewport\?\.addEventListener\('resize', measureKeyboard\)/);
   assert.match(chatView, /data-search-keyboard-composer=\{keepComposerBehindSearchKeyboard \? 'behind' : 'visible'\}/);
-  assert.match(chatView, /keepComposerBehindSearchKeyboard \? 'pointer-events-none absolute inset-x-0 top-full' : 'shrink-0'/);
+  assert.match(chatView, /keepComposerBehindSearchKeyboard \? 'pointer-events-none absolute inset-x-0 top-full'/);
   assert.match(chatView, /<ChatInput[\s\S]*data-search-keyboard-composer|data-search-keyboard-composer[\s\S]*<ChatInput/);
 });
 

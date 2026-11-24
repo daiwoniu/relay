@@ -8,6 +8,7 @@ import Tooltip from '../ui/Tooltip';
 import ContextMenu, { type ContextMenuItem } from '../ui/ContextMenu';
 import { useAuth } from '../../auth/AuthContext';
 import IconActionButton from '../ui/IconActionButton';
+import ExpandCornersIcon from '../ui/ExpandCornersIcon';
 import Modal from '../ui/Modal';
 import FileTypeIcon from '../messages/FileTypeIcon';
 import PageHostingIcon from '../icons/PageHostingIcon';
@@ -399,11 +400,7 @@ export default function RightPanelContent({
               onClick={() => {featureAction('file_preview',isMaximized?'restore':'maximize','preview_toolbar');setIsMaximized((maximized) => !maximized);}}
               className={`workspace-preview-panel-action${isMaximized ? ' is-pressed' : ''}`}
             >
-              {isMaximized ? (
-                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true" data-icon="collapse-corners"><path d="M2.5 6H6V2.5M13.5 6H10V2.5M2.5 10H6v3.5M13.5 10H10v3.5" stroke="currentColor" strokeWidth="1.35" strokeLinecap="round" strokeLinejoin="round"/></svg>
-              ) : (
-                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true" data-icon="expand-corners"><path d="M6 2.5H2.5V6M10 2.5h3.5V6M2.5 10v3.5H6M13.5 10v3.5H10" stroke="currentColor" strokeWidth="1.35" strokeLinecap="round" strokeLinejoin="round"/></svg>
-              )}
+              <ExpandCornersIcon expanded={isMaximized} />
             </IconActionButton>
           )}
           <IconActionButton

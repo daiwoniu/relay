@@ -45,6 +45,9 @@ export class EngineRegistry {
   connect(engine: EngineId, options: EngineConnectionOptions): EngineConnection {
     const adapter = this.get(engine);
     const availability = adapter.availability.getCurrent();
+    if (options.executionScope === 'feishu' && !adapter.supportsFeishuIsolation) {
+      throw new EngineRegistryError('ENGINE_UNAVAILABLE', engine, '此引擎暂不支持飞书隔离会话');
+    }
     if (!availability.available) {
       throw new EngineRegistryError(
         'ENGINE_UNAVAILABLE',

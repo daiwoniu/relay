@@ -16,7 +16,6 @@ import { StoredProjectUploads,type StoredUploadIntent } from './stored-project-u
 import { createStoredProjectUploadsRouter } from '../routes/stored-project-uploads.js';
 import { StoredDraftCleanup } from './stored-draft-cleanup.js';
 import { createStoredDraftCleanupRouter } from '../routes/stored-draft-cleanup.js';
-import { createAttachmentTransferQueue } from '../../../client/src/components/chat/attachment-upload-queue.js';
 const user='11111111-1111-4111-8111-111111111111',project='22222222-2222-4222-8222-222222222222';
 const principal={kind:'user' as const,userId:user,authSessionHash:hashSessionToken('synthetic-upload-owner')};
 const stream=(value='hello')=>new ReadableStream<Uint8Array>({start(c){c.enqueue(Buffer.from(value));c.close();}});
@@ -42,10 +41,11 @@ test('current Native authorization, streamed receive, isolated publication and r
   }finally{await p.cleanup();}
 });
 
-test('a selected batch queues real uploads through publication and quota validation without losing later files',async()=>{
+test('sequential uploads publish a selected batch and accumulate quota without losing later files',async()=>{
   const p=await prepared();try{
-    const service=p.make(),queue=createAttachmentTransferQueue(),intents=Array.from({length:4},(_,i)=>({...p.intent,uploadId:randomUUID(),name:`batch-${i}.txt`}));
-    const results=await Promise.all(intents.map(intent=>queue.enqueue(()=>({promise:service.upload(principal,intent,stream()),abort(){}})).promise));
+    const service=p.make(),intents=Array.from({length:4},(_,i)=>({...p.intent,uploadId:randomUUID(),name:`batch-${i}.txt`}));
+    const results=[];
+    for(const intent of intents)results.push(await service.upload(principal,intent,stream()));
     assert.deepEqual(results.map(result=>result.state),['committed','committed','committed','committed']);
     const first=results[0];if(first.state!=='committed')return;
     const manifest=JSON.parse(await fs.readFile(path.join(path.dirname(first.value.attachment.path),'manifest.json'),'utf8'));

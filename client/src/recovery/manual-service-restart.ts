@@ -50,7 +50,3 @@ export function formatServiceStartedAt(value: number | null | undefined): string
   if (!Number.isFinite(value) || value === null || value === undefined) return '未知';
   return formatDateTime(value, { seconds: true, fallback: '未知' });
 }
-
-export function isManualRestartVisible(role: 'admin' | 'member' | undefined): boolean {
-  return role === 'admin';
-}

@@ -1,17 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {createRequire} from 'node:module';
-import {fileURLToPath} from 'node:url';
-import {build} from 'esbuild';
-import React from 'react';
+import { loadTsxForTest } from '../ui/tsx-test-helper.mjs';
 import { formatHelpText } from './workspace-help-text.ts';
 
-const require=createRequire(import.meta.url);
-const compiled=await build({entryPoints:[fileURLToPath(new URL('./WorkspaceHelpBadge.tsx',import.meta.url))],bundle:true,platform:'node',format:'cjs',jsx:'automatic',write:false,external:['react','react/jsx-runtime','react-dom'],plugins:[{name:'surfaces',setup(b){
- b.onResolve({filter:/ui\/(Tooltip|Popover)$/},args=>({path:args.path,namespace:'stub'}));
- b.onLoad({filter:/.*/,namespace:'stub'},()=>({contents:'export default function Surface(){return null}',loader:'js'}));
-}}]});
-const code=compiled.outputFiles[0].text;
+const { default: WorkspaceHelpBadge } = await loadTsxForTest(new URL('./WorkspaceHelpBadge.tsx', import.meta.url).href);
 
 test('help text splits Chinese sentences and semicolons while retaining existing lines, IDs, decimals and links',()=>{
  const format=formatHelpText;
@@ -21,28 +13,22 @@ test('help text splits Chinese sentences and semicolons while retaining existing
  assert.equal(format('已完成。 \n保留空行\n\n下一段'),'已完成。 \n保留空行\n\n下一段');
 });
 
-test('help badges offer hover/focus text and a tap panel without toggling an enclosing summary',()=>{
- let state=null;
- const rect={left:1,top:2,width:24,height:24};
- const hooks={...React,useRef:()=>({current:{getBoundingClientRect:()=>rect}}),useState:()=>[state,next=>{state=typeof next==='function'?next(state):next} ]};
- const mod={exports:{}};
- new Function('require','module','exports',code)(name=>name==='react'?hooks:require(name),mod,mod.exports);
- const text='辅助解释。\n第二条；\n第三条';
- const render=()=>mod.exports.default({label:'等待中',content:'辅助解释。第二条；第三条'});
- let tree=render(),[tooltip,popover]=tree.props.children;
- let mouseDownStopped=false;tree.props.onMouseDown({stopPropagation(){mouseDownStopped=true}});assert.equal(mouseDownStopped,true,'a trigger click must not be dismissed by the document outside-click handler first');
- assert.equal(tooltip.props.content,text);assert.equal(popover.props.open,false);
- const button=tooltip.props.children;
- assert.equal(button.type,'button');assert.equal(button.props['aria-label'],'等待中说明');
- let prevented=0,stopped=0;
- const click={preventDefault(){prevented++},stopPropagation(){stopped++}};
- button.props.onClick(click);
- assert.equal(prevented,1);assert.equal(stopped,1,'the native details click must not escape');
- [tooltip,popover]=render().props.children;
- assert.equal(tooltip.props.disabled,true);assert.equal(popover.props.open,true);assert.equal(popover.props.children,text);
- assert.match(popover.props.className,/whitespace-pre-line/);
- assert.equal(tooltip.props.children.props['aria-expanded'],true);
- popover.props.onClose();assert.equal(render().props.children[1].props.open,false);
- tooltip.props.children.props.onClick(click);assert.equal(render().props.children[1].props.open,true);
- render().props.children[0].props.children.props.onClick(click);assert.equal(render().props.children[1].props.open,false);
+test('sentence breaks preserve quotes, existing breaks, links and values', () => {
+  assert.equal(formatHelpText('怎么存？点「下载」。好了！可以发给朋友。'), '怎么存？\n点「下载」。\n好了！\n可以发给朋友。');
+  assert.equal(formatHelpText('选择「保存好了！」然后关闭。'), '选择「保存好了！」\n然后关闭。');
+  assert.equal(formatHelpText('链接是 https://example.com/a?x=1;y=2。版本 2.5，下午 12:30。下一句。'), '链接是 https://example.com/a?x=1;y=2。\n版本 2.5，下午 12:30。\n下一句。');
+  assert.equal(formatHelpText(formatHelpText('准备好了？！ 可以继续；别忘了保存。')), '准备好了？！\n可以继续；\n别忘了保存。');
+});
+
+test('help badges delegate hover, focus and tap to a single tooltip', () => {
+  const badge = WorkspaceHelpBadge({ label: '等待中', content: '辅助解释。第二条；第三条', coexist: true });
+  const hint = badge.props.children;
+  assert.ok(!Array.isArray(hint));
+  assert.equal(hint.props.content, '辅助解释。\n第二条；\n第三条');
+  assert.equal(hint.props.asChild, true);
+  assert.equal(hint.props.pinOnClick, true);
+  assert.equal(hint.props.coexist, true);
+  assert.equal(hint.props.children.type, 'button');
+  assert.equal(hint.props.children.props['aria-label'], '等待中说明');
+  assert.equal(hint.props.children.props['aria-haspopup'], undefined);
 });

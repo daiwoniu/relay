@@ -19,11 +19,12 @@ import type { RuntimeStorage } from '../storage/runtime-storage.js';
 import { RuntimeEventQueueError } from '../storage/runtime-event-queue.js';
 import type { RuntimeFailureDiagnostic } from '../storage/runtime-storage.js';
 import type { StoredQueuedTurnPorts } from './stored-queued-turn-dispatch.js';
+import { formatFeishuTurnPrompt, isFeishuExecutionResource } from '../integrations/feishu-im/native-session-scope.js';
 
 type EventHandler=Parameters<RuntimeStorage['process']>[1];
 type CloseHandler=Parameters<RuntimeStorage['processLocal']>[1];
 type StorageOptions=ConstructorParameters<typeof RuntimeStorage>[1];
-interface Binding {readonly runtime:SessionRuntime;readonly events:StoredRuntimeEvents;readonly session:StoredClaimedTurn['session'];readonly attemptId:string;readonly version:number}
+interface Binding {readonly runtime:SessionRuntime;readonly events:StoredRuntimeEvents;readonly session:StoredClaimedTurn['session'];readonly feishuPrivatePeerDisplayName?:string;readonly attemptId:string;readonly version:number}
 interface Physical {
   id:string;engine:SessionRuntime['engine'];path:string;connection:EngineConnection|null;current?:Binding;
   closed:boolean;retired:boolean;version:number;externalId:string|null;turns:Map<string,string>;
@@ -86,7 +87,7 @@ export class StoredRuntimeConnections implements StoredQueuedTurnPorts {
       ...(record.current?.runtime.isRecovering?{recoverTurnId:record.current.runtime.currentTurnId,recoverStartedAt:record.current.runtime.turnStartTime}:{}),
       onSessionReady:id=>this.sessionReady(record,id),onEvent:event=>this.route(record,event),onClosed:()=>this.closed(record)});
   }
-  private bind(runtime:SessionRuntime,record:Physical,session:StoredClaimedTurn['session'],attemptId:string):Binding{
+  private bind(runtime:SessionRuntime,record:Physical,{session,feishuPrivatePeerDisplayName}: Pick<StoredClaimedTurn,'session'|'feishuPrivatePeerDisplayName'>,attemptId:string):Binding{
     const version=++record.version;
     if(record.current&&record.current.attemptId!==attemptId)record.recoveryTried=false;
     record.terminalObserved=undefined;
@@ -104,7 +105,7 @@ export class StoredRuntimeConnections implements StoredQueuedTurnPorts {
         }
       }},
     });
-    return Object.freeze({runtime,events,session,attemptId,version});
+    return Object.freeze({runtime,events,session,feishuPrivatePeerDisplayName,attemptId,version});
   }
   private facade(record:Physical,binding:Binding):EngineConnection{
     const current=()=>!record.closed&&!record.retired&&!record.retirement&&record.current===binding&&this.owned(binding)&&!binding.events.storage.isTerminalCommitted();
@@ -259,7 +260,7 @@ export class StoredRuntimeConnections implements StoredQueuedTurnPorts {
     const record:Physical={id:randomUUID(),engine:claim.engineId,path:payload.session.projectPath,connection:null,closed:false,retired:false,version:previousVersion,
       externalId:payload.session.engineSessionId,turns:new Map(),controls:new Set(),tainted:false,standalonePending:0,recoveryTried};
     runtime.engineConnectionId=record.id;this.options.runtimes.set(claim.sessionId,runtime);this.records.set(claim.sessionId,record);
-    const binding=this.bind(runtime,record,payload.session,claim.attemptId);record.current=binding;
+    const binding=this.bind(runtime,record,payload,claim.attemptId);record.current=binding;
     if(input.turnId)record.turns.set(input.turnId,claim.attemptId);
     try{
       const prepared=await binding.events.storage.prepareRecovery();this.assert(prepared.state==='handled');
@@ -327,7 +328,7 @@ export class StoredRuntimeConnections implements StoredQueuedTurnPorts {
         &&runtime.requestedByUserId===claim.requestedByUserId&&runtime.isRunning&&!runtime.isRecovering
         &&this.options.runtimes.get(claim.sessionId)===previousRuntime&&this.records.get(claim.sessionId)===captured);
       this.options.runtimes.set(claim.sessionId,runtime);installedRuntime=runtime;runtime.engineConnectionId=captured.id;
-      binding=this.bind(runtime,captured,payload.session,claim.attemptId);const events=binding.events;
+      binding=this.bind(runtime,captured,payload,claim.attemptId);const events=binding.events;
       if(captured.connection)await events.storage.bindExternalSession(payload.session.engineSessionId,payload.session.engineSessionId!);
       this.assert(!signal.aborted&&!captured.closed&&!captured.retired&&this.owned(binding));
       let invoked=false,released=false;const selected=binding;
@@ -349,7 +350,10 @@ export class StoredRuntimeConnections implements StoredQueuedTurnPorts {
             this.assert(!captured.closed&&!captured.retired&&this.owned(selected));
           }
           runtime.engineConnection=this.facade(captured,selected);
-          runtime.engineConnection.send(engineInput??payload.message.content,{preferences:resolveTurnStartPreferences(runtime)});
+          const content = engineInput ?? payload.message.content;
+          const prompt = formatFeishuTurnPrompt(content, { fromFeishu: isFeishuExecutionResource(claim.resourceKey),
+            handoff: payload.feishuHandoff, senderDisplayName: payload.feishuSenderDisplayName });
+          runtime.engineConnection.send(prompt,{preferences:resolveTurnStartPreferences(runtime)});
         },
         release:async(state:{invoked:boolean})=>{
           if(released)return;released=true;this.preparing.delete(claim.sessionId);

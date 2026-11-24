@@ -179,6 +179,33 @@ test('existing Native install adds hosted sites once with backup and unchanged s
   }finally{f.cleanup();}
 });
 
+test('existing hosted sites gain an optional source column without changing saved sites',async()=>{
+  const f=fixture();
+  try{
+    const first=await initializeLocalStorage(f.filename);await first.owner.release();
+    const siteJson=JSON.stringify({name:'历史页面',entry:'index.html'});
+    const db=new DatabaseSync(f.filename);
+    db.exec('ALTER TABLE hosted_sites DROP COLUMN source_json');
+    db.prepare('INSERT INTO hosted_sites(id,site_json,updated_at) VALUES(?,?,?)').run('existing',siteJson,1);
+    db.close();
+    const upgraded=await initializeLocalStorage(f.filename);
+    try{
+      assert.equal(upgraded.action,'migrated');assert.equal(upgraded.backups.length,1);
+      const saved=new DatabaseSync(f.filename,{readOnly:true});
+      try{
+        const row=saved.prepare('SELECT site_json,source_json FROM hosted_sites WHERE id=?').get('existing');
+        assert.equal(row?.site_json,siteJson);assert.equal(row?.source_json,null);
+      }finally{saved.close();}
+      const backup=new DatabaseSync(upgraded.backups[0],{readOnly:true});
+      try{assert.equal(backup.prepare('SELECT site_json FROM hosted_sites WHERE id=?').get('existing')?.site_json,siteJson);}
+      finally{backup.close();}
+    }finally{await upgraded.owner.release();}
+    const repeated=await initializeLocalStorage(f.filename);
+    try{assert.equal(repeated.action,'current');assert.deepEqual(repeated.backups,[]);}
+    finally{await repeated.owner.release();}
+  }finally{f.cleanup();}
+});
+
 test('existing Native install adds tools settings once with backup and unchanged support migration',async()=>{
   const f=fixture();
   try{
@@ -196,6 +223,49 @@ test('existing Native install adds tools settings once with backup and unchanged
     const repeated=await initializeLocalStorage(f.filename);
     try{assert.equal(repeated.action,'current');assert.deepEqual(repeated.backups,[]);}finally{await repeated.owner.release();}
   }finally{f.cleanup();}
+});
+
+test('the early Feishu inbox upgrades without losing the original sender or creating a new binding', async () => {
+  const f = fixture();
+  try {
+    const first = await initializeLocalStorage(f.filename);
+    await first.owner.release();
+    const db = new DatabaseSync(f.filename);
+    db.exec(`DROP TABLE feishu_im_receipt_reactions;
+      DROP TABLE feishu_im_bindings;
+      DROP TABLE feishu_im_settings;
+      DROP INDEX feishu_im_inbox_chat;
+      ALTER TABLE feishu_im_inbox RENAME COLUMN sender_id TO user_id;
+      ALTER TABLE feishu_im_matters DROP COLUMN sender_id;
+      ALTER TABLE feishu_im_outbox DROP COLUMN retry_analytics_operation;
+      ALTER TABLE feishu_im_outbox DROP COLUMN retry_analytics_actor;
+      INSERT INTO feishu_im_matters(id,bot_id,tenant_key,chat_id,project_id,task_id,title,created_at,updated_at)
+        VALUES('matter','old_bot','tenant','oc_chat','project','task','title',1,1);
+      INSERT INTO feishu_im_inbox(bot_id,tenant_key,message_id,chat_id,user_id,project_id,received_at,data_json,matter_id)
+        VALUES('old_bot','tenant','om_msg','oc_chat','former_relay_user','project',1,'{"senderId":"ou_author"}','matter');`);
+    db.close();
+
+    const upgraded = await initializeLocalStorage(f.filename);
+    try {
+      assert.equal(upgraded.action, 'migrated');
+      assert.equal(upgraded.backups.length, 1);
+      const saved = new DatabaseSync(f.filename, { readOnly: true });
+      try {
+        assert.equal(saved.prepare('SELECT sender_id FROM feishu_im_inbox').get()?.sender_id, 'ou_author');
+        assert.equal(saved.prepare('SELECT sender_id FROM feishu_im_matters').get()?.sender_id, 'ou_author');
+        assert.equal(saved.prepare('SELECT count(*) AS n FROM feishu_im_bindings').get()?.n, 0);
+        assert.equal(saved.prepare('SELECT count(*) AS n FROM feishu_im_settings').get()?.n, 0);
+        assert.equal(saved.prepare('SELECT count(*) AS n FROM feishu_im_receipt_reactions').get()?.n, 0);
+        const retryColumns = saved.prepare("SELECT name FROM pragma_table_info('feishu_im_outbox') WHERE name LIKE 'retry_analytics_%' ORDER BY name").all();
+        assert.deepEqual(retryColumns.map(row=>row.name), ['retry_analytics_actor', 'retry_analytics_operation']);
+      } finally { saved.close(); }
+    } finally { await upgraded.owner.release(); }
+    const repeated = await initializeLocalStorage(f.filename);
+    try {
+      assert.equal(repeated.action, 'current');
+      assert.deepEqual(repeated.backups, []);
+    } finally { await repeated.owner.release(); }
+  } finally { f.cleanup(); }
 });
 
 test('existing Native install adds preview preferences once and preserves users and support migration',async()=>{

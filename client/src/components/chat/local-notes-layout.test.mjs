@@ -33,7 +33,7 @@ test('便签组件把受限高度同时用于输入框初始高度和外层占�
   const source = fs.readFileSync(new URL('./LocalNotesControl.tsx', import.meta.url), 'utf8');
 
   assert.match(source, /const editorHeight = getLocalNoteInitialEditorHeight\(viewHeight\)/);
-  assert.match(source, /initialEditorHeightsRef\.current\.set\(id, editorHeight\)/);
+  assert.match(source, /initialEditorHeightRef\.current = editorHeight/);
   assert.match(source, /setEditingViewHeight\(editorHeight\)/);
 });
 

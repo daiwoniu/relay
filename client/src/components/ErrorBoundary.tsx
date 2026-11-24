@@ -4,7 +4,7 @@ import {tracker} from '../analytics/tracker';
 
 interface Props {
   children: ReactNode;
-  fallback?: ReactNode;
+  fallback?: ReactNode | ((error: Error | undefined, retry: () => void) => ReactNode);
 }
 
 interface State {
@@ -26,9 +26,16 @@ export default class ErrorBoundary extends Component<Props, State> {
     console.error('[ErrorBoundary] 渲染错误:', error, errorInfo);
   }
 
+  retry = () => {
+    tracker.action({feature:'connection',action:'retry',surface:'button'});
+    this.setState({ hasError: false, error: undefined });
+  };
+
   render() {
     if (this.state.hasError) {
-      if (this.props.fallback) return this.props.fallback;
+      const { fallback } = this.props;
+      if (typeof fallback === 'function') return fallback(this.state.error, this.retry);
+      if (fallback) return fallback;
       return (
         <div className="flex items-center justify-center h-full p-8">
           <div className="text-center space-y-3">
@@ -41,7 +48,7 @@ export default class ErrorBoundary extends Component<Props, State> {
               <FailureNotice error={this.state.error?.message || '未知错误'} description="页面内容渲染失败。" suggestion="可以尝试重新加载内容；若反复出现，请提供操作步骤及原始异常，排查前端兼容问题。" />
             </p>
             <button
-              onClick={() => {tracker.action({feature:'connection',action:'retry',surface:'button'});this.setState({ hasError: false, error: undefined });}}
+              onClick={this.retry}
               className="px-4 py-1.5 text-xs rounded-lg bg-[var(--color-bg-secondary)] border border-[var(--color-border)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] transition-colors"
             >
               重试

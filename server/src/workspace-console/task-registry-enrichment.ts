@@ -1,4 +1,4 @@
-import type { FeishuProjectClient, Row } from '../integrations/feishu/client.js';
+import { createFieldDefinitionReader, type FeishuProjectClient, type Row } from '../integrations/feishu/client.js';
 import { timestamp } from '../integrations/feishu/responsibility.js';
 import type { WorkbenchItem } from './responsibility-report-source.js';
 import type { TaskRegistryProjection } from './task-registry-reader.js';
@@ -33,20 +33,17 @@ export function resolveRelease(refs: ReturnType<typeof releaseReferences>, names
 export async function enrichRegistryItems(client: FeishuProjectClient, options: Record<string, string>, details: Map<string, Row>, registry: TaskRegistryProjection): Promise<{ contexts: Map<string, Context>; partial: boolean }> {
   const contexts = new Map<string, Context>();
   let partial = false;
-  const metadata = new Map<string, Promise<Row[]>>();
   const attemptedSelectors = new Set<string>(), matchedSelectors = new Set<string>();
-  const field = async (type: string, selector?: string) => {
+  const fieldDefinitions = createFieldDefinitionReader(client, type => type === 'issue' ? options.ADAPTER_STORY_RELATION_FIELD
+    : type === options.ADAPTER_APPLICATION_TYPE ? options.ADAPTER_APPLICATION_STORY_FIELD : undefined);
+  const field = async (type: string, selector?: string, itemFields?: Row[]) => {
     if (!selector) return '';
     attemptedSelectors.add(selector);
-    let promise = metadata.get(type);
-    if (!promise) { promise = client.metadata(type); metadata.set(type, promise); }
-    const fields = await promise;
-    const matches = fields.filter(row => row.field_key === selector || row.field_name === selector);
+    const definition = await fieldDefinitions.find(type, selector, itemFields);
     // Optional business fields differ by work-item type. Absence is not an API failure.
-    if (!matches.length) return '';
-    if (matches.length !== 1 || typeof matches[0].field_key !== 'string') throw new Error('业务字段元数据无法唯一匹配');
+    if (!definition) return '';
     matchedSelectors.add(selector);
-    return matches[0].field_key;
+    return definition.field_key;
   };
   const storyType = options.ADAPTER_STORY_TYPE || 'story', versionType = options.ADAPTER_VERSION_TYPE || 'version';
   const fetchItems = async (type: string, ids: string[]) => {
@@ -58,7 +55,8 @@ export async function enrichRegistryItems(client: FeishuProjectClient, options: 
     for (const [id, row] of [...details]) {
       if (row.work_item_type_key === storyType || row.work_item_type_key === versionType) continue;
       try {
-        const key=await field(row.work_item_type_key, options.ADAPTER_STORY_RELATION_FIELD);
+        const key=await field(row.work_item_type_key, options.ADAPTER_STORY_RELATION_FIELD,
+          row.work_item_type_key === 'issue' ? row.fields ?? [] : undefined);
         if(!key){if(row.work_item_type_key==='issue')partial=true;continue;}
         if(!(row.fields??[]).some((entry:Row)=>entry.field_key===key)){partial=true;continue;}
         const ids = referenceIds(values(row, key));
@@ -113,8 +111,8 @@ export async function enrichRegistryItems(client: FeishuProjectClient, options: 
   for (const id of details.keys()) contexts.set(id, { ...contexts.get(id), applicationCoverage: applicationType ? 'not_queried' : 'not_configured' });
   if (applicationType && eligible.length) {
     try {
-      const applicationStoryField = await field(applicationType, options.ADAPTER_APPLICATION_STORY_FIELD);
-      if (!applicationStoryField) throw new Error('未配置申请关联需求字段');
+      const storySelector = options.ADAPTER_APPLICATION_STORY_FIELD;
+      if (!await field(applicationType, storySelector)) throw new Error('未配置申请关联需求字段');
       const explicitIds = [...new Set(eligible.flatMap(([id]) => [...(explicit.get(id) ?? [])]))];
       if (explicitIds.length > 100) throw new Error('显式申请超过100项上限');
       for (let offset = 0; offset < explicitIds.length; offset += 50) for (const row of await client.details(applicationType, explicitIds.slice(offset, offset + 50))) applications.set(String(row.id), row);
@@ -126,10 +124,12 @@ export async function enrichRegistryItems(client: FeishuProjectClient, options: 
         for (let offset = 0; offset < rows.length; offset += 50) for (const row of await client.details(applicationType, rows.slice(offset, offset + 50).map(row => String(row.id)))) applications.set(String(row.id), row);
       }
       if (applications.size > 100) throw new Error('申请补查超过100项上限');
-      const projected = new Map<string, NonNullable<Context['applications']>[number]>();
+      const projected = new Map<string, { application: NonNullable<Context['applications']>[number]; linkedStories: Set<string> }>();
       for (const [id, application] of applications) {
-        const linked = referenceIds(values(application, applicationStoryField));
-        if (!eligible.some(([story]) => linked.includes(story) || explicit.get(story)?.has(id))) continue;
+        const key = await field(applicationType, storySelector, application.fields ?? []);
+        if (!key) throw new Error('未配置申请关联需求字段');
+        const linked = new Set(referenceIds(values(application, key)));
+        if (!eligible.some(([story]) => linked.has(story) || explicit.get(story)?.has(id))) continue;
         const nodes: Row[] = application.workflow_infos?.workflow_nodes ?? (await client.workflow(applicationType, id)).workflow_nodes;
         if (!Array.isArray(nodes) || !nodes.length || nodes.some(node => ![1, 2, 3].includes(node.status))) throw new Error('申请流程节点证据缺失');
         const finished = values(application, 'finish_status');
@@ -137,15 +137,16 @@ export async function enrichRegistryItems(client: FeishuProjectClient, options: 
         const groups = await client.subtasks(applicationType, id);
         const tasks: Row[] = groups.flatMap(group => group.sub_tasks ?? []);
         if (tasks.some(task => typeof task.passed !== 'boolean')) throw new Error('申请子任务证据缺失');
-        projected.set(id, { workItemId: id, typeKey: applicationType, title: String(application.name || `申请 ${id}`), url: null,
+        projected.set(id, { linkedStories: linked, application: { workItemId: id, typeKey: applicationType, title: String(application.name || `申请 ${id}`), url: null,
           status: conflict ? '待核对' : done ? '已完成' : nodes.filter(node => node.status === 2).map(node => node.name).join('、') || '待开始',
           completed: conflict ? null : done, finishedAt: timestamp(application.finish_time ?? values(application, 'finish_time')),
-          unfinishedSubtasks: tasks.filter(task => !task.passed).map(task => ({ id: String(task.id), name: String(task.name || task.id) })), reconciliationRequired: false, source: 'native_relation' });
+          unfinishedSubtasks: tasks.filter(task => !task.passed).map(task => ({ id: String(task.id), name: String(task.name || task.id) })), reconciliationRequired: false, source: 'native_relation' } });
       }
       for (const [id, row] of eligible) {
-        const list = [...projected].filter(([appId]) => referenceIds(values(applications.get(appId)!, applicationStoryField)).includes(id) || explicit.get(id)?.has(appId)).map(([appId, app]) => ({ ...app,
-          source: referenceIds(values(applications.get(appId)!, applicationStoryField)).includes(id) ? 'native_relation' as const : 'local_binding' as const,
-          reconciliationRequired: app.completed === true && (row.workflow_infos?.workflow_nodes ?? []).some((node: Row) => node.name === options.ADAPTER_RELEASE_NODE_NAME && node.status === 2) }));
+        const list = [...projected].filter(([appId, result]) => result.linkedStories.has(id) || explicit.get(id)?.has(appId))
+          .map(([, { application, linkedStories }]) => ({ ...application,
+            source: linkedStories.has(id) ? 'native_relation' as const : 'local_binding' as const,
+            reconciliationRequired: application.completed === true && (row.workflow_infos?.workflow_nodes ?? []).some((node: Row) => node.name === options.ADAPTER_RELEASE_NODE_NAME && node.status === 2) }));
         contexts.set(id, { ...contexts.get(id), applications: list, applicationCoverage: 'complete' });
       }
     } catch { partial = true; for (const [id] of eligible) contexts.set(id, { ...contexts.get(id), applicationCoverage: 'partial' }); }

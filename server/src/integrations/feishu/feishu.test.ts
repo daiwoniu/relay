@@ -262,6 +262,37 @@ test('one auth and deduplicated requests; partial or cross-space details fail wi
   await assert.rejects(failed.catalog(), error => /response/.test(String(error)) && !/secret|private-token/.test(String(error)));
 });
 
+test('independent reads can overlap with at most three responses in flight', { timeout: 2000 }, async () => {
+  const releases = new Map<string, (response: Response) => void>();
+  const started = new Set<string>();
+  const routes = ['story', 'issue', 'version', 'application'];
+  const starts = routes.map(type => {
+    let notify!: () => void;
+    const pending = new Promise<void>(resolve => { notify = resolve; });
+    return { type, pending, notify };
+  });
+  const client = new FeishuProjectClient(config, async url => {
+    const route = String(url);
+    if (route.endsWith('/plugin_token')) return Response.json({ data: { token: 'test-token' } });
+    const start = starts.find(({ type }) => route.endsWith(`/${type}/meta`))!;
+    started.add(start.type);
+    return new Promise<Response>(resolve => {
+      releases.set(start.type, resolve);
+      start.notify();
+    });
+  }, Date.now, 0);
+  const reads = routes.map(type => client.metadata(type).catch(error => error));
+  await Promise.all(starts.slice(0, 3).map(start => start.pending));
+  await new Promise<void>(resolve => setImmediate(resolve));
+  assert.equal(started.has('application'), false);
+  releases.get('story')!(new Response(null, { status: 500 }));
+  await starts[3].pending;
+  for (const type of routes.slice(1)) releases.get(type)!(Response.json({ data: [] }));
+  const result = await Promise.all(reads);
+  assert.equal(result[0].kind, 'response');
+  assert.deepEqual(result.slice(1), [[], [], []]);
+});
+
 test('flow role definitions use the dedicated GET and validate names, identities and permission flags', async () => {
   const {client,calls}=fake(route=>{
     assert.equal(route,'space/flow_roles/story');
@@ -324,6 +355,32 @@ test('a role name or owner permission flag never creates current responsibility 
     const wrongTypeDefinition=projectResponsibility(item({fields}),[],client,catalog,space,[{id:'different_role',name:'负责人',isOwner}]);
     assert(wrongTypeDefinition.reasons.includes('unmapped_role'));
   }
+});
+
+test('completed personal nodes resolve a known role on an open workflow without hiding unfinished work', () => {
+  const client = fake(() => ({})).client;
+  const definitions = [{ id: 'role_data', name: '研发负责人', isOwner: true }];
+  const detail = item({
+    fields: [
+      { field_key: 'owner', field_value: 'other' },
+      { field_key: 'role_owners', field_value: [{ role: 'role_data', owners: ['me'] }] },
+    ],
+    workflow_infos: { workflow_nodes: [
+      { id: 'mine', status: 3, owners: ['me'] },
+      { id: 'theirs', status: 2, owners: ['other'] },
+    ] },
+  });
+  const finished = projectResponsibility(detail, [], client, catalog, space, definitions);
+  assert.equal(finished.flowFinished, false);
+  assert.equal(finished.actionability, 'noncurrent');
+  assert.equal(hasUnverifiedResponsibility(finished), false);
+  assert.deepEqual(finished.participatingRoleKeys, ['role_data']);
+
+  const child = { work_item_id: detail.id, node_id: 'mine',
+    sub_task: { id: '1000000002', owners: ['me'], passed: false } };
+  const unresolved = projectResponsibility(detail, [child], client, catalog, space, definitions);
+  assert.equal(hasUnverifiedResponsibility(unresolved), true);
+  assert.ok(unresolved.reasons.includes('unfinished_subtask_in_completed_node'));
 });
 
 test('optional role metadata failure preserves native responsibility and its unresolved label diagnostic',async()=>{

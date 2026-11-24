@@ -15,6 +15,7 @@ export const SessionStatusSchema = z.enum([
 ]);
 
 export const EngineIdSchema = z.enum(['codex', 'codebuddy', 'opencode', 'zcode']);
+export const FEISHU_MAX_CONCURRENCY = 8;
 
 export const ReasoningOptionDtoSchema = z.object({
   id: z.string().trim().min(1).max(64),

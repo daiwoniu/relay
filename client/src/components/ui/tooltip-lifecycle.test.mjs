@@ -45,14 +45,17 @@ function harness(t, options = {}) {
   };
   const compiled = { exports: {} };
   new Function('require', 'module', 'exports', bundle)(name => name === 'react' ? hooks : require(name), compiled, compiled.exports);
-  const box = { getBoundingClientRect: () => ({ left: 100, top: 100, width: 80, height: 30, right: 180, bottom: 130 }), matches: () => true,
+  const box = { getBoundingClientRect: () => ({ left: 100, top: 100, width: 80, height: 30, right: 180, bottom: 130 }), matches: () => true, contains(node) { return node === this; },
     clientWidth: 80, scrollWidth: 80, clientHeight: 30, scrollHeight: 30, tagName: 'BUTTON', textContent: '完整提示', dataset: {}, querySelectorAll: () => [] };
   let props = { content: '完整提示', children: React.createElement('button', null, '查看'), ...tooltipOptions };
+  let hint;
   function render(next = {}) {
     props = { ...props, ...next }; cursor = 0;
     const result = compiled.exports.default(props);
     const trigger = result.props.children[0];
     if (typeof trigger.props.ref === 'function') trigger.props.ref(box);
+    hint = result.props.children[1]?.children;
+    if (hint) hint.props.ref.current = { getBoundingClientRect: () => ({ width: 110, height: 32 }) };
     for (const effect of effects.splice(0)) effect();
     return trigger;
   }
@@ -60,7 +63,12 @@ function harness(t, options = {}) {
     for (const slot of slots) slot?.cleanup?.();
     for (const [key, descriptor] of Object.entries(original)) { if (descriptor) Object.defineProperty(globalThis, key, descriptor); else delete globalThis[key]; }
   });
-  return { render, box, timers, listeners, frames, observers, mutations, subscriptions, active: () => active, resize() { [...observers].forEach(observer => observer.callback()); }, mutate() { [...mutations].forEach(observer => observer.callback()); }, flushTimers() { const pending = [...timers.values()]; timers.clear(); pending.forEach(callback => callback()); } };
+  return { render, box, timers, listeners, frames, observers, mutations, subscriptions, active: () => active, hint: () => hint,
+    resize() { [...observers].forEach(observer => observer.callback()); },
+    mutate() { [...mutations].forEach(observer => observer.callback()); },
+    flushTimers() { const pending = [...timers.values()]; timers.clear(); pending.forEach(callback => callback()); },
+    flushFrames() { const pending = [...frames.values()]; frames.clear(); pending.forEach(callback => callback()); },
+  };
 }
 
 test('full-text hints stay closed for complete text on hover and keyboard focus', t => {
@@ -181,4 +189,82 @@ test('Escape closes a coexisting hint without closing the menu beneath it', t =>
   h.listeners.get('document:keydown:true')({ key: 'Escape', preventDefault() {}, stopPropagation() {} });
   assert.equal(h.render().props['aria-describedby'], undefined);
   assert.equal(h.active(), 'menu-under-hint');
+});
+
+test('a modal help button shows its hover hint above the dialog and preserves the dialog overlay', t => {
+  const h = harness(t, { asChild: true, pinOnClick: true, coexist: true, initialOverlay: 'edit-dialog' });
+  h.render().props.onPointerEnter({ pointerType: 'mouse', currentTarget: h.box });
+  h.flushTimers();
+  h.render();
+  h.flushFrames();
+  assert.ok(h.render().props['aria-describedby']);
+  assert.equal(h.hint().props.style.visibility, 'visible');
+  assert.ok(h.hint().props.style.zIndex > 1200);
+  assert.equal(h.active(), 'edit-dialog');
+});
+
+test('click pins a visible hover hint in place and a second click dismisses that same hint', t => {
+  const h = harness(t, { asChild: true, pinOnClick: true });
+  h.render().props.onPointerEnter({ pointerType: 'mouse', currentTarget: h.box });
+  h.flushTimers();
+  const hovered = h.render();
+  const hintId = hovered.props['aria-describedby'];
+  assert.ok(hintId);
+  let prevented = false, stopped = false;
+  const click = { currentTarget: h.box, preventDefault() { prevented = true; }, stopPropagation() { stopped = true; } };
+  hovered.props.onPointerDown({});
+  assert.ok(h.active(), 'press must preserve the visible hover hint');
+  hovered.props.onClick(click);
+  assert.ok(prevented && stopped, 'opening help must not toggle a surrounding summary');
+  const pinned = h.render();
+  pinned.props.onPointerLeave({});
+  assert.equal(h.render().props['aria-describedby'], hintId);
+  assert.equal(h.render().props['aria-expanded'], true);
+  pinned.props.onClick(click);
+  assert.equal(h.render().props['aria-expanded'], false);
+});
+
+test('tap opens the shared hint and outside press or Escape closes it', t => {
+  const h = harness(t, { asChild: true, pinOnClick: true });
+  const click = { currentTarget: h.box, preventDefault() {}, stopPropagation() {} };
+  const closed = h.render();
+  closed.props.onPointerEnter({ pointerType: 'touch', currentTarget: h.box });
+  assert.equal(h.timers.size, 0);
+  closed.props.onClick(click);
+  assert.ok(h.render().props['aria-expanded']);
+  const outside = h.listeners.get('document:pointerdown:true');
+  outside({ target: h.box });
+  assert.ok(h.active());
+  outside({ target: {} });
+  assert.equal(h.render().props['aria-expanded'], false);
+  h.render().props.onClick(click);
+  h.render();
+  h.listeners.get('document:keydown:true')({ key: 'Escape', preventDefault() {}, stopPropagation() {} });
+  assert.equal(h.render().props['aria-expanded'], false);
+});
+
+test('moving the mouse onto a keyboard-opened help hint does not hide its already positioned layer', t => {
+  const h = harness(t, { asChild: true, pinOnClick: true });
+  h.render().props.onFocus({ currentTarget: h.box, target: h.box });
+  h.render();
+  h.flushFrames();
+  const focused = h.render();
+  assert.equal(h.hint().props.style.visibility, 'visible');
+  focused.props.onPointerEnter({ pointerType: 'mouse', currentTarget: h.box });
+  h.flushTimers();
+  h.render();
+  assert.equal(h.hint().props.style.visibility, 'visible');
+});
+
+test('closing the details containing the open help dismisses it and detaches its listeners', t => {
+  const h = harness(t, { asChild: true, pinOnClick: true });
+  h.render().props.onClick({ currentTarget: h.box, preventDefault() {}, stopPropagation() {} });
+  h.render();
+  const toggle = h.listeners.get('document:toggle:true');
+  toggle({ target: { tagName: 'DETAILS', open: false, contains: () => false } });
+  assert.ok(h.active());
+  toggle({ target: { tagName: 'DETAILS', open: false, contains: (trigger) => trigger === h.box } });
+  assert.equal(h.render().props['aria-expanded'], false);
+  assert.equal(h.listeners.has('document:toggle:true'), false);
+  assert.equal(h.listeners.has('document:pointerdown:true'), false);
 });

@@ -1,7 +1,7 @@
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createQrSvg, QR_PNG_SIZES, QR_THEMES, qrPngLayout } from './qr-code';
 import {tracker} from '../../analytics/tracker';
-import { ToolError, toolButton, toolInput } from './tool-ui';
+import { ToolError, ToolField, toolButton, toolInput } from './tool-ui';
 import { QR_STICKERS, QR_STICKER_CATEGORIES, qrStickerSvg, type QrStickerId } from './qr-stickers';
 import { readQrPreferences, serializeQrPreferences } from './qr-preferences';
 import { isQrColor } from './qr-colors';
@@ -141,8 +141,7 @@ export default function QrTool({ storageKey }: { storageKey: string }) {
       <p className="text-center text-sm font-medium">{isSample ? '样例二维码' : '二维码预览'}</p>
       {isSample && <p className="text-center text-xs text-[var(--color-text-secondary)]">扫码显示“Relay 二维码样例”；输入内容后即可下载。</p>}
       {url ? <img src={url} alt={isSample ? '样例二维码' : '生成的二维码'} className="mx-auto h-auto w-64 max-w-full rounded-xl bg-white" /> : <div className="mx-auto flex aspect-square w-64 max-w-full items-center justify-center rounded-xl bg-[var(--color-bg-tertiary)] px-4 text-center text-sm text-[var(--color-text-secondary)]">请调整配置以显示二维码</div>}
-      <label className="mx-auto block max-w-sm space-y-2 text-sm"><span>PNG 清晰度</span><select className={toolInput} value={pngSize} disabled={saving} onChange={(event) => setPngSize(Number(event.target.value))}>{QR_PNG_SIZES.map((size) => <option key={size} value={size}>{pngLabels[size]} · {size} × {size}</option>)}</select></label>
-      <p className="text-center text-xs text-[var(--color-text-secondary)]">默认高清适合分享与排版；SVG 可任意放大。</p>
-      <div className="flex flex-wrap justify-center gap-2"><button type="button" className={toolButton} disabled={!url || isSample || saving || uploading} onClick={() => void savePng()}>{saving ? '正在导出…' : '下载 PNG'}</button><button type="button" className={toolButton} disabled={!url || isSample || saving || uploading} onClick={saveSvg}>下载 SVG</button></div></div>
+      <ToolField className="mx-auto grid max-w-sm gap-1 text-sm" label="图片清晰度（PNG）" hint="发消息或插到文档里，通常用 PNG。想在海报上放得很大，可以下载放大后依然清楚的 SVG。"><select className={toolInput} value={pngSize} disabled={saving} onChange={(event) => setPngSize(Number(event.target.value))}>{QR_PNG_SIZES.map((size) => <option key={size} value={size}>{pngLabels[size]} · {size} × {size}</option>)}</select></ToolField>
+      <div className="flex flex-wrap justify-center gap-2"><button type="button" className={toolButton} disabled={!url || isSample || saving || uploading} onClick={() => void savePng()}>{saving ? '正在下载…' : '下载图片（PNG）'}</button><button type="button" className={toolButton} disabled={!url || isSample || saving || uploading} onClick={saveSvg}>下载可放大的图（SVG）</button></div></div>
   </div>;
 }

@@ -1,4 +1,8 @@
 import type { EngineModelDto } from '../../generated/relay-contracts';
+import { reasoningEffortToChinese, serviceTierLabel } from '../../../../server/src/engine/models/presentation.ts';
+
+export { getServiceTierChoices } from '../../../../server/src/engine/models/presentation.ts';
+export { reasoningEffortToChinese, serviceTierLabel };
 
 export interface ModelChoice {
   id: string | null;
@@ -44,18 +48,6 @@ export function reconcileReasoningEffort(model: EngineModelDto | undefined, valu
   return { value: null, changed: true };
 }
 
-export function serviceTierLabel(id: string, fallback?: string) {
-  const label = ({ default: '标准', priority: '快速', fast: '快速', ultrafast: '极速' } as Record<string, string>)[id] || fallback || id;
-  return label === id ? id : `${label}（${id}）`;
-}
-
-export function getServiceTierChoices(model: EngineModelDto | undefined) {
-  if (!model?.serviceTiers?.length) return [];
-  return [{ id: 'default', label: serviceTierLabel('default') }, ...model.serviceTiers
-    .filter((tier) => tier.id !== 'default')
-    .map((tier) => ({ id: tier.id, label: serviceTierLabel(tier.id, tier.label) }))];
-}
-
 export function isAcceleratedServiceTier(model: EngineModelDto | undefined, value: string | null) {
   return Boolean(value && value !== 'default' && model?.serviceTiers?.some((tier) => tier.id === value));
 }
@@ -82,8 +74,4 @@ export function formatReasoningEffortLabel(value: string, fallbackLabel?: string
   if (chinese !== normalized) return `${chinese} (${normalized})`;
   if (fallbackLabel && fallbackLabel !== value) return `${fallbackLabel} (${value})`;
   return fallbackLabel || value;
-}
-
-export function reasoningEffortToChinese(value: string, fallbackLabel?: string): string {
-  return ({ low: '低', medium: '中等', high: '高', xhigh: '超高', max: '最高', ultra: '极致' } as Record<string, string>)[value.toLowerCase()] || fallbackLabel || value;
 }

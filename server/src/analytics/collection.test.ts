@@ -13,7 +13,16 @@ import { commandMeaning } from './command-meaning.js';
 import type { AnalyticsRecord } from './contract.js';
 import {readFeatureAnalytics} from './read-features.js';
 import {nativeQueries} from '../storage/native-queries.js';
-import {ANALYTICS_SCHEMA_SQL} from './contract.js';
+import {ANALYTICS_SCHEMA_SQL, AnalyticsBatchSchema} from './contract.js';
+
+test('飞书管理页面 ID 通过采集校验，原始路由和未登记的 ID 被拒绝',()=>{
+  const event = { id:randomUUID(), name:'page_view', page:'feishu_bots', pageViewId:randomUUID(), referrerHost:null,
+    device:'desktop', browser:'Chrome', os:'Windows', properties:{} };
+  assert.equal(AnalyticsBatchSchema.safeParse({events:[event]}).success,true);
+  for (const page of ['/admin/feishu-bots', 'unregistered_page']) {
+    assert.equal(AnalyticsBatchSchema.safeParse({events:[{...event,page}]}).success,false);
+  }
+});
 
 test('同名工具动作按工具分别排行，同工具累加且不叠加服务端结果',()=>{
   const db=new DatabaseSync(':memory:');db.exec(ANALYTICS_SCHEMA_SQL);

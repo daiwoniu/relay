@@ -29,7 +29,7 @@ export function readFeatureAnalytics(db:ReturnType<typeof nativeQueries>,query:A
     const items=rows.slice(0,100).flatMap(row=>{
       const properties=JSON.parse(row.properties),projected=meaning({name:row.name,page:row.page,properties});
       const durationMs=Number.isInteger(properties.durationMs)&&properties.durationMs>=0&&properties.durationMs<=ANALYTICS_MAX_DURATION?properties.durationMs:null;
-      const details=Object.fromEntries(['surface','engine','settingKey','mode','reasonCode','toolId'].flatMap(key=>{
+      const details=Object.fromEntries(['surface','engine','settingKey','mode','section','reasonCode','toolId'].flatMap(key=>{
         const value=properties[key];
         const allowed=key==='surface'?ANALYTICS_SURFACES:ANALYTICS_ATTRIBUTE_VALUES[key as keyof typeof ANALYTICS_ATTRIBUTE_VALUES];
         return typeof value==='string'&&(allowed as readonly string[]|undefined)?.includes(value)?[[key,value]]:[];

@@ -8,14 +8,16 @@ export function timestampMilliseconds(raw: string, unit: 'seconds' | 'millisecon
 }
 
 export function parseZonedDateTime(raw: string): number {
-  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.\d{1,3})?)?(Z|[+-]\d{2}:\d{2})$/i.exec(raw.trim());
-  if (!match) throw new Error('请输入带时区的日期，如 2026-11-11T12:30:00+08:00。');
+  const text = raw.trim().replace(/^(\d{4}-\d{2}-\d{2})[ \t]+(?=\d{2}:\d{2})/, '$1T')
+    .replace(/[ \t]+(?=(?:Z|[+-]\d{2}:\d{2})$)/i, '');
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.\d{1,3})?)?(Z|[+-]\d{2}:\d{2})$/i.exec(text);
+  if (!match) throw new Error('请填日期、时间和时差，例如 2026-11-11 12:30 +08:00。');
   const [, year, month, day, hour, minute, second = '0'] = match;
   const monthEnd = new Date(0); monthEnd.setUTCFullYear(Number(year), Number(month), 0);
   const daysInMonth = monthEnd.getUTCDate();
   if (+month < 1 || +month > 12 || +day < 1 || +day > daysInMonth || +hour > 23 || +minute > 59 || +second > 59) throw new Error('日期或时间不正确。');
-  const value = Date.parse(raw.trim());
-  if (!Number.isFinite(value)) throw new Error('时区偏移或日期不正确。');
+  const value = Date.parse(text);
+  if (!Number.isFinite(value)) throw new Error('请检查日期和末尾的时差。');
   return value;
 }
 

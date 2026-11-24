@@ -62,9 +62,10 @@ const projectMatchPreview = (project: TrashProjectDto, query: string) => <div cl
 </div>;
 const previewMessages = (messages: TrashMessagePreview[], query = '') => messages.map((message) => <div key={message.id} className={`trash-dialog__preview-message trash-dialog__preview-message--${message.role}`}><div className="trash-dialog__preview-meta"><span>{message.role === 'user' ? '用户' : message.role === 'assistant' ? '助手' : '系统'}</span><time dateTime={new Date(message.createdAt).toISOString()}>{formatPreviewTime(message.createdAt)}</time></div><p>{query ? highlight(message.content, query) : message.content || '（空消息）'}</p></div>);
 
-export default function TrashDialog({ open, admin, onClose, onChanged }: {
+export default function TrashDialog({ open, admin, mobile = false, onClose, onChanged }: {
   open: boolean;
   admin: boolean;
+  mobile?: boolean;
   onClose(): void;
   onChanged(): void;
 }) {
@@ -403,7 +404,7 @@ export default function TrashDialog({ open, admin, onClose, onChanged }: {
   </>;
 
   return <>
-    <PanelShell open={open} onClose={() => { if (!batchRunning) onClose(); }} title="回收站" icon={<UserMenuIcon type="trash" />} description={admin ? '全部账号的已删除内容 · 可恢复或彻底删除' : '我的已删除内容 · 可恢复误删内容'} titleId="trash-dialog-title" size="content" navigation={<>
+    <PanelShell open={open} mobile={mobile} onClose={() => { if (!batchRunning) onClose(); }} title="回收站" icon={<UserMenuIcon type="trash" />} description={admin ? '全部账号的已删除内容 · 可恢复或彻底删除' : '我的已删除内容 · 可恢复误删内容'} titleId="trash-dialog-title" size="content" navigation={<>
       <div className="trash-dialog__tabs" role="tablist" aria-label="回收站类型">
         {(['sessions', 'projects'] as const).map((value) => <button key={value} type="button" role="tab" aria-selected={tab === value} onClick={() => {if(tab!==value)featureAction('trash','mode','user_menu');selectTab(value);}} className={`trash-dialog__tab${tab === value ? ' trash-dialog__tab--active' : ''}`}>{value === 'projects' ? `项目 ${total.projects}` : `会话 ${total.sessions}`}</button>)}
       </div>

@@ -6,20 +6,22 @@ import ServiceTierIcon from './ServiceTierIcon';
 
 interface Props {
   embedded?: boolean;
+  deferSubmission?: boolean;
+  allowAutomaticModel?: boolean;
   models: EngineModelDto[];
   modelId: string | null;
   reasoningEffort: string | null;
   serviceTier: string | null;
-  applyDisabled: boolean;
-  submitting: boolean;
+  applyDisabled?: boolean;
+  submitting?: boolean;
   notice?: string | null;
   error?: string | null;
   engineId?: EngineId | null;
   onModelChange: (modelId: string | null) => void;
   onReasoningChange: (reasoningEffort: string | null) => void;
   onServiceTierChange: (serviceTier: string | null) => void;
-  onCancel: () => void;
-  onApply: () => void;
+  onCancel?: () => void;
+  onApply?: () => void;
 }
 
 function getReasoningTone(id: string | null): string {
@@ -33,7 +35,7 @@ function getReasoningTone(id: string | null): string {
   return 'default';
 }
 
-export default function ModelSettingsPanel({ embedded = false, models, modelId, reasoningEffort, serviceTier, applyDisabled, submitting, notice, error, engineId, onModelChange, onReasoningChange, onServiceTierChange, onCancel, onApply }: Props) {
+export default function ModelSettingsPanel({ embedded = false, deferSubmission = false, allowAutomaticModel = true, models, modelId, reasoningEffort, serviceTier, applyDisabled, submitting, notice, error, engineId, onModelChange, onReasoningChange, onServiceTierChange, onCancel, onApply }: Props) {
   const modelSelectId = useId();
   const isAutomaticModel = modelId === null;
   const selectedModel = models.find((model) => model.id === modelId)
@@ -73,7 +75,8 @@ export default function ModelSettingsPanel({ embedded = false, models, modelId, 
           <label htmlFor={modelSelectId}><b>模型选择</b></label>
           <select id={modelSelectId} aria-label="模型选择" value={modelId ?? ''} onChange={(event) => onModelChange(event.target.value || null)}>
             {modelId && !models.some(model => model.id === modelId) && <option value={modelId} disabled>不可用 · {modelId}</option>}
-            {buildModelChoices(models).map((choice) => (
+            {!allowAutomaticModel && !modelId && <option value="" disabled>选择模型</option>}
+            {buildModelChoices(models).filter(choice => allowAutomaticModel || choice.id !== null).map((choice) => (
               <option key={choice.id ?? 'default'} value={choice.id ?? ''}>
                 {choice.label}{choice.id !== null && choice.isDefault ? '（默认）' : ''}
               </option>
@@ -145,10 +148,10 @@ export default function ModelSettingsPanel({ embedded = false, models, modelId, 
         {error && engineId === 'zcode' && <small role="status">ZCode 模型列表加载失败：请确认 ZCode 桌面应用已启动，或在引擎维护中检查可用性后重试。</small>}
       </div>
 
-      <div className="model-settings-footer sticky bottom-0">
+      {!deferSubmission && <div className="model-settings-footer sticky bottom-0">
         <button type="button" onClick={onCancel}>取消</button>
         <button type="button" onClick={onApply} disabled={applyDisabled || submitting}>{submitting ? '应用中…' : applyDisabled ? '任务进行中' : '应用'}</button>
-      </div>
+      </div>}
     </div>
   );
 }

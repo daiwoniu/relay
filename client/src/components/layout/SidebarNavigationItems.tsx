@@ -12,6 +12,7 @@ import SessionDetailsContent from './SessionDetailsContent';
 import SessionSearchSummary, { SessionSearchTitle } from './SessionSearchSummary';
 import ResourceOwnerBadge from './ResourceOwnerBadge';
 import { projectSidebarOrderScope } from './sidebar-order';
+import { canCreateSidebarProjectSession } from './sidebar-account-interactions';
 import { sidebarDragId } from './sidebar-drag';
 import { resolveSessionProjectId } from './session-project';
 import { getSidebarSessionStatus, getSessionStatusPresentation, getSessionDisplayStage, type DisplayedSessionStatus } from './session-status';
@@ -76,11 +77,14 @@ function useRenameInputAutoSelect(isRenaming: boolean) {
   return inputRef;
 }
 
-export function ProjectBlock({ scope, project, sessions, sessionCount, activeSessionId, expanded, onToggle, onSelectSession, onProjectMenu, onProjectPin, onProjectNewChat, onSessionMenu, onSessionPin, renamingTarget, renameValue, onRenameChange, onRenameSubmit, onRenameCancel, contextMenuActive, contextMenuSessionId, isMobile, dragDisabled, canOrganize, showOwner, dragging, searchQuery, searchResults }: {
+export function ProjectBlock({ scope, project, sessions, sessionCount, pinnedSessionCount, sessionsOutsideServerOrder, showEmptyState, activeSessionId, expanded, onToggle, onSelectSession, onProjectMenu, onProjectPin, onProjectNewChat, onSessionMenu, onSessionPin, renamingTarget, renameValue, onRenameChange, onRenameSubmit, onRenameCancel, contextMenuActive, contextMenuSessionId, isMobile, dragDisabled, canOrganize, showOwner, dragging, searchQuery, searchResults }: {
   scope: SidebarOrderScope;
   project: Project;
   sessions: Session[];
   sessionCount: number;
+  pinnedSessionCount: number;
+  sessionsOutsideServerOrder: ReadonlySet<string>;
+  showEmptyState: boolean;
   activeSessionId: string | null;
   expanded: boolean;
   onToggle: () => void;
@@ -110,6 +114,9 @@ export function ProjectBlock({ scope, project, sessions, sessionCount, activeSes
   const [rowActive, setRowActive] = useState(false);
   const actionsVisible = isMobile || contextMenuActive || rowActive;
   const metadataHidden = !isMobile && actionsVisible;
+  const canCreateSession = canCreateSidebarProjectSession(project, canOrganize);
+  const createSession = () => onProjectNewChat(project.id);
+  const emptyLabel = sessionCount === 0 ? '暂无会话' : pinnedSessionCount > 0 ? `${pinnedSessionCount} 个会话在置顶` : null;
   const contentId = `project-sessions-${project.id}`;
   const item = { type: 'project' as const, id: project.id };
   const { attributes, listeners, setActivatorNodeRef, setNodeRef, transform, transition, isDragging } = useSortable({
@@ -207,12 +214,12 @@ export function ProjectBlock({ scope, project, sessions, sessionCount, activeSes
               <PinIcon filled={!!project.pinned} />
             </IconActionButton>
           </span>}
-          {canOrganize && project.access_role !== 'viewer' && <span className="inline-flex">
+          {canCreateSession && <span className="inline-flex">
             <IconActionButton
               label="新会话"
               className="sidebar-resource-action-hitbox w-6 rounded-md"
               tabIndex={actionsVisible ? 0 : -1}
-              onClick={(event) => { event.stopPropagation(); onProjectNewChat(project.id); }}
+              onClick={(event) => { event.stopPropagation(); createSession(); }}
             >
               <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
                 <path d="M8 3v10M3 8h10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
@@ -235,9 +242,20 @@ export function ProjectBlock({ scope, project, sessions, sessionCount, activeSes
       {expanded && (
         <div id={contentId} className="mt-0.5 space-y-0.5 pl-[22px]">
           {sessions.length === 0 ? (
-            <span className="sidebar-navigation-state sidebar-navigation-state--inline block">暂无会话，可使用项目行的“新会话”按钮创建</span>
+            showEmptyState && (sessionCount === 0 && canCreateSession ? (
+              <button
+                type="button"
+                onClick={createSession}
+                className="sidebar-navigation-state sidebar-navigation-state--inline sidebar-navigation-state--action flex items-center gap-1"
+              >
+                <span aria-hidden="true">＋</span>
+                新会话
+              </button>
+            ) : emptyLabel && (
+              <span className="sidebar-navigation-state sidebar-navigation-state--inline block">{emptyLabel}</span>
+            ))
           ) : (
-            <SortableContext items={sessions.map((session) => sidebarDragId({ type: 'session', id: session.id }))} strategy={verticalListSortingStrategy}>
+            <SortableContext items={sessions.filter((session) => !sessionsOutsideServerOrder.has(session.id)).map((session) => sidebarDragId({ type: 'session', id: session.id }))} strategy={verticalListSortingStrategy}>
             {sessions.map((s) => (
               <SessionRow
                 key={s.id}
@@ -255,6 +273,7 @@ export function ProjectBlock({ scope, project, sessions, sessionCount, activeSes
                 contextMenuActive={contextMenuSessionId === s.id}
                 isMobile={isMobile}
                 dragDisabled={dragDisabled}
+                outsideServerOrder={sessionsOutsideServerOrder.has(s.id)}
                 canOrganize={canOrganize}
                 showOwner={showOwner}
                 dragging={dragging}
@@ -280,7 +299,7 @@ function MoreIcon() {
   );
 }
 
-export function SessionRow({ scope, session, active, onSelect, onMenu, renamingTarget, renameValue, onRenameChange, onRenameSubmit, onRenameCancel, contextMenuActive, isMobile, dragDisabled, showOwner, dragging, searchQuery = '', searchResult }: {
+export function SessionRow({ scope, session, active, onSelect, onMenu, renamingTarget, renameValue, onRenameChange, onRenameSubmit, onRenameCancel, contextMenuActive, isMobile, dragDisabled: sidebarDragDisabled, outsideServerOrder = false, showOwner, dragging, searchQuery = '', searchResult }: {
   scope: SidebarOrderScope;
   session: Session;
   active: boolean;
@@ -295,6 +314,7 @@ export function SessionRow({ scope, session, active, onSelect, onMenu, renamingT
   contextMenuActive: boolean;
   isMobile: boolean;
   dragDisabled: boolean;
+  outsideServerOrder?: boolean;
   canOrganize: boolean;
   showOwner: boolean;
   dragging: boolean;
@@ -302,6 +322,7 @@ export function SessionRow({ scope, session, active, onSelect, onMenu, renamingT
   searchResult?: SessionSearchResultDto;
 }) {
   const isRenaming = renamingTarget?.type === 'session' && renamingTarget.id === session.id;
+  const dragDisabled = sidebarDragDisabled || outsideServerOrder;
   const renameInputRef = useRenameInputAutoSelect(isRenaming);
   const [rowHovered, setRowHovered] = useState(false);
   const [rowFocused, setRowFocused] = useState(false);
@@ -326,7 +347,7 @@ export function SessionRow({ scope, session, active, onSelect, onMenu, renamingT
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: sidebarDragId(item),
     data: { scope, item },
-    disabled: dragDisabled || isRenaming,
+    disabled: { draggable: dragDisabled || isRenaming, droppable: outsideServerOrder },
   });
   const sortableStyle = {
     transform: CSS.Transform.toString(transform),

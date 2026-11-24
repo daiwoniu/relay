@@ -8,11 +8,18 @@ export const HostingPublicIdSchema = z.string().regex(/^[a-z0-9]{10}$/);
 export const HostingPathSchema = z.string().min(1).max(512).refine(value =>
   !value.startsWith('/') && !value.includes('\\') && value.split('/').every(part =>
     !!part && part !== '.' && part !== '..' && !/[\x00-\x1f:]/.test(part)));
+export const HostingLocalSourcePathSchema = z.string().min(1).max(32768);
+export const HostingSourceSchema = z.union([
+  z.object({ kind: z.literal('local'), path: HostingLocalSourcePathSchema }).strict(),
+  z.object({ kind: z.literal('upload'), filename: z.string().min(1).max(32768) }).strict(),
+]);
+export type HostingSource = z.infer<typeof HostingSourceSchema>;
 export const HostedSiteSchema = z.object({
   id: z.string().uuid(), publicId: HostingPublicIdSchema.optional(), name: z.string().trim().min(1).max(80), entry: HostingPathSchema,
   enabled: z.boolean(), fileCount: z.number().int().min(1).max(HOSTING_FILE_COUNT),
   totalBytes: z.number().int().min(1).max(HOSTING_EXPANDED_BYTES),
   contentToken: z.string().uuid(), createdAt: z.number().int().positive(), updatedAt: z.number().int().positive(),
+  source: HostingSourceSchema.optional(),
 }).strict();
 export type HostedSite = z.infer<typeof HostedSiteSchema>;
 export const HostingSaveSchema = z.object({ site: HostedSiteSchema, expectedToken: z.string().uuid().nullable() }).strict();
@@ -25,7 +32,8 @@ export const HostingInspectionSchema = z.object({
 });
 export type HostingInspection = z.infer<typeof HostingInspectionSchema>;
 export const HOSTING_SCHEMA_SQL = `CREATE TABLE hosted_sites (
-  id TEXT PRIMARY KEY, site_json TEXT NOT NULL CHECK(length(site_json)<=4096), updated_at INTEGER NOT NULL)`;
+  id TEXT PRIMARY KEY, site_json TEXT NOT NULL CHECK(length(site_json)<=4096), updated_at INTEGER NOT NULL, source_json TEXT)`;
+export const HOSTING_ADD_SOURCE_COLUMN_SQL = 'ALTER TABLE hosted_sites ADD COLUMN source_json TEXT';
 export function hostingUrl(id: string, entry = '') {
   return `/p/${id}/${entry.split('/').map(encodeURIComponent).join('/')}`;
 }

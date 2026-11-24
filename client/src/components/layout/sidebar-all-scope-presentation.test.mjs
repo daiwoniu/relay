@@ -30,7 +30,9 @@ test('项目和会话标题按策略显示所属用户标志并隐藏行内置�
   assert.match(navigation, /showOwner && <ResourceOwnerBadge owner=\{project\.owner\}/);
   assert.match(navigation, /showOwner && <ResourceOwnerBadge owner=\{session\.owner\}/);
   assert.match(navigation, /\{canOrganize && <span className="hidden lg:inline-flex">/);
-  assert.match(navigation, /\{canOrganize && project\.access_role !== 'viewer' && <span className="inline-flex">[\s\S]*?label="新会话"/);
+  assert.match(navigation, /const canCreateSession = canCreateSidebarProjectSession\(project, canOrganize\)/);
+  assert.match(navigation, /\{canCreateSession && <span className="inline-flex">[\s\S]*?label="新会话"/);
+  assert.match(navigation, /showEmptyState && \(sessionCount === 0 && canCreateSession \? \([\s\S]*?onClick=\{createSession\}/);
 });
 
 test('禁用拖排时不向仍可点击的项目和会话按钮注入 aria-disabled', () => {

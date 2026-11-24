@@ -36,11 +36,11 @@ test('管理视图没有选中会话时只提供浏览空态且不能创建会�
   assert.match(chatView, /managementBrowseEmpty \? <div[\s\S]*?请从左侧选择会话/);
   assert.match(chatView, /if \(managementBrowseEmpty\) return false/);
   assert.match(sidebar, /if \(accountScope === 'all'\) return/);
-  assert.match(sidebar, /\.\.\.\(accountScope !== 'all' && canCreateMenuSession \? \[\{[\s\S]*?id: 'new-session'/);
+  assert.match(sidebar, /\.\.\.\(canCreateSidebarProjectSession\(menuProject, menuInteractionPolicy\.canOrganize\) \? \[\{\s*id: 'new-session'/);
 });
 
 test('全部用户视图在资源栏提供显示全部项目开关且仅该视图显示', () => {
-  assert.match(sidebar, /const visibleProjects = accountScope === 'all' && !ownerFilterId && !showAllProjects/);
+  assert.match(sidebar, /const hidingEmptyProjects = accountScope === 'all' && !ownerFilterId && !showAllProjects/);
   assert.match(sidebar, /showAllProjectsToggle=\{resourceViewType === 'all' \? \{ checked: showAllProjects, onToggle: toggleShowAllProjects \} : null\}/);
   assert.match(workbench, /showAllProjectsToggle && <Tooltip/);
   assert.match(workbench, /aria-pressed=\{showAllProjectsToggle\.checked\}/);

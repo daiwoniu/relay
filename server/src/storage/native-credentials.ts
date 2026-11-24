@@ -46,7 +46,7 @@ export function executeNativeCredential(db: DB, transaction: <T>(work: () => T) 
         const value = JSON.parse(prior.result_json);
         if (request.command.name === 'auth.login') {
           const user = findUser(prior.subject_user_id);
-          if (!user || user.disabled_at != null || !validSession(user.id, identity.authorizer, now)
+          if (!user || isFeishuExecutionActor(user.id) || user.disabled_at != null || !validSession(user.id, identity.authorizer, now)
             || request.command.input.requiredRole && request.command.input.requiredRole !== user.role) deny('OPERATION_EXPIRED');
           value.user = presentPublicUser(user); // A replay must not restore an outdated role or account preference.
         }
@@ -63,7 +63,7 @@ export function executeNativeCredential(db: DB, transaction: <T>(work: () => T) 
       const command = request.command;
       if (command.name === 'auth.login') {
         const user = db.get(`SELECT ${userColumns} FROM users WHERE username=? COLLATE NOCASE`, [command.input.username]) as User | undefined;
-        if (!user || user.disabled_at != null || !verifyPassword(command.input.password, user.password_hash)
+        if (!user || isFeishuExecutionActor(user.id) || user.disabled_at != null || !verifyPassword(command.input.password, user.password_hash)
           || command.input.requiredRole && command.input.requiredRole !== user.role) deny('FORBIDDEN', 'invalid_credentials');
         if (db.get('SELECT user_id FROM auth_sessions WHERE token_hash=?', [command.input.tokenHash])
           || db.get("SELECT operation_id FROM _relay_credential_operations WHERE command_name='auth.login' AND authorizer_hash=?", [command.input.tokenHash])) deny('CONFLICT');
@@ -132,3 +132,4 @@ export function executeNativeCredential(db: DB, transaction: <T>(work: () => T) 
     return { state: 'unknown', operationId: request.operationId, cause: 'transport', recovery: 'lookup' };
   }
 }
+import { isFeishuExecutionActor } from '../integrations/feishu-im/native-session-scope.js';

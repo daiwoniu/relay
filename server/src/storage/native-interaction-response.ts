@@ -9,6 +9,8 @@ import { assertPurgeWriteFence } from './native-purge.js';
 import { assertDeletionWriteFence } from './native-deletion-fence.js';
 import { assertUploadCleanupWriteFence } from './native-upload-cleanup.js';
 import { standaloneSource } from './native-standalone-interactions.js';
+import { canReviewFeishuRelayTurn } from './native-feishu-im.js';
+import { isFeishuExecutionActor } from '../integrations/feishu-im/native-session-scope.js';
 type DB=ReturnType<typeof nativeQueries>;
 const id=z.string().min(1).max(256),digest=z.string().regex(/^[a-f0-9]{64}$/);
 const jobSchema=z.object({jobId:id,actorUserId:id,ownerUserId:id,adminAudit:z.boolean(),sessionId:id,attemptId:id,connectionId:id,
@@ -58,6 +60,7 @@ export function prepareInteractionResponse(db:DB,actor:AccessActor,jobId:string,
   const session=db.get('SELECT engine FROM sessions WHERE id=?',[input.sessionId]);if(!session)deny('CONFLICT');
   const current=source(db,{...input,engineId:session.engine,leaseToken});if(!current)deny('CONFLICT');
   if(current.owner_user_id!==actor.id&&actor.role!=='admin')deny('FORBIDDEN');
+  if(isFeishuExecutionActor(current.owner_user_id)&&!canReviewFeishuRelayTurn(db,actor.id,current.owner_user_id,input.sessionId,input.attemptId))deny('FORBIDDEN');
   if(db.get("SELECT 1 FROM _relay_interaction_responses WHERE session_id=? AND attempt_id=? AND connection_id=? AND runtime_version=? AND interaction_id=? AND phase<>'rejected'",
     [input.sessionId,input.attemptId,input.connectionId,input.runtimeVersion,input.interactionId]))deny('CONFLICT');
   const job:InteractionResponseJob={...input,jobId,actorUserId:actor.id,ownerUserId:current.owner_user_id,
@@ -68,6 +71,7 @@ export function checkInteraction(db:DB,actor:AccessActor,job:InteractionResponse
   authorizeInteractionJob(db,actor,job);
   if(job.phase!=='prepared'||job.claimToken!==claimToken)return false;
   const current=source(db,job);if(!current||current.owner_user_id!==job.ownerUserId)return false;
+  if(isFeishuExecutionActor(job.ownerUserId)&&!canReviewFeishuRelayTurn(db,actor.id,job.ownerUserId,job.sessionId,job.attemptId))return false;
   const command={name:'interaction.prepareResponse' as const,input:{sessionId:job.sessionId,attemptId:job.attemptId,connectionId:job.connectionId,runtimeVersion:job.runtimeVersion,
     interactionId:job.interactionId,requestDigest:job.requestDigest,responseDigest:job.responseDigest,claimToken:job.claimToken}};
   try{assertPurgeWriteFence(db,command,principal);assertDeletionWriteFence(db,command,principal,'soft');assertUploadCleanupWriteFence(db,command,principal);}

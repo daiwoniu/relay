@@ -9,12 +9,17 @@ import { z } from 'zod';
 import type { CoreStoragePort, StoragePrincipal } from '../storage/contracts.js';
 import { executeStoredCommand } from '../storage/command-outcome.js';
 import { StorageContractError } from '../storage/command-boundary.js';
-import { HostedSiteSchema, HostingPublicIdSchema, HOSTING_UPLOAD_BYTES, HOSTING_FILE_COUNT, type HostedSite, type HostingInspection } from './contract.js';
+import { HostedSiteSchema, HostingPublicIdSchema, HostingSourceSchema, HOSTING_UPLOAD_BYTES, HOSTING_FILE_COUNT, type HostedSite, type HostingInspection, type HostingSource } from './contract.js';
 import { safePackagePath } from './file-paths.js';
 import { HostingError } from './errors.js';
 export { HostingError } from './errors.js';
 
 type Principal = Extract<StoragePrincipal, {kind:'user'}>;
+type HostingInput = {
+  source: HostingSource;
+  body: ReadableStream<Uint8Array> | null;
+  length: number;
+};
 export function createHostingPublicId(sites:Pick<HostedSite,'publicId'>[],generate=()=>Array.from({length:10},()=>'abcdefghijklmnopqrstuvwxyz0123456789'[randomInt(36)]).join('')){
   const used=new Set(sites.map(site=>site.publicId));
   for(let attempt=0;attempt<100;attempt++){const id=generate();if(HostingPublicIdSchema.safeParse(id).success&&!used.has(id))return id;}
@@ -22,7 +27,7 @@ export function createHostingPublicId(sites:Pick<HostedSite,'publicId'>[],genera
 }
 const uuid = z.string().uuid();
 const STAGE_TTL = 60 * 60 * 1000;
-const markerSchema = z.object({owner:z.string(),inspection:z.object({uploadId:uuid,previewToken:z.string().regex(/^[a-f0-9]{64}$/),expiresAt:z.number(),entries:z.array(z.string()).max(HOSTING_FILE_COUNT),suggestedEntry:z.string().nullable(),fileCount:z.number(),totalBytes:z.number(),rewritten:z.number(),warnings:z.array(z.string()).max(40),warningCount:z.number()})});
+const markerSchema = z.object({owner:z.string(),source:HostingSourceSchema.optional(),inspection:z.object({uploadId:uuid,previewToken:z.string().regex(/^[a-f0-9]{64}$/),expiresAt:z.number(),entries:z.array(z.string()).max(HOSTING_FILE_COUNT),suggestedEntry:z.string().nullable(),fileCount:z.number(),totalBytes:z.number(),rewritten:z.number(),warnings:z.array(z.string()).max(40),warningCount:z.number()})});
 const journalSchema = z.object({old:HostedSiteSchema.nullable(),next:HostedSiteSchema.nullable(),uploadId:uuid.nullable()}).refine(value=>
   !!(value.old||value.next)&&(!value.old||!value.next||value.old.id===value.next.id)&&(!value.next||!!value.uploadId));
 const missing = (error:unknown) => (error as NodeJS.ErrnoException)?.code === 'ENOENT';
@@ -118,7 +123,7 @@ export class PageHosting {
     }
     // Never silently publish an orphan directory after an interrupted first publication.
   }
-  upload(principal:Principal,filename:string,body:ReadableStream<Uint8Array>,length:number){return this.prepare(principal,filename,body,length);}
+  upload(principal:Principal,filename:string,body:ReadableStream<Uint8Array>,length:number){return this.prepare(principal,{source:{kind:'upload',filename},body,length});}
   async importLocal(principal:Principal,source:string){
     await this.initialize();await this.options.port.readHostedSites({principal});
     if(!path.isAbsolute(source)||/^[\\/]{2}/.test(source))throw new HostingError('请选择服务器本地磁盘上的绝对路径');
@@ -126,21 +131,25 @@ export class PageHosting {
     if(stat.isSymbolicLink()||(!stat.isFile()&&!stat.isDirectory()))throw new HostingError('不能导入链接或特殊文件');
     const hostingRoot=await fs.realpath(this.options.root);
     if(real===hostingRoot||real.startsWith(hostingRoot+path.sep)||hostingRoot.startsWith(real+path.sep))throw new HostingError('请选择独立的静态页面目录，不能导入托管数据目录或其上层');
-    if(stat.isDirectory())return this.prepare(principal,'directory',null,0,real);
+    const origin:HostingSource={kind:'local',path:real};
+    if(stat.isDirectory())return this.prepare(principal,{source:origin,body:null,length:0});
     if(stat.size>HOSTING_UPLOAD_BYTES)throw new HostingError('单文件不能超过 32 MB',413);
     const sourceStream=createReadStream(real);
-    try{return await this.prepare(principal,path.basename(real),Readable.toWeb(sourceStream) as ReadableStream<Uint8Array>,stat.size);}
+    try{return await this.prepare(principal,{source:origin,body:Readable.toWeb(sourceStream) as ReadableStream<Uint8Array>,length:stat.size});}
     finally{sourceStream.destroy();}
   }
-  private prepare(principal:Principal,filename:string,body:ReadableStream<Uint8Array>|null,length:number,localDirectory?:string){
-    const work=this.prepareInner(principal,filename,body,length,localDirectory);this.imports.add(work);
+  private prepare(principal:Principal,input:HostingInput){
+    const work=this.prepareInner(principal,input);this.imports.add(work);
     void work.finally(()=>this.imports.delete(work)).catch(()=>undefined);return work;
   }
-  private async prepareInner(principal:Principal,filename:string,body:ReadableStream<Uint8Array>|null,length:number,localDirectory?:string):Promise<HostingInspection>{
+  private async prepareInner(principal:Principal,{source,body,length}:HostingInput):Promise<HostingInspection>{
     await this.initialize();await this.options.port.readHostedSites({principal});
     if(this.activeUploads>=1)throw new HostingError('另一个文件正在处理，请稍后重试',409);
     if(length>HOSTING_UPLOAD_BYTES)throw new HostingError('上传文件不能超过 32 MB',413);
+    const filename=source.kind==='upload'?source.filename:path.basename(source.path);
+    const localDirectory=source.kind==='local'&&body===null?source.path:undefined;
     if(!localDirectory&&!/\.(html?|zip)$/i.test(filename))throw new HostingError('请选择 HTML 文件或 ZIP 压缩包');
+    if(!HostingSourceSchema.safeParse(source).success)throw new HostingError('来源路径或文件名太长');
     this.activeUploads++;
     const uploadId=randomUUID(),folder=this.root('staging',uploadId),content=path.join(folder,'content');
     try{
@@ -157,7 +166,7 @@ export class PageHosting {
       const result=await this.inspect({filename,archive,content,folder,received,localDirectory});
       const inspection:HostingInspection={uploadId,previewToken:randomBytes(32).toString('hex'),expiresAt:Date.now()+STAGE_TTL,...result};
       await this.options.port.readHostedSites({principal});await this.options.assertExclusiveWriter();
-      await fs.writeFile(path.join(folder,'meta.json'),JSON.stringify({owner:principal.userId,inspection}),{flush:true});
+      await fs.writeFile(path.join(folder,'meta.json'),JSON.stringify({owner:principal.userId,source,inspection}),{flush:true});
       await fs.rm(archive,{force:true});return inspection;
     }catch(error){await fs.rm(folder,{recursive:true,force:true}).catch(()=>undefined);throw error;}
     finally{this.activeUploads--;}
@@ -186,7 +195,7 @@ export class PageHosting {
       const stage=await this.stage(input.uploadId);if(stage.owner!==principal.userId)throw new HostingError('上传不存在',404);
       if(!stage.inspection.entries.includes(input.entry))throw new HostingError('请选择有效的 HTML 首页');
       if(sites.reduce((sum,site)=>sum+site.totalBytes,0)-(old?.totalBytes??0)+stage.inspection.totalBytes>1024*1024*1024)throw new HostingError('托管内容总量不能超过 1 GB',413);
-      const now=Date.now(),site=HostedSiteSchema.parse({id:old?.id??randomUUID(),publicId:old?.publicId??createHostingPublicId(sites),name:input.name,entry:input.entry,enabled:old?.enabled??true,fileCount:stage.inspection.fileCount,totalBytes:stage.inspection.totalBytes,contentToken:randomUUID(),createdAt:old?.createdAt??now,updatedAt:now});
+      const now=Date.now(),site=HostedSiteSchema.parse({id:old?.id??randomUUID(),publicId:old?.publicId??createHostingPublicId(sites),name:input.name,entry:input.entry,enabled:old?.enabled??true,fileCount:stage.inspection.fileCount,totalBytes:stage.inspection.totalBytes,contentToken:randomUUID(),createdAt:old?.createdAt??now,updatedAt:now,...(stage.source?{source:stage.source}:{})});
       await this.swap(principal,old??null,site,input.uploadId);
       await fs.rm(this.root('staging',input.uploadId),{recursive:true,force:true}).catch(()=>undefined);return site;
     });

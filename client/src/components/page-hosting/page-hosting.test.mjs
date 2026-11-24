@@ -230,7 +230,8 @@ test('cancelling an addition from management preserves its hosting panel',async 
 
 for(const fromPreview of [false,true])test(`publishing from ${fromPreview?'preview':'management'} preserves the correct containing window`,async t=>{
   let closed=0;
-  const site={id:'new',publicId:'new-public',name:'新页面',entry:'index.html',fileCount:1,totalBytes:100,updatedAt:10,enabled:true};
+  const source=fromPreview?{kind:'local',path:'D:\\site\\one.html'}:{kind:'upload',filename:'原始  文件.zip'};
+  const site={id:'new',publicId:'new-public',name:'新页面',entry:'index.html',fileCount:1,totalBytes:100,updatedAt:10,enabled:true,source};
   const h=harness(t,{listHostedSites:async()=>({sites:[]})},{authUser:{id:'admin',role:'admin'},pageProps:{onClose:()=>closed++,...(fromPreview?{importRequest:{path:'D:/site/one.html',requestId:1}}:{})}});
   h.page();h.flush();await settle();
   if(!fromPreview)button(h.page(),'添加页面').props.onClick();
@@ -243,6 +244,9 @@ for(const fromPreview of [false,true])test(`publishing from ${fromPreview?'previ
   else assert.match(content(tree),/页面已发布，可打开或复制访问链接/);
   assert.ok(button(tree,'复制链接'));
   assert.ok(button(tree,'更多'));
+  const sourceLine=nodes(tree,node=>node.type==='bdi')[0];
+  assert.equal(content(sourceLine),fromPreview?source.path:source.filename);
+  assert.match(content(tree),fromPreview?/本地路径 · /:/上传文件 · /);
   assert.equal(nodes(tree,node=>node.type==='a'&&content(node)==='打开')[0].props.href,'/p/new-public/');
 });
 

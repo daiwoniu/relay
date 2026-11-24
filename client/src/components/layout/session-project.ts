@@ -30,16 +30,6 @@ export function resolveSessionProjectId(session: SessionDto, projects: ProjectDt
   return resolveDefaultProjectId(projects);
 }
 
-// 全部用户视图：隐藏没有任何会话的项目，会话归属按完整项目列表解析，避免过滤本身影响默认项目回退。
-export function hideEmptyProjectsInAllScope(
-  projects: ProjectDto[],
-  sessions: SessionDto[],
-): ProjectDto[] {
-  return projects.filter((project) => sessions.some(
-    (session) => resolveSessionProjectId(session, projects) === project.id,
-  ));
-}
-
 const SHOW_ALL_PROJECTS_STORAGE_KEY = 'relay.sidebar.showAllProjects.v1';
 
 type SidebarPreferenceStorage = {

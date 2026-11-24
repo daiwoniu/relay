@@ -435,6 +435,8 @@ export function searchSessionsInDatabase(
   limit = 50,
   ownerUserId?: string,
   requireActiveProject = false,
+  filterOwnerUserId?: string,
+  excludeOwnerPattern?: string,
 ): SessionSearchRecord[] {
   const normalizedQuery = query.trim();
   if (!normalizedQuery) return [];
@@ -448,6 +450,8 @@ export function searchSessionsInDatabase(
        AND s.deleted_at IS NULL
        ${requireActiveProject ? 'AND EXISTS (SELECT 1 FROM projects active_project WHERE active_project.id=s.project_id AND active_project.deleted_at IS NULL AND active_project.owner_user_id IS NOT NULL)' : ''}
        ${ownerClause}
+       ${filterOwnerUserId ? 'AND s.owner_user_id = ?' : ''}
+       ${excludeOwnerPattern ? 'AND s.owner_user_id NOT GLOB ?' : ''}
        AND (
          LOWER(s.title) LIKE LOWER(?) ESCAPE '\\'
           OR EXISTS (
@@ -467,7 +471,8 @@ export function searchSessionsInDatabase(
        )
      ORDER BY s.updated_at DESC, s.id DESC
      LIMIT ?`,
-    [...(ownerUserId ? sessionVisibleToActorParams(ownerUserId) : []), pattern, pattern, pattern, boundedLimit],
+    [...(ownerUserId ? sessionVisibleToActorParams(ownerUserId) : []), ...(filterOwnerUserId ? [filterOwnerUserId] : []),
+      ...(excludeOwnerPattern ? [excludeOwnerPattern] : []), pattern, pattern, pattern, boundedLimit],
   ) as Session[];
   if (sessions.length === 0) return [];
 

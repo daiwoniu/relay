@@ -38,9 +38,9 @@ test('用户关闭项目面板后不会被普通重渲染反复打开', () => {
 });
 
 test('从项目加号或项目菜单新建会话时不自动打开项目选择面板', () => {
-  assert.match(sidebarSource, /const handleProjectNewChat = \(projectId: string, projectSelectionLocked: boolean\) => \{[\s\S]*?setActiveSession\('', \{ autoOpenProjectPicker: false, projectSelectionLocked \}\)/);
-  assert.match(sidebarSource, /\.\.\.\(accountScope !== 'all' && canCreateMenuSession \? \[\{[\s\S]*?onSelect: \(\) => handleProjectNewChat\(menuProject\.id, false\)/);
-  assert.match(sidebarSource, /onProjectNewChat=\{\(projectId\) => handleProjectNewChat\(projectId, accountScope === 'all'\)\}/);
+  assert.match(sidebarSource, /const handleProjectNewChat = \(projectId: string\) => \{[\s\S]*?setActiveSession\('', \{ autoOpenProjectPicker: false, projectSelectionLocked: false \}\)/);
+  assert.match(sidebarSource, /onSelect: \(\) => handleProjectNewChat\(menuProject\.id\)/);
+  assert.match(sidebarSource, /onProjectNewChat=\{handleProjectNewChat\}/);
   assert.match(sidebarNavigationSource, /onProjectNewChat\(project\.id\)/);
 });
 

@@ -101,6 +101,8 @@ export interface EngineConnection {
 export interface EngineConnectionOptions {
   sessionId: string;
   cwd?: string;
+  /** External bot turns use adapter-enforced isolation, not the normal interactive profile. */
+  executionScope?: 'feishu';
   externalSessionId: string | null;
   hostContext?: HostContextDelivery;
   /** 仅在具体发送请求获得成功应答时回报，通知流不得冒充请求应答。 */
@@ -116,6 +118,7 @@ export interface EngineConnectionOptions {
 }
 
 export interface EngineAdapter {
+  readonly supportsFeishuIsolation?: boolean;
   readonly id: EngineId;
   readonly descriptor: EngineDescriptor;
   readonly runtime: EngineRuntimeAdapter;

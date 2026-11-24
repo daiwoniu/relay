@@ -1,18 +1,18 @@
 import { formatDateTime } from '../../utils/date-display.ts';
 import { useFeatureView,localAction,featureAction } from '../../analytics/features';
 import FailureNotice from '../ui/FailureNotice';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type KeyboardEvent } from 'react';
 import type { AuthUser } from '../../api/auth';
 import { getCodexAccount } from '../../api/codex-account';
-import type { CodexAccountSnapshotDto, EngineId, EngineMaintenanceResponseDto } from '../../generated/relay-contracts';
+import type { CodexAccountSnapshotDto } from '../../generated/relay-contracts';
 import { hasWorkspaceCodexResourceOwner, loadWorkspaceCodexAccount, readWorkspaceCodexCache, subscribeWorkspaceCodexCache } from '../workspace-console/workspace-console-cache';
 import { snapshotNotice } from '../workspace-console/workspace-persistent-snapshot';
-import SessionEngineBadge from '../chat/SessionEngineBadge';
 import UserAvatar from '../account/UserAvatar';
 import Popover from '../ui/Popover';
 import Tooltip from '../ui/Tooltip';
 import { selectSidebarCodexQuota } from './sidebar-codex-quota';
 import MenuGlyph from '../icons/UserMenuIcon';
+import MenuDestinationIcon from './MenuDestinationIcon';
 
 const itemClass = 'user-menu__item';
 
@@ -20,36 +20,38 @@ export default function UserMenu({
   user,
   anchorRect,
   mobile,
-  showServiceMaintenance,
-  engineSummary,
   onAnchorChange,
   onClose,
   onOpenSettings,
   onOpenShares,
   onOpenTrash,
-  onOpenAccountManagement,
-  onOpenPageHosting,
-  onOpenServiceMaintenance,
-  onOpenEngineMaintenance,
+  onOpenAdministration,
   onLogout,
 }: {
   user: AuthUser | null;
   anchorRect: DOMRect | null;
   mobile: boolean;
-  showServiceMaintenance: boolean;
-  engineSummary: EngineMaintenanceResponseDto | null;
   onAnchorChange: (rect: DOMRect | null) => void;
   onClose: () => void;
   onOpenSettings: () => void;
   onOpenShares: () => void;
   onOpenTrash: () => void;
-  onOpenAccountManagement: () => void;
-  onOpenPageHosting: () => void;
-  onOpenServiceMaintenance: () => void;
-  onOpenEngineMaintenance: (engine?: EngineId) => void;
+  onOpenAdministration: () => void;
   onLogout: () => void;
 }) {
   useFeatureView('user_menu',anchorRect!==null,mobile?'mobile_sheet':'sidebar');
+  const navigateMenu = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
+    const items = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'));
+    if (!items.length) return;
+    event.preventDefault();
+    const current = items.indexOf(document.activeElement as HTMLButtonElement);
+    const last = items.length - 1;
+    const target = event.key === 'Home' ? 0 : event.key === 'End' ? last
+      : event.key === 'ArrowDown' ? (current + 1) % items.length
+      : current < 1 ? last : current - 1;
+    items[target].focus();
+  };
   const run = (action: () => void) => { onClose(); action(); };
   const canReadCodexQuota = user?.role === 'admin';
   const [quotaState, setQuotaState] = useState<{ userId: string; snapshot: CodexAccountSnapshotDto | null }>(() => ({
@@ -134,45 +136,24 @@ export default function UserMenu({
 
   return (
     <div className="relative min-w-0 flex-1">
-      <Popover open={anchorRect !== null} anchorRect={anchorRect} onClose={onClose} placement="top" mobile={mobile} mobilePresentation={mobile ? 'sheet' : 'floating'} label="账号菜单" className={mobile ? '' : 'w-[272px]'} closeOnMouseLeave>
-        <div role="menu" className="user-menu">
+      <Popover open={anchorRect !== null} anchorRect={anchorRect} onClose={onClose} placement="top" mobile={mobile} mobilePresentation={mobile ? 'sheet' : 'floating'} label="账号菜单" className={`user-menu-surface${mobile ? ' user-menu-surface--mobile' : ''}`} closeOnMouseLeave manageFocus>
+        <div role="menu" className="user-menu" onKeyDown={navigateMenu}>
           <div className="user-menu__account-region">
             <button type="button" role="menuitem" onClick={() => run(onOpenSettings)} className="user-menu__account">
               {user ? <UserAvatar user={user} /> : <span className="user-menu__avatar-fallback">A</span>}
               <span className="min-w-0 flex-1">
-                <span className="block truncate text-sm font-semibold text-[var(--color-text)]">{user?.displayName || user?.username || 'admin'}</span>
-                <span className="mt-0.5 block truncate text-[11px] text-[var(--color-text-tertiary)]">@{user?.username || 'admin'} · 进入设置中心</span>
+                <span className="block truncate text-sm font-semibold text-[var(--color-text)]">{user?.displayName || user?.username || '账号'}</span>
+                <span className="mt-0.5 block truncate text-[11px] text-[var(--color-text-tertiary)]">设置中心</span>
               </span>
-              <svg width="15" height="15" viewBox="0 0 16 16" fill="none" className="shrink-0 text-[var(--color-text-tertiary)]" aria-hidden="true"><path d="m6 4 4 4-4 4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/></svg>
+              <MenuDestinationIcon />
             </button>
-            {quota.length > 0 && <div className="user-menu__quota-details" aria-label="Codex 剩余额度">
-              {quota.map((item) => <div key={item.key} className="user-menu__quota-detail">
-                <span>{item.window}</span><strong>剩余 {item.remaining}%</strong>
-                <small>{item.reset || '重置时间未提供'}{item.reason ? ` · ${item.reason}` : ''}</small>
-              </div>)}
-              {quotaWarning && <p className="user-menu__quota-notice">{warningText}</p>}
-            </div>}
+
           </div>
 
           <div className="user-menu__scroll-region">
-            <div className="user-menu__section" aria-label="个人">
-              <div className="user-menu__section-label">个人</div>
-              <button type="button" role="menuitem" onClick={() => run(onOpenShares)} className={itemClass}><span className="user-menu__item-icon"><MenuGlyph type="share" /></span><span className="min-w-0 flex-1 text-left">我的分享</span><span aria-hidden="true" className="text-[var(--color-text-tertiary)]">›</span></button>
-              <button type="button" role="menuitem" onClick={() => run(onOpenTrash)} className={itemClass}><span className="user-menu__item-icon"><MenuGlyph type="trash" /></span><span className="min-w-0 flex-1 text-left">回收站</span><span aria-hidden="true" className="text-[var(--color-text-tertiary)]">›</span></button>
-            </div>
-
-            {user?.role === 'admin' && <div className="user-menu__section" aria-label="管理">
-              <div className="user-menu__section-label">管理</div>
-              <a role="menuitem" href="/admin/analytics" target="_blank" rel="noopener noreferrer" onClick={onClose} className={itemClass}><span className="user-menu__item-icon"><MenuGlyph type="analytics" /></span><span className="min-w-0 flex-1 text-left">访问统计</span><span aria-hidden="true" className="text-[var(--color-text-tertiary)]">↗</span><span className="sr-only">（新标签页打开）</span></a>
-              <button type="button" role="menuitem" onClick={() => run(onOpenPageHosting)} className={itemClass}><span className="user-menu__item-icon"><MenuGlyph type="pages" /></span><span className="min-w-0 flex-1 text-left">页面托管</span><span aria-hidden="true" className="text-[var(--color-text-tertiary)]">›</span></button>
-              <button type="button" role="menuitem" onClick={() => run(onOpenAccountManagement)} className={itemClass}><span className="user-menu__item-icon"><MenuGlyph type="accounts" /></span><span className="min-w-0 flex-1 text-left">账号管理</span><span aria-hidden="true" className="text-[var(--color-text-tertiary)]">›</span></button>
-            </div>}
-
-            {(showServiceMaintenance || user !== null) && <div className="user-menu__section" aria-label="系统管理">
-              <div className="user-menu__section-label">系统管理</div>
-              {showServiceMaintenance && <button type="button" role="menuitem" onClick={() => run(onOpenServiceMaintenance)} className={itemClass}><span className="user-menu__item-icon"><MenuGlyph type="server" /></span><span className="min-w-0 flex-1 text-left">Relay 维护</span><span aria-hidden="true" className="text-[var(--color-text-tertiary)]">›</span></button>}
-              <button type="button" role="menuitem" onClick={() => run(() => onOpenEngineMaintenance())} className={itemClass}><span className="user-menu__item-icon"><SessionEngineBadge engine="codex" size="menu" /></span><span className="min-w-0 flex-1 text-left">引擎维护</span><span className="truncate text-[10px] text-[var(--color-text-tertiary)]">{engineSummary ? `${engineSummary.engines.filter((engine) => engine.readiness === 'ready').length}/${engineSummary.engines.length} 可用` : '查看状态'}</span><span aria-hidden="true" className="text-[var(--color-text-tertiary)]">›</span></button>
-            </div>}
+            <button type="button" role="menuitem" onClick={() => run(onOpenShares)} className={itemClass}><span className="user-menu__item-icon"><MenuGlyph type="share" /></span><span className="min-w-0 flex-1 text-left">我的分享</span><MenuDestinationIcon /></button>
+            <button type="button" role="menuitem" onClick={() => run(onOpenTrash)} className={itemClass}><span className="user-menu__item-icon"><MenuGlyph type="trash" /></span><span className="min-w-0 flex-1 text-left">回收站</span>{user?.role === 'admin' && <span className="user-menu__scope">全部账号</span>}<MenuDestinationIcon /></button>
+            {user?.role === 'admin' && <button type="button" role="menuitem" onClick={() => run(onOpenAdministration)} className={itemClass}><span className="user-menu__item-icon"><MenuGlyph type="admin" /></span><span className="min-w-0 flex-1 text-left">管理中心</span><MenuDestinationIcon /></button>}
           </div>
 
           <div className="user-menu__section user-menu__section--session" aria-label="会话">
@@ -182,15 +163,16 @@ export default function UserMenu({
         </div>
       </Popover>
       <div className="user-menu__trigger-row">
-        <button type="button" onMouseDown={(event) => event.stopPropagation()} onClick={(event) => { setWarningAnchor(null); onAnchorChange(anchorRect ? null : event.currentTarget.getBoundingClientRect()); }} className="user-menu__trigger" aria-expanded={anchorRect !== null} aria-haspopup="menu">
+        <button type="button" onMouseDown={(event) => event.stopPropagation()} onClick={(event) => { setWarningAnchor(null); onAnchorChange(anchorRect ? null : event.currentTarget.getBoundingClientRect()); }} className="user-menu__trigger" aria-label={user ? `${user.displayName || user.username}，账号菜单` : '账号菜单'} aria-expanded={anchorRect !== null} aria-haspopup="menu">
           {user ? <UserAvatar user={user} size="sm" /> : <span className="user-menu__trigger-avatar">A</span>}
-          <span className="min-w-0 flex-1 truncate text-xs font-medium text-[var(--color-text)]">{user?.displayName || user?.username || 'admin'}</span>
-          {quota.length > 0 ? <span className="user-menu__quota-pills" aria-label="Codex 剩余额度">
+          <span className="min-w-0 flex-1 truncate text-xs font-medium text-[var(--color-text)]">{user?.displayName || user?.username || '账号'}</span>
+          {quota.length > 0 && <span className="user-menu__quota-pills" aria-label="Codex 剩余额度">
             {quota.map((item) => <Tooltip key={item.key} content={`Codex ${item.window}：剩余 ${item.remaining}%。${item.reset || '重置时间未提供'}${item.reason ? `；${item.reason}` : ''}`} asChild><span className={`user-menu__quota-pill${item.remaining <= 20 ? ' user-menu__quota-pill--low' : ''}${item.remaining === 0 ? ' user-menu__quota-pill--empty' : ''}`} role="meter" aria-label={`${item.window}剩余额度`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={item.remaining} aria-valuetext={`剩余 ${item.remaining}%`}>
               <span className="user-menu__quota-fill" style={{ width: `${item.remaining}%` }} />
               <span className="user-menu__quota-content"><span>{item.label}</span><strong>{item.remaining}%</strong></span>
             </span></Tooltip>)}
-          </span> : <svg className={`shrink-0 transition-transform ${anchorRect ? 'rotate-180' : ''}`} width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="m4 6 4 4 4-4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/></svg>}
+          </span>}
+          <svg className={`shrink-0 transition-transform ${anchorRect ? 'rotate-180' : ''}`} width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="m4 6 4 4 4-4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/></svg>
         </button>
         {quotaWarning && <Tooltip content={warningText} coexist><button type="button" className="user-menu__quota-warning" aria-label="Codex 额度更新失败，查看提醒" onMouseDown={(event) => event.stopPropagation()} onClick={(event) => {if(!warningAnchor)featureAction('user_menu','show_quota_warning','user_menu'); onClose(); setWarningAnchor(warningAnchor ? null : event.currentTarget.getBoundingClientRect()); }}><svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 2.2 14.3 13H1.7L8 2.2Z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round"/><path d="M8 6v3.4M8 11.4h.01" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/></svg></button></Tooltip>}
       </div>

@@ -7,7 +7,7 @@ import type { CoreStoragePort } from '../storage/contracts.js';
 import { StorageContractError } from '../storage/command-boundary.js';
 import { presentApiError } from '../contracts/index.js';
 import { PageHosting, HostingError } from './service.js';
-import { HostingPatchSchema } from './contract.js';
+import { HostingLocalSourcePathSchema, HostingPatchSchema } from './contract.js';
 import { encodePath } from './file-paths.js';
 
 const publishSchema=z.object({uploadId:z.string().uuid(),name:z.string().trim().min(1).max(80),entry:z.string().min(1).max(512),siteId:z.string().uuid().optional(),expectedToken:z.string().uuid().optional()}).strict();
@@ -26,7 +26,7 @@ export function createHostingAdminRouter(options:{port:CoreStoragePort;service:P
     return c.json(await options.service.upload(c.get('relayStoragePrincipal')!,filename,c.req.raw.body,Number(c.req.header('content-length')??0)));
   });
   router.post('/imports',async c=>{
-    const input=z.object({path:z.string().min(1).max(32768)}).strict().safeParse(await c.req.json().catch(()=>null));
+    const input=z.object({path:HostingLocalSourcePathSchema}).strict().safeParse(await c.req.json().catch(()=>null));
     if(!input.success)return c.json(presentApiError('请选择服务器上的文件或目录'),400);
     return c.json(await options.service.importLocal(c.get('relayStoragePrincipal')!,input.data.path));
   });

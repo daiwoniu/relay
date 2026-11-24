@@ -22,6 +22,7 @@ const groups = [
   { id:'maintenance',label:'维护',features:['maintenance'],sources:['client/src/components/system/ServiceMaintenanceDialog.tsx','client/src/components/system/EngineMaintenanceDialog.tsx'] },
   { id:'recovery',label:'通知与故障恢复',features:['notifications','connection'],sources:['client/src/hooks/useRelayWebSocket.ts','client/src/components/settings/NotificationSettingsDialog.tsx'] },
   { id:'analytics',label:'访问统计自身',features:['analytics'],sources:['client/src/components/analytics/AnalyticsPage.tsx'] },
+  { id:'feishu_admin',label:'飞书管理',features:['feishu_admin'],sources:['client/src/components/feishu-im/FeishuImAdminPage.tsx','client/src/components/feishu-im/FeishuImSettings.tsx','server/src/routes/stored-feishu-im.ts'] },
   { id:'turns',label:'回合权威结果',features:['conversation'],sources:['server/src/services/engine-terminal-projection.ts','server/src/ws/stored-assistant-terminal.ts'] },
 ] as const satisfies readonly { id:string;label:string;features:readonly AnalyticsFeature[];sources:readonly string[] }[];
 
@@ -35,7 +36,21 @@ export const ANALYTICS_IMPLEMENTATION_EVIDENCE = [
   {source:'client/src/components/sharing/MySharesDialog.tsx',ids:['share.open']},
   {source:'client/src/components/trash/TrashDialog.tsx',ids:['trash.open']},
   {source:'client/src/components/workspace-console/WorkspaceConsolePage.tsx',ids:['workbench.open']},
-  {source:'client/src/components/system/EngineMaintenanceDialog.tsx',ids:['maintenance.open']},
+  {source:'client/src/components/system/EngineMaintenanceDialog.tsx',ids:['maintenance.open_engine']},
+  {source:'client/src/components/system/ServiceMaintenanceDialog.tsx',ids:['maintenance.open_service']},
+  {source:'client/src/components/layout/AdministrationCenter.tsx',ids:['user_menu.open_admin_center','feishu_admin.open_feishu']},
+  {source:'client/src/components/feishu-im/FeishuSessionAssociation.tsx',ids:['feishu_admin.open_feishu']},
+  {source:'client/src/components/feishu-im/FeishuImAdminPage.tsx',ids:['feishu_admin.section','feishu_admin.select_bot','feishu_admin.select_chat','feishu_admin.range','feishu_admin.refresh','feishu_admin.paginate','feishu_admin.details','feishu_admin.view_matter','feishu_admin.edit_bot','feishu_admin.open_session','feishu_admin.retry','feishu_admin.convert_matter','feishu_admin.link_session','feishu_admin.handoff','feishu_admin.archive','feishu_admin.restore']},
+  {source:'client/src/components/feishu-im/FeishuImSettings.tsx',ids:['feishu_admin.save_bot','feishu_admin.save_concurrency','feishu_admin.pause_bot','feishu_admin.retry_groups','feishu_admin.retry_models','feishu_admin.refresh','feishu_admin.edit_bot']},
+  {source:'client/src/components/feishu-im/FeishuImAdminPage.tsx',ids:['feishu_admin.return_list','feishu_admin.notice_details','feishu_admin.diagnostics','feishu_admin.open_retry','feishu_admin.cancel_retry']},
+  {source:'client/src/components/feishu-im/FeishuConnectionStatus.tsx',ids:['feishu_admin.connection_details']},
+  {source:'client/src/components/feishu-im/FeishuImSettings.tsx',ids:['feishu_admin.open_pause','feishu_admin.cancel_pause','feishu_admin.cancel_edit','feishu_admin.configuration_options']},
+  {source:'server/src/routes/stored-feishu-im.ts',ids:['feishu_admin.save_bot.result','feishu_admin.save_concurrency.result','feishu_admin.pause_bot.result','feishu_admin.retry.result','feishu_admin.retry_queued.result','feishu_admin.convert_matter.result','feishu_admin.link_session.result','feishu_admin.handoff.result','feishu_admin.archive.result','feishu_admin.restore.result']},
+  {source:'server/src/integrations/feishu-im/worker.ts',ids:['feishu_admin.retry_delivery.result']},
+  {source:'client/src/components/feishu-im/FeishuImAdminPage.tsx',ids:['feishu_admin.decide_approval']},
+  {source:'server/src/routes/stored-feishu-im.ts',ids:['feishu_admin.decide_approval.result']},
+  {source:'client/src/components/feishu-im/FeishuUserAccess.tsx',ids:['feishu_admin.set_user_access','feishu_admin.paginate']},
+  {source:'server/src/routes/stored-feishu-im.ts',ids:['feishu_admin.set_user_access.result']},
   {source:'client/src/components/chat/ChatInput.tsx',ids:['composer.open','composer.edit_start','composer.clear','composer.cancel_clear','composer.cancel_stop','composer.stop','composer.select_project','composer.select_engine','composer.select_directory','attachments.select','attachments.cancel']},
   {source:'client/src/components/chat/ModelSettingsControl.tsx',ids:['composer.open_model_settings']},
   {source:'client/src/components/chat/ChatInput.tsx',ids:['composer.apply_model_draft','attachments.remove_local']},
@@ -131,7 +146,8 @@ export const ANALYTICS_IMPLEMENTATION_EVIDENCE = [
 ] as const;
 const evidence=new Map<string,string>(ANALYTICS_IMPLEMENTATION_EVIDENCE.flatMap(item=>item.ids.map(id=>[id,item.source] as const)));
 // Keep historical event decoding without treating removed UI actions as future work.
-const retired = new Set(['maintenance.preview_repair', 'maintenance.apply_repair']);
+// Keep maintenance.open readable for historical events and older clients.
+const retired = new Set(['maintenance.preview_repair', 'maintenance.apply_repair', 'maintenance.open']);
 
 export const ANALYTICS_COVERAGE = groups.map(group => ({
   ...group,
@@ -155,12 +171,22 @@ export const ANALYTICS_OBSERVATION_LIMITS = [
   { id:'offline_html_interactions',status:'unobservable',reason:'离线HTML导出后不继续追踪' },
   { id:'continuous_raw_input',status:'excluded',reason:'不采集逐字符输入、滚动、鼠标轨迹或流式token' },
   { id:'nonexistent_controls',status:'excluded',reason:'项目文件当前没有筛选/分页，消息计划没有独立展开控件，分享选择没有全选或批量拒绝入口；不为候选清单虚构按钮事件' },
+  { id:'feishu_explanatory_tooltips',status:'excluded',reason:'飞书管理的说明图标只展示已有页面说明，悬停、聚焦和触屏显示不计入业务操作' },
+  { id:'feishu_trend_reading',status:'excluded',reason:'飞书趋势图逐日读数是本地展示；会话和日期范围切换沿用已有操作采集' },
   { id:'service_restart_terminal',status:'unobservable',reason:'Relay自身重启可能结束当前进程，只记确认意图和后续连接恢复，不用202或旧进程断开伪造服务重启成功' },
   { id:'local_read_outcomes',status:'excluded',reason:'复制/下载/离线导出成功仅指应用或浏览器API完成交接；预览load指读取与转换准备完成，不承诺原生PDF、系统落盘或第三方页面加载' },
 ] as const;
 
 // These candidate labels have one existing semantic main point; emitting both would inflate counts.
 export const ANALYTICS_EQUIVALENT_POINTS = [
+  {candidate:'飞书私聊收件、/新建和回复',coveredBy:'飞书管理的去重收件、请求分类和发送回执',reason:'沿用飞书业务统计，发送以出站结果为准。全站统计沿用飞书管理 page_view，无需重复采集私聊正文、用户或会话 ID'},
+  {candidate:'飞书新建会话卡片和交接结果',coveredBy:'飞书管理的去重收件、请求分类和发送回执',reason:'同一卡片只受理一次，新建成功和无法交接以收件处理分类为准'},
+  {candidate:'飞书群聊事项澄清卡片、点选和补充',coveredBy:'飞书管理的去重收件、请求分类和发送回执',reason:'原问题、点选和补充均沿用受理记录，同一卡片的重投不增加次数'},
+  {candidate:'飞书 AI 对话及开启模型',coveredBy:'飞书机器人配置保存、收件处理分类、模型用量和发送回执',reason:'启用模型沿用机器人配置保存；对话结果记录在受理和发送链路，无需额外采集用户正文'},
+  {candidate:'飞书机器人默认模型、私聊和群聊的模型覆盖',coveredBy:'feishu_admin.save_bot',reason:'统一随机器人配置提交，按一次权威保存统计'},
+  {candidate:'飞书平台引擎模型、推理强度和速度',coveredBy:'feishu_admin.save_bot',reason:'飞书编辑器复用模型设置组件，修改随机器人表单一次提交'},
+  {candidate:'飞书会话、事项关联消息与更早消息',coveredBy:'feishu_admin.details / feishu_admin.view_matter / feishu_admin.paginate',reason:'复用详情打开和翻页操作；自动加载正文不另外统计'},
+  {candidate:'飞书会话用量对比选择',coveredBy:'feishu_admin.select_chat',reason:'用量图切换当前会话沿用会话选择事件，事件不携带会话标识'},
   {candidate:'layout.open',coveredBy:'page_view',reason:'整页访问沿用PV；面板访问由各功能记录'},
   {candidate:'layout.close/minimize/restore',coveredBy:'各功能close/minimize/restore',reason:'不对同一次面板动作再记录布局事件'},
   {candidate:'project.delete/session.delete',coveredBy:'trash.delete',reason:'统一软删除命令；取消不产生删除结果'},

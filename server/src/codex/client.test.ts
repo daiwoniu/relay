@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { WebSocketServer } from 'ws';
 import type { CodexHandshakeStageEvent } from './client.js';
+import { buildFeishuThreadOpenRequest, feishuPermissionProfile } from './client-thread.js';
 import {
   appendAgentMessageItemText,
   buildAgentMessageGapDiagnostic,
@@ -14,6 +15,17 @@ import {
   isArchivedThreadError,
   RELAY_FILE_CHANGE_REPORT_TOOL,
 } from './client.js';
+
+test('Feishu turns request an ephemeral, isolated Codex thread without inherited tools', () => {
+  const { method, params } = buildFeishuThreadOpenRequest('model-test', ['configured-mcp']);
+  assert.equal(method, 'thread/start');
+  assert.equal(params.ephemeral, true);
+  assert.equal(params.permissions, feishuPermissionProfile);
+  assert.equal(params.approvalPolicy, 'never');
+  assert.deepEqual(params.environments, []);
+  assert.deepEqual(params.dynamicTools, []);
+  assert.deepEqual(params.config.mcp_servers, { 'configured-mcp': { enabled: false } });
+});
 
 async function waitFor(predicate: () => boolean, timeoutMs = 1_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;

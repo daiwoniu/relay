@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect, useRef,useState } from 'react';
 import { createPomodoro, diffLines, formatJson, parseZonedDateTime, readPomodoro, tickPomodoro, timestampMilliseconds, type DiffLine, type LocalToolId } from './local-tools-model';
-import { CopyButton, ToolError, toolButton, toolInput,ToolAnalyticsContext } from './tool-ui';
+import { CopyButton, ToolError, ToolField, toolButton, toolInput, ToolAnalyticsContext } from './tool-ui';
 import {tracker} from '../../analytics/tracker';
 import { trackToolAction } from '../../analytics/tracker';
 import { formatDateTime } from '../../utils/date-display.ts';
@@ -20,6 +20,13 @@ function ToolContent({ id, storageKey }: { id: LocalToolId; storageKey: string }
   return <Suspense fallback={<p role="status">正在打开二维码工具…</p>}><QrTool key={storageKey} storageKey={storageKey} /></Suspense>;
 }
 
+const zoneLabels = {
+  'Asia/Shanghai': '北京时间', UTC: '世界标准时间（UTC）', 'Asia/Tokyo': '东京', 'Asia/Singapore': '新加坡',
+  'Europe/London': '伦敦', 'America/New_York': '纽约', 'America/Los_Angeles': '洛杉矶',
+} as Readonly<Record<string, string>>;
+const timeExample = '2026-11-11 12:30 +08:00';
+const jsonExample = '{"message":"你好","id":1234567890123456789}';
+
 function TimestampTool() {
   const [stamp, setStamp] = useState(() => String(Math.floor(Date.now() / 1000)));
   const [date, setDate] = useState('');
@@ -27,23 +34,23 @@ function TimestampTool() {
   const [zone, setZone] = useState('Asia/Shanghai');
   const [instant, setInstant] = useState<number | null>(null);
   const [error, setError] = useState('');
-  const zones = ['Asia/Shanghai', 'UTC', 'Asia/Tokyo', 'Asia/Singapore', 'Europe/London', 'America/New_York', 'America/Los_Angeles', Intl.DateTimeFormat().resolvedOptions().timeZone];
+  const zones = [...Object.keys(zoneLabels), Intl.DateTimeFormat().resolvedOptions().timeZone];
   const output = instant === null ? '' : [
-    `${zone}：${formatDateTime(instant, { timeZone: zone, seconds: true })} ${new Intl.DateTimeFormat('en', { timeZone: zone, timeZoneName: 'shortOffset' }).formatToParts(instant).find(part => part.type === 'timeZoneName')?.value ?? ''}`,
-    `UTC：${new Date(instant).toISOString()}`, `秒：${Math.floor(instant / 1000)}`, `毫秒：${instant}`,
+    `${zoneLabels[zone] ?? zone}：${formatDateTime(instant, { timeZone: zone, seconds: true })} ${new Intl.DateTimeFormat('en', { timeZone: zone, timeZoneName: 'shortOffset' }).formatToParts(instant).find(part => part.type === 'timeZoneName')?.value ?? ''}`,
+    `世界标准时间（UTC）：${new Date(instant).toISOString()}`, `时间戳（秒）：${Math.floor(instant / 1000)}`, `时间戳（毫秒）：${instant}`,
   ].join('\n');
   function convert(kind: 'stamp' | 'date') {
     try { setInstant(kind === 'stamp' ? timestampMilliseconds(stamp, unit) : parseZonedDateTime(date)); setError('');trackToolAction('timestamp','calculate'); } catch (error) { setError(message(error)); setInstant(null);trackToolAction('timestamp','calculate','invalid_input'); }
   }
   return <div className="space-y-4">
     <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_8rem_auto]">
-      <label className="space-y-2 text-sm"><span>时间戳</span><input className={toolInput} value={stamp} inputMode="numeric" onChange={(event) => { setStamp(event.target.value); setInstant(null); setError(''); }}  enterKeyHint="done" /></label>
-      <label className="space-y-2 text-sm"><span>单位</span><select className={toolInput} value={unit} onChange={(event) => { setUnit(event.target.value as typeof unit); setInstant(null); setError(''); }}><option value="seconds">秒</option><option value="milliseconds">毫秒</option></select></label>
-      <button type="button" className={`${toolButton} self-end`} onClick={() => convert('stamp')}>转换时间戳</button>
+      <label className="space-y-2 self-end text-sm"><span>表示时间的数字（时间戳）</span><input className={toolInput} value={stamp} inputMode="numeric" onChange={(event) => { setStamp(event.target.value); setInstant(null); setError(''); }} enterKeyHint="done" /></label>
+      <ToolField label="数字单位" hint="现在常见的时间数字，10 位通常选秒，13 位通常选毫秒。"><select className={toolInput} value={unit} onChange={(event) => { setUnit(event.target.value as typeof unit); setInstant(null); setError(''); }}><option value="seconds">秒</option><option value="milliseconds">毫秒</option></select></ToolField>
+      <button type="button" className={`${toolButton} self-end`} onClick={() => convert('stamp')}>数字转日期</button>
     </div>
-    <label className="block space-y-2 text-sm"><span>带时区的日期时间</span><input className={toolInput} value={date} placeholder="2026-11-11T12:30:00+08:00" onChange={(event) => { setDate(event.target.value); setInstant(null); setError(''); }} spellCheck={false}  enterKeyHint="done" /></label>
-    <div className="flex flex-wrap gap-2"><button type="button" className={toolButton} onClick={() => convert('date')}>日期转时间戳</button><button type="button" className={toolButton} onClick={() => { const now = Date.now(); setInstant(now); setStamp(String(unit === 'seconds' ? Math.floor(now / 1000) : now)); setDate(new Date(now).toISOString()); setError('');trackToolAction('timestamp','calculate'); }}>使用当前时间</button></div>
-    <label className="block space-y-2 text-sm"><span>结果显示时区（自动考虑夏令时）</span><select className={toolInput} value={zone} onChange={(event) => setZone(event.target.value)}>{[...new Set(zones)].map((value) => <option key={value}>{value}</option>)}</select></label>
+    <ToolField label="日期、时间和时差" hint="北京时间在最后加 +08:00。已有带时差的标准日期，也可以直接粘贴。"><input className={toolInput} value={date} placeholder={timeExample} onChange={(event) => { setDate(event.target.value); setInstant(null); setError(''); }} spellCheck={false} enterKeyHint="done" /></ToolField>
+    <div className="flex flex-wrap gap-2"><button type="button" className={toolButton} onClick={() => convert('date')}>日期转数字</button><button type="button" className={toolButton} onClick={() => { setDate(timeExample); setInstant(null); setError(''); }}>填入示例</button><button type="button" className={toolButton} onClick={() => { const now = Date.now(); setInstant(now); setStamp(String(unit === 'seconds' ? Math.floor(now / 1000) : now)); setDate(new Date(now).toISOString()); setError('');trackToolAction('timestamp','calculate'); }}>使用当前时间</button></div>
+    <label className="block space-y-2 text-sm"><span>结果显示哪里的时间</span><select className={toolInput} value={zone} onChange={(event) => setZone(event.target.value)}>{[...new Set(zones)].map((value) => <option value={value} key={value}>{zoneLabels[value] ?? value}</option>)}</select></label>
     <ToolError message={error} />
     {output && <><pre className="overflow-x-auto whitespace-pre-wrap break-all rounded-xl bg-[var(--color-bg)] p-4 text-sm leading-7">{output}</pre><CopyButton text={output} /></>}
   </div>;
@@ -56,9 +63,9 @@ function JsonTool() {
   function run(compact: boolean) {
     try { setOutput(formatJson(input, compact)); setError('');trackToolAction('json',compact?'minify':'format'); } catch (error) { setOutput(''); setError(message(error));trackToolAction('json',compact?'minify':'format','invalid_input'); }
   }
-  return <div className="space-y-4"><label className="block space-y-2 text-sm"><span>JSON 内容</span><textarea className={`${toolInput} min-h-44 font-mono`} maxLength={200_000} value={input} placeholder={'{"message":"你好","id":1234567890123456789}'} onChange={(event) => { setInput(event.target.value); setOutput(''); setError(''); }} spellCheck={false}  enterKeyHint="done" /></label>
-    <div className="flex flex-wrap gap-2"><button type="button" className={toolButton} onClick={() => run(false)}>格式化</button><button type="button" className={toolButton} onClick={() => run(true)}>压缩</button><button type="button" className={toolButton} onClick={() => { setInput(''); setOutput(''); setError(''); }}>清空</button></div><ToolError message={error} />
-    {output && <><label className="block space-y-2 text-sm"><span>处理结果（保留长数字原值）</span><textarea readOnly className={`${toolInput} min-h-52 font-mono`} value={output} spellCheck={false} /></label><CopyButton text={output} /></>}
+  return <div className="space-y-4"><label className="block space-y-2 text-sm"><span>粘贴数据文本（JSON）</span><textarea className={`${toolInput} min-h-44 font-mono`} maxLength={200_000} value={input} placeholder={jsonExample} onChange={(event) => { setInput(event.target.value); setOutput(''); setError(''); }} spellCheck={false} enterKeyHint="done" /></label>
+    <div className="flex flex-wrap gap-2"><button type="button" className={toolButton} onClick={() => run(false)}>分行排好</button><button type="button" className={toolButton} onClick={() => run(true)}>合成一行</button><button type="button" className={toolButton} onClick={() => { setInput(input ? '' : jsonExample); setOutput(''); setError(''); }}>{input ? '清空' : '填入示例'}</button></div><ToolError message={error} />
+    {output && <><label className="block space-y-2 text-sm"><span>整理结果</span><textarea readOnly className={`${toolInput} min-h-52 font-mono`} value={output} spellCheck={false} /></label><CopyButton text={output} /></>}
   </div>;
 }
 
@@ -68,9 +75,9 @@ function DiffTool() {
   const [result, setResult] = useState<DiffLine[] | null>(null);
   const [error, setError] = useState('');
   return <div className="space-y-4"><div className="grid gap-4 md:grid-cols-2">
-    <label className="space-y-2 text-sm"><span>原文本</span><textarea className={`${toolInput} min-h-44`} maxLength={50_000} value={before} onChange={(event) => { setBefore(event.target.value); setResult(null); setError(''); }}  enterKeyHint="done" /></label>
-    <label className="space-y-2 text-sm"><span>新文本</span><textarea className={`${toolInput} min-h-44`} maxLength={50_000} value={after} onChange={(event) => { setAfter(event.target.value); setResult(null); setError(''); }}  enterKeyHint="done" /></label>
-  </div><button type="button" className={toolButton} onClick={() => { try { setResult(diffLines(before, after)); setError('');trackToolAction('diff','compare'); } catch (error) { setResult(null); setError(message(error));trackToolAction('diff','compare','invalid_input'); } }}>逐行对比</button><ToolError message={error} />
+    <label className="space-y-2 text-sm"><span>修改前的文字</span><textarea className={`${toolInput} min-h-44`} maxLength={50_000} value={before} onChange={(event) => { setBefore(event.target.value); setResult(null); setError(''); }} enterKeyHint="done" /></label>
+    <label className="space-y-2 text-sm"><span>修改后的文字</span><textarea className={`${toolInput} min-h-44`} maxLength={50_000} value={after} onChange={(event) => { setAfter(event.target.value); setResult(null); setError(''); }} enterKeyHint="done" /></label>
+  </div><button type="button" className={toolButton} onClick={() => { try { setResult(diffLines(before, after)); setError('');trackToolAction('diff','compare'); } catch (error) { setResult(null); setError(message(error));trackToolAction('diff','compare','invalid_input'); } }}>找出不同</button><ToolError message={error} />
     {result && <><p role="status" className="text-sm text-[var(--color-text-secondary)]">新增 {result.filter((line) => line.kind === 'add').length} 行 · 删除 {result.filter((line) => line.kind === 'remove').length} 行{result.every((line) => line.kind === 'same') ? ' · 内容相同' : ''}</p>
       <div className="max-h-96 overflow-auto rounded-xl border border-[var(--color-border)] font-mono text-sm">{result.map((line, index) => <div key={index} className={`flex gap-3 px-3 py-1 ${line.kind === 'add' ? 'bg-emerald-500/10' : line.kind === 'remove' ? 'bg-rose-500/10' : ''}`}><span aria-label={line.kind === 'add' ? '新增' : line.kind === 'remove' ? '删除' : '不变'} className="shrink-0 select-none">{line.kind === 'add' ? '+' : line.kind === 'remove' ? '−' : ' '}</span><span className="min-w-0 whitespace-pre-wrap break-all">{line.text || '\u00a0'}</span></div>)}</div></>}
   </div>;

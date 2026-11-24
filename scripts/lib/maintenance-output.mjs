@@ -23,6 +23,14 @@ function fitLine(line, maxChars) {
   return `${characters.slice(0, maxChars - 1).join('')}…`;
 }
 
+function diagnosticPriority(line) {
+  if (/\berror TS\d+\b|^npm (?:error|ERR!) network request\b/i.test(line)) return 4;
+  if (/^npm (?:error|ERR!) code\b/i.test(line)) return 3;
+  if (/^npm (?:error|ERR!)(?:\s|$)|^Error:/i.test(line)) return 2;
+  if (/^✗\s/.test(line)) return 1;
+  return 0;
+}
+
 export function createMaintenanceOutputStore(options = {}) {
   const now = options.now ?? Date.now;
   const root = options.root ?? null;
@@ -30,6 +38,8 @@ export function createMaintenanceOutputStore(options = {}) {
   const sanitizeText = options.sanitizeText ?? ((value) => sanitizeLogText(value, knownSecrets));
   const maxLineChars = Math.max(1, options.maxLineChars ?? DEFAULT_MAX_LINE_CHARS);
   let active = null;
+  let diagnosticLine = null;
+  let diagnosticScore = 0;
   let touchSequence = 0;
 
   const createChannel = () => ({ decoder: new StringDecoder('utf8'), buffer: '', pendingCr: false, touchedAt: 0 });
@@ -44,6 +54,11 @@ export function createMaintenanceOutputStore(options = {}) {
     if (!active || active.operationId !== operationId) return false;
     const line = sanitize(value);
     if (!line) return false;
+    const priority = diagnosticPriority(line);
+    if (priority > diagnosticScore) {
+      diagnosticLine = line;
+      diagnosticScore = priority;
+    }
     active.lines = [...active.lines, line].slice(-2);
     active.sequence += 1;
     active.updatedAt = now();
@@ -98,6 +113,8 @@ export function createMaintenanceOutputStore(options = {}) {
     start(operationId) {
       if (typeof operationId !== 'string' || !operationId) return null;
       resetChannels();
+      diagnosticLine = null;
+      diagnosticScore = 0;
       active = { operationId, sequence: 1, lines: [], status: 'running', updatedAt: now() };
       return this.getSnapshot(operationId);
     },
@@ -112,6 +129,7 @@ export function createMaintenanceOutputStore(options = {}) {
     finish(operationId, status) {
       if (!active || active.operationId !== operationId || !VALID_STATUSES.has(status) || status === 'running') return null;
       try { flushChannels(operationId); } catch {}
+      if (status === 'failed' && diagnosticLine && active.lines.at(-1) !== diagnosticLine) commitLine(operationId, diagnosticLine);
       active.status = status;
       active.sequence += 1;
       active.updatedAt = now();

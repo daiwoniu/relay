@@ -27,6 +27,13 @@ export interface HostedSite {
   contentToken: string;
   createdAt: number;
   updatedAt: number;
+  source?: {
+    kind: 'local';
+    path: string;
+  } | {
+    kind: 'upload';
+    filename: string;
+  };
 }
 export interface HostingInspection {
   uploadId: string;

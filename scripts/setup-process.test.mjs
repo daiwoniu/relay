@@ -136,9 +136,27 @@ test('setup 控制器按通道转发子进程输出并携带本次 operation con
   setupChild.stdout.write('标准输出\n');
   setupChild.stderr.write('标准错误\n');
   setupChild.emit('exit', 0, null);
+  setupChild.emit('close', 0, null);
   await running;
   assert.deepEqual(output, [
     ['stdout', '标准输出\n', 'op-1'],
     ['stderr', '标准错误\n', 'op-1'],
   ]);
+});
+
+test('有输出管道时等 close 后再收尾，保留 exit 之后到达的错误', async () => {
+  const setupChild = child();
+  setupChild.stdout = new PassThrough();
+  setupChild.stderr = new PassThrough();
+  const output = [];
+  const controller = createSetupProcessController({
+    spawnSetup: () => setupChild,
+    onOutput: (channel, chunk) => output.push([channel, String(chunk)]),
+  });
+  const running = controller.run();
+  setupChild.emit('exit', 4, null);
+  setupChild.stderr.write('error TS6059: source outside rootDir\n');
+  setupChild.emit('close', 4, null);
+  await assert.rejects(running, (error) => error.exitCode === 4);
+  assert.deepEqual(output, [['stderr', 'error TS6059: source outside rootDir\n']]);
 });

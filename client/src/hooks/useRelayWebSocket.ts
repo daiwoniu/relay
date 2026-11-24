@@ -177,14 +177,19 @@ export function useRelayWebSocket() {
         projectIds: new Set(state.projects.map((project) => project.id)),
         sessionIds: new Set(state.sessions.map((session) => session.id)),
       };
+      const controller = new AbortController();
+      const abort = () => controller.abort();
+      ws.addEventListener('close', abort, { once: true });
       try {
-        const [sessions, sidebarOrders] = await Promise.all([listSessions(), listSidebarOrders()]);
+        const [sessions, sidebarOrders] = await Promise.all([listSessions(controller.signal), listSidebarOrders(controller.signal)]);
         if (!isCurrentConnection()) return;
         storeRef.current.mergeReconnectSessionSnapshot(sessions, expectedStatuses);
         const latestState = useChatStore.getState();
+        const inventory = getResourceInventory(sidebarOrders.orders);
+        for (const session of sessions) inventory.sessionIds.add(session.id);
         const missing = findMissingResourceIds(
           reconciliationCandidates,
-          getResourceInventory(sidebarOrders.orders),
+          inventory,
         );
         const activeSessionMissing = Boolean(latestState.activeSessionId && missing.sessionIds.has(latestState.activeSessionId));
         const currentProjectMissing = Boolean(latestState.currentProjectId && missing.projectIds.has(latestState.currentProjectId));
@@ -197,6 +202,9 @@ export function useRelayWebSocket() {
         }
       } catch {
         // WebSocket 增量仍可继续工作，重连补偿失败无需打断连接。
+      } finally {
+        controller.abort();
+        ws.removeEventListener('close', abort);
       }
     };
     const pendingDeltas = new Map<string, {

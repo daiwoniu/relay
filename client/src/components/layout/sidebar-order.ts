@@ -108,15 +108,3 @@ export function moveSidebarItems(
   next.splice(index, 0, item);
   return next;
 }
-
-export function applySidebarOrder<T extends { id: string }>(
-  items: T[],
-  orderItems: SidebarOrderItemDto[],
-  type: SidebarOrderItemDto['type'],
-): T[] {
-  const byId = new Map(items.map((item) => [item.id, item]));
-  return orderItems
-    .filter((item) => item.type === type)
-    .map((item) => byId.get(item.id))
-    .filter((item): item is T => Boolean(item));
-}

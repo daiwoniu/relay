@@ -23,21 +23,23 @@ export function createSetupProcessController(dependencies) {
       try {
         await new Promise((resolve, reject) => {
           let settled = false;
+          const hasOutputPipes = Boolean(child.stdout || child.stderr);
           const finish = (error) => {
             if (settled) return;
             settled = true;
             if (error) reject(error);
             else resolve();
           };
-          child.once('error', finish);
-          child.once('exit', (code, signal) => {
+          const finishProcess = (code, signal) => {
             if (code === 0) finish();
             else {
               const error = new Error(signal ? `${label}被信号 ${signal} 终止` : `${label}退出码 ${code}`);
               if (Number.isSafeInteger(code)) error.exitCode = code;
               finish(error);
             }
-          });
+          };
+          child.once('error', finish);
+          child.once(hasOutputPipes ? 'close' : 'exit', finishProcess);
         });
       } catch (error) {
         processError = error;

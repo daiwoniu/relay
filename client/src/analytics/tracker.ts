@@ -24,7 +24,7 @@ export function createTracker(options:{
   send:(body:string,keepalive:boolean,signal?:AbortSignal)=>Promise<unknown>;
   meta:()=>Meta;uuid?:()=>string;now?:()=>number;
 }){
-  let queue:Queued[]=[],page:Page='unknown',pageViewId:string|null=null,identity='',location='';
+  let queue:Queued[]=[],page:Page|null='unknown',pageViewId:string|null=null,identity='',location='';
   let identityEpoch=0,ready=true,navigationKey:string|null=null,cachedMeta:Meta|null=null;
   let suspendedLocation='';
   let pageSource:Pick<Meta,'sourceType'|'referrerHost'>|null=null,quality=cleanQuality();
@@ -45,7 +45,7 @@ export function createTracker(options:{
         ...(m.clientVersion?{clientVersion:m.clientVersion}:{})};
     }
     pageSource??={referrerHost:cachedMeta.referrerHost,...(cachedMeta.sourceType?{sourceType:cachedMeta.sourceType}:{})};
-    return {...cachedMeta,...pageSource,page,pageViewId};
+    return {...cachedMeta,...pageSource,page:page??'unknown',pageViewId};
   }
   function invalidate(){
     identityEpoch++;queue=[];cachedMeta=null;quality=cleanQuality();pendingKeepalive=false;
@@ -149,14 +149,19 @@ export function createTracker(options:{
     result:(properties:AnalyticsFeatureProperties)=>enqueue('operation_result',properties),
     endView:(instance:object)=>{views.delete(instance);},
     subscribeContext:(listener:()=>void)=>{contextListeners.add(listener);return()=>{contextListeners.delete(listener);};},
-    page(next:Page,key:string,user:string){
+    page(next:Page|null,key:string,user:string){
       if(identity!==user){invalidate();identity=user;location='';}
       ready=true;
-      if(location===key&&page===next){notifyContext();return;}
+      // Feishu uses route query changes for in-page tabs and filters.
+      const sameFeishuView=next==='feishu_bots'&&location!=='';
+      if(page===next&&(location===key||sameFeishuView)){notifyContext();return;}
       if(navigationKey!==null&&navigationKey!==key)pageSource={sourceType:'internal',referrerHost:null};
       navigationKey=key;page=next;location=key;
-      try{pageViewId=uuid();}catch{pageViewId=null;}
-      enqueue('page_view',{});
+      pageViewId=null;
+      if(next!==null){
+        try{pageViewId=uuid();}catch{/* An unavailable ID must not stop navigation. */}
+        enqueue('page_view',{});
+      }
       notifyContext();
     },
     reset(){invalidate();ready=false;suspendedLocation=location;location='';},

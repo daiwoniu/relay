@@ -1,4 +1,4 @@
-import type {WorkspaceConsoleResponsibilityDto} from '../../generated/relay-contracts';
+import type {WorkspaceConsoleDashboardDto,WorkspaceConsoleResponsibilityDto} from '../../generated/relay-contracts';
 
 /** Full snapshot content time, independent of collection time and visible card filters. */
 export function latestFeishuTaskUpdatedAt(report:Pick<WorkspaceConsoleResponsibilityDto,'items'|'workbenchItems'>|null):number|null{
@@ -17,6 +17,29 @@ export function latestFeishuTaskUpdatedAt(report:Pick<WorkspaceConsoleResponsibi
 }
 
 export type WorkspaceRefreshTimes={local:number|null;project:number|null};
+
+export interface WorkspaceSourceRefreshActivity {
+  pending: number;
+  startedAt: number | null;
+  finishedAt: number | null;
+  dismissed: boolean;
+  succeeded: boolean;
+}
+
+export function isSuccessfulDashboardRefresh(value: Pick<WorkspaceConsoleDashboardDto, 'sourceMeta' | 'errors'>, force = false): boolean {
+  const state = value.sourceMeta?.state;
+  return value.errors.length === 0 && (state === 'live' || (force && state === undefined));
+}
+
+export function isSuccessfulResponsibilityRefresh(
+  value: Pick<WorkspaceConsoleResponsibilityDto, 'servedFromCache' | 'sourceMeta' | 'stale' | 'error'>,
+  force = false,
+): boolean {
+  const state = value.sourceMeta?.state;
+  return !value.servedFromCache && !value.stale && !value.error
+    && (state === 'live' || (force && state === undefined));
+}
+
 type StorageReader=Pick<Storage,'getItem'>;
 const validTime=(value:unknown):value is number=>typeof value==='number'&&Number.isFinite(value)&&value>0;
 const refreshKey=(userId:string)=>`relay:workspace-console:successful-refresh:${userId}`;

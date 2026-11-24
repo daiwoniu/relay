@@ -4,7 +4,6 @@ import test from 'node:test';
 import { ApiError } from '../api/client.ts';
 import {
   formatServiceStartedAt,
-  isManualRestartVisible,
   presentServiceRestartError,
 } from './manual-service-restart.ts';
 
@@ -12,11 +11,6 @@ test('服务启动时间使用固定的本地日期时间格式', () => {
   assert.equal(formatServiceStartedAt(null), '未知');
   assert.equal(formatServiceStartedAt(Number.NaN), '未知');
   assert.equal(formatServiceStartedAt(new Date(2026, 7, 6, 20, 41, 9).getTime()), '2026-08-06 20:41:09');
-});
-
-test('主动服务维护入口仅管理员可见', () => {
-  assert.equal(isManualRestartVisible('admin'), true);
-  assert.equal(isManualRestartVisible('member'), false);
 });
 
 test('重启冷却错误说明规则、剩余时间和下一步且不建议终端重启', () => {
@@ -50,20 +44,9 @@ test('状态检测错误和重启请求错误使用不同标题', () => {
   assert.equal(presentServiceRestartError(new Error('请求错误'), 'restart').title, '重启请求失败');
 });
 
-test('用户菜单仅通过角色判断显示服务维护入口且顺序符合设计', () => {
+test('Relay 维护从仅管理员可见的管理中心进入', () => {
   const sidebar = fs.readFileSync(new URL('../components/layout/Sidebar.tsx', import.meta.url), 'utf8');
-  const source = fs.readFileSync(new URL('../components/layout/UserMenu.tsx', import.meta.url), 'utf8');
-  const settingsIndex = source.indexOf('进入设置中心');
-  const mySharesIndex = source.indexOf('<span>我的分享</span>');
-  const managementIndex = source.indexOf('aria-label="系统管理"');
-  const serviceMaintenanceIndex = source.indexOf('<span>Relay 维护</span>');
-  const sessionIndex = source.indexOf('aria-label="会话"');
-  const logoutIndex = source.indexOf('<span>退出登录</span>');
-
-  assert.match(sidebar, /showServiceMaintenance=\{isManualRestartVisible\(user\?\.role\)\}/);
-  assert.ok(settingsIndex < mySharesIndex);
-  assert.ok(mySharesIndex < managementIndex);
-  assert.ok(managementIndex < serviceMaintenanceIndex);
-  assert.ok(serviceMaintenanceIndex < sessionIndex);
-  assert.ok(sessionIndex < logoutIndex);
+  const center = fs.readFileSync(new URL('../components/layout/AdministrationCenter.tsx', import.meta.url), 'utf8');
+  assert.match(sidebar, /user\?\.role === 'admin' && <>\s*<AdministrationCenter/);
+  assert.match(center, /运行与维护[\s\S]*label: 'Relay 维护', panel: 'server'/);
 });

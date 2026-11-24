@@ -38,6 +38,7 @@ import { StorageContractError } from './storage/command-boundary.js';
 import { ChinaDayPanelCache } from './services/china-day-panel-cache.js';
 import { StoredNews } from './news/stored-news.js';
 import type { NewsSource } from './news/sources/source-types.js';
+import { ManagedFeishuIm, type FeishuSummaryPlatform } from './integrations/feishu-im/managed-config.js';
 type Configuration<T>=Omit<T,'port'|'storeId'|'generation'|'assertExclusiveWriter'>;
 export interface StoredDomainDependencies{
   registry:EngineRegistry;themeRoot:string;repairSourceRoot:string;chinaDayCacheRoot:string;grants?:FileAccessGrants;
@@ -56,6 +57,7 @@ export interface StoredDomainDependencies{
   attachmentAvailability:ConstructorParameters<typeof StoredSend>[0]['attachmentAvailability'];
   maintenanceBusy:()=>boolean;
   codexLifecycle?:{start:()=>Promise<void>;close:()=>Promise<void>};
+  feishuIm?: { keyPath: string; diagnostic: () => void; summaryPlatform?: FeishuSummaryPlatform };
   diagnostic:(code:'NATIVE_STARTUP_WORK_BLOCKED',count:number)=>void;
   codexDebugInfo?:()=>unknown;
 }
@@ -112,10 +114,14 @@ export function createStoredDomainServices(scope:StoredApplicationScope,dependen
     for(const client of graph.hub.clients())for(const sessionId of client.subscribedSessionIds)await graph.sync.subscribe(client,sessionId,client.activeSubscriptionSessionId===sessionId,false);
   };
   const startup=new StoredStartupRecovery({...base,graph,purge,softDelete,theme,uploads:archivedCleanup});
+  const feishuIm = dependencies.feishuIm ? own(new ManagedFeishuIm({ ...dependencies.feishuIm, port, assertExclusiveWriter,
+    nativeConversation: new NativeFeishuConversation({ ...base, graph, registry: dependencies.registry, catalog: dependencies.resources.getCatalog }) })) : null;
   const assertNotDeleting=()=>{/* Native commands enforce deletion fences transactionally. */};
   const http:Omit<StoredHttpApplicationOptions,'port'|'storeId'|'generation'|'graph'|'ready'>={auth:dependencies.auth,codexDebugInfo:dependencies.codexDebugInfo,reads:{refreshSessionArchiveState:()=>archive.refresh()},writes:{...dependencies.resources,assertNotDeleting,changed,softDelete},
     uploads:{service:uploads},uploadReads:{service:uploadReads},draftCleanup:{service:draftCleanup},archivedCleanup:{service:archivedCleanup},downloads:{service:downloads},filesystem:{service:filesystem},themeAssets:{service:theme},
     unarchive:{service:unarchive,assertNotDeleting},fork:{service:fork,assertNotDeleting},shares:{service:shares},publicShares:dependencies.publicShares,trash:{service:trash,purge},repair:{service:repair},workspace:{service:workspace,snapshots:{responsibility:async(actor,force,taskId)=>workspace.composeResponsibility(await snapshots.responsibility(actor,force),taskId)}},accountResources:{snapshots,localUsage,creditReset},system:dependencies.system,
-    hosting,news:{service:news},chinaDay:{...dependencies.chinaDay,cache:chinaDayCache},concurrency:{resources,changed:async key=>{await publishCapacity(key);void graph.scheduler.drain(key).catch(()=>undefined);}}};
-  return{http,sender,commands,attachments,publishCapacity,recover:async()=>{await hosting.initialize();await news.initialize();await dependencies.codexLifecycle?.start();const result=await startup.recover();if(result.blockedCount)dependencies.diagnostic('NATIVE_STARTUP_WORK_BLOCKED',result.blockedCount);},resume:async()=>{await news.resume();await startup.resume();}};
+    hosting,news:{service:news},...(feishuIm ? { feishuIm: { management: feishuIm, assertExclusiveWriter } } : {}),
+    chinaDay:{...dependencies.chinaDay,cache:chinaDayCache},concurrency:{resources,changed:async key=>{await publishCapacity(key);void graph.scheduler.drain(key).catch(()=>undefined);}}};
+  return{http,sender,commands,attachments,publishCapacity,recover:async()=>{await hosting.initialize();await news.initialize();await dependencies.codexLifecycle?.start();const result=await startup.recover();if(result.blockedCount)dependencies.diagnostic('NATIVE_STARTUP_WORK_BLOCKED',result.blockedCount);},resume:async()=>{await news.resume();await startup.resume();await feishuIm?.start().catch(dependencies.feishuIm!.diagnostic);}};
 }
+import { NativeFeishuConversation } from './integrations/feishu-im/native-conversation.js';

@@ -220,8 +220,8 @@ async function main() {
   }
 
   if (!needsAnyInstall) {
-    console.log('\n依赖与关键文件未变化，复用已完成的初始化结果。');
-    console.log('运行 npm run start 启动服务。');
+    console.log('\n依赖与关键文件未变化，复用已完成的初始化结果；本次未重新验证源码。');
+    console.log('setup 不会启动或重启服务；如需启动，请运行 npm run start。');
     console.log(`浏览器入口：${RELAY_CONFIG.frontend.origin}`);
     console.log();
     return;
@@ -261,7 +261,7 @@ async function main() {
   reportManagedPhase('verifying');
   for (const [key, area] of Object.entries(areas)) {
     if (!areaStates[key].decision.needed) {
-      console.log(`✓ ${area.label}依赖未变化，跳过验证`);
+      console.log(`✓ ${area.label}依赖未变化，跳过源码验证`);
       continue;
     }
     for (const commandArgs of area.verify) {
@@ -292,7 +292,7 @@ async function main() {
   if (args.managedRecovery) {
     console.log('Relay 启动器将自动恢复前端和后端。');
   } else {
-    console.log('运行 npm run start 启动服务。');
+    console.log('setup 不会启动或重启服务；如需启动，请运行 npm run start。');
     console.log(`浏览器入口：${RELAY_CONFIG.frontend.origin}`);
   }
   console.log();

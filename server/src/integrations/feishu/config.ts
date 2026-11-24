@@ -13,9 +13,11 @@ export function loadFeishuConfig(filePath = FEISHU_CONFIG_PATH): FeishuConfig | 
   if (!loaded) return null;
   const { values, sources } = loaded;
   const fail = (key: string, reason: string): never => { throw new Error(`${sources.get(key) ?? filePath} [${key}]：${reason}`); };
-  for (const key of values.keys()) if (!fixedKeys.includes(key)) fail(key, '未知配置项');
+  for (const key of values.keys()) {
+    if (!fixedKeys.includes(key) && !key.startsWith('IM_')) fail(key, '未知配置项');
+  }
   if (values.get('CONFIG_VERSION') !== '1') fail('CONFIG_VERSION', '仅支持版本1');
-  if (![...values].some(([key, value]) => key !== 'CONFIG_VERSION' && value !== '')) return null;
+  if (!fixedKeys.some(key => key !== 'CONFIG_VERSION' && values.get(key))) return null;
   const required = (key: string) => {
     const value = values.get(key);
     if (!value || value.length > 2048 || /[\r\n\u0000]/.test(value)) fail(key, '必填且必须是有效单行值');

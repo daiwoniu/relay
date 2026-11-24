@@ -1,3 +1,4 @@
+import type { ProjectDto } from '../../generated/relay-contracts';
 import type { SidebarAccountScope } from './sidebar-account-filter';
 
 type ResourceOwner = {
@@ -18,4 +19,8 @@ export function getSidebarAccountInteractionPolicy(
     canOrganize: !viewingAllAccounts,
     renameLabel: editingAnotherAccount ? `重命名 · ${owner!.displayName}` : '重命名',
   };
+}
+
+export function canCreateSidebarProjectSession(project: Pick<ProjectDto, 'access_role'>, canOrganize: boolean): boolean {
+  return canOrganize && project.access_role !== 'viewer';
 }

@@ -15,6 +15,8 @@ interface TooltipProps {
   inline?: boolean;
   coexist?: boolean;
   asChild?: boolean;
+  /** An explanatory button can keep this same tooltip open by clicking or tapping. */
+  pinOnClick?: boolean;
   /** Full-text hints only; explanatory hints keep their normal behavior. */
   overflowOnly?: boolean;
   /** Restrict clipping checks when the trigger also contains other labels. */
@@ -25,7 +27,7 @@ function supportsHover() {
   return typeof window !== 'undefined' && window.matchMedia('(hover: hover) and (pointer: fine)').matches;
 }
 
-export default function Tooltip({ content, children, delay = 300, disabled = false, placement = 'top', className = '', inline = false, coexist = false, asChild = false, overflowOnly = false, overflowTarget }: TooltipProps) {
+export default function Tooltip({ content, children, delay = 300, disabled = false, placement = 'top', className = '', inline = false, coexist = false, asChild = false, pinOnClick = false, overflowOnly = false, overflowTarget }: TooltipProps) {
   const tooltipId = useId();
   const overlayId = `tooltip-${tooltipId}`;
   const triggerRef = useRef<HTMLElement | null>(null);
@@ -34,6 +36,7 @@ export default function Tooltip({ content, children, delay = 300, disabled = fal
   const [position, setPosition] = useState({ left: 0, top: 0 });
   const [positioned, setPositioned] = useState(false);
   const [coexistingVisible, setCoexistingVisible] = useState(false);
+  const [pinned, setPinned] = useState(false);
   const { openOverlay, closeOverlay, isOverlayOpen } = useOverlay();
   const visible = coexist ? coexistingVisible : isOverlayOpen('tooltip', overlayId);
   const openTooltip = () => {
@@ -68,7 +71,7 @@ export default function Tooltip({ content, children, delay = 300, disabled = fal
   }, [placement]);
 
   const show = (immediate = false) => {
-    if (disabled || !content) return;
+    if (disabled || !content || visible) return;
     clearTimer();
     if (overflowOnly && (!triggerRef.current || !hasTooltipOverflow(triggerRef.current, overflowTarget))) return;
     if (immediate) {
@@ -86,6 +89,7 @@ export default function Tooltip({ content, children, delay = 300, disabled = fal
 
   const hide = () => {
     clearTimer();
+    setPinned(false);
     setPositioned(false);
     closeTooltip();
   };
@@ -98,6 +102,10 @@ export default function Tooltip({ content, children, delay = 300, disabled = fal
   useEffect(() => {
     if (disabled || !content || (overflowOnly && triggerRef.current && !hasTooltipOverflow(triggerRef.current, overflowTarget))) hide();
   }, [disabled, content, overflowOnly, overflowTarget]);
+
+  useEffect(() => {
+    if (!visible && pinned) setPinned(false);
+  }, [visible, pinned]);
 
   useEffect(() => {
     if (!visible) return;
@@ -121,8 +129,17 @@ export default function Tooltip({ content, children, delay = 300, disabled = fal
       event.stopPropagation();
       hide();
     };
+    const dismissOnOutsidePress = (event: PointerEvent) => {
+      if (!triggerRef.current?.contains(event.target as Node)) hide();
+    };
+    const dismissOnCollapse = (event: Event) => {
+      const details = event.target as HTMLDetailsElement | null;
+      if (details?.tagName === 'DETAILS' && !details.open && details.contains(triggerRef.current)) hide();
+    };
     const frame = requestAnimationFrame(updateLayout);
     document.addEventListener('keydown', dismissOnEscape, true);
+    if (pinned) document.addEventListener('pointerdown', dismissOnOutsidePress, true);
+    if (pinOnClick) document.addEventListener('toggle', dismissOnCollapse, true);
     window.addEventListener('resize', updateLayout);
     window.addEventListener('scroll', updatePosition, true);
     return () => {
@@ -130,17 +147,38 @@ export default function Tooltip({ content, children, delay = 300, disabled = fal
       observer?.disconnect();
       mutation?.disconnect();
       document.removeEventListener('keydown', dismissOnEscape, true);
+      if (pinned) document.removeEventListener('pointerdown', dismissOnOutsidePress, true);
+      if (pinOnClick) document.removeEventListener('toggle', dismissOnCollapse, true);
       window.removeEventListener('resize', updateLayout);
       window.removeEventListener('scroll', updatePosition, true);
     };
-  }, [updatePosition, visible, content, overflowOnly, overflowTarget]);
+  }, [updatePosition, visible, content, overflowOnly, overflowTarget, pinned, pinOnClick]);
 
   const trigger = asChild && isValidElement<HTMLAttributes<HTMLElement>>(children) && typeof children.type === 'string'
-    ? cloneElement(children, tooltipTriggerProps(children.props, {
-      enter(event) { triggerRef.current = event.currentTarget; if (event.pointerType !== 'touch' && supportsHover()) show(); },
-      focus(event) { triggerRef.current = event.currentTarget; if ((event.target as HTMLElement).matches(':focus-visible')) show(true); },
-      hide,
-    }, visible ? tooltipId : undefined, content))
+    ? cloneElement(children, {
+      ...tooltipTriggerProps(children.props, {
+        enter(event) { triggerRef.current = event.currentTarget; if (!pinned && event.pointerType !== 'touch' && supportsHover()) show(); },
+        focus(event) { triggerRef.current = event.currentTarget; if ((event.target as HTMLElement).matches(':focus-visible')) show(true); },
+        hide() { if (!pinned) hide(); },
+        press: pinOnClick ? clearTimer : undefined,
+      }, visible ? tooltipId : undefined, content),
+      ...(pinOnClick && {
+        'aria-expanded': visible,
+        onClick(event) {
+          children.props.onClick?.(event);
+          if (event.defaultPrevented || disabled || !content) return;
+          event.preventDefault();
+          event.stopPropagation();
+          triggerRef.current = event.currentTarget;
+          if (pinned && visible) {
+            hide();
+          } else {
+            setPinned(true);
+            show(true);
+          }
+        },
+      }),
+    })
     : <span
         ref={(element) => { triggerRef.current = element; }}
         className={`${inline ? 'inline' : 'inline-flex'} ${className}`}
@@ -160,7 +198,7 @@ export default function Tooltip({ content, children, delay = 300, disabled = fal
           ref={tooltipRef}
           id={tooltipId}
           role="tooltip"
-          className="pointer-events-none fixed z-[1100] max-w-[min(32rem,calc(100vw-1rem))] whitespace-pre-line rounded-lg border border-[var(--color-overlay-border)] bg-[var(--color-overlay-surface)] px-2 py-1 text-[11px] font-medium leading-4 text-[var(--color-text-secondary)] shadow-[var(--color-overlay-shadow)] [overflow-wrap:anywhere]"
+          className={`pointer-events-none fixed z-[1100] max-w-[min(32rem,calc(100vw-1rem))] whitespace-pre-line rounded-lg border border-[var(--color-overlay-border)] bg-[var(--color-overlay-surface)] font-medium text-[var(--color-text-secondary)] shadow-[var(--color-overlay-shadow)] [overflow-wrap:anywhere] ${pinOnClick ? 'px-3 py-2 text-xs leading-5' : 'px-2 py-1 text-[11px] leading-4'}`}
           style={{ ...position, zIndex: coexist ? 1300 : 1100, visibility: positioned ? 'visible' : 'hidden' }}
         >
           {content}

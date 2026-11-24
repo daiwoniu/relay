@@ -11,14 +11,18 @@ import { EngineRegistry } from '../engine/registry.js';
 import type { EngineAdapter,EngineConnectionOptions,EngineEvent } from '../engine/adapter.js';
 import { finishStoredAssistant } from './stored-assistant-terminal.js';
 import { StoredRuntimeStop } from '../services/stored-runtime-stop.js';
-import { RELAY_HOST_CONTEXT } from '../engine/host-context.js';
+import { FEISHU_HOST_CONTEXT, RELAY_HOST_CONTEXT, RELAY_HOST_CONTEXT_VERSION } from '../engine/host-context.js';
+import { FEISHU_IM_SCHEMA_SQL } from '../storage/native-feishu-im.js';
+import { feishuBotConfigSchema, normalizeFeishuInbound } from '../integrations/feishu-im/inbound.js';
+import { feishuExecutionId, feishuExecutionResource } from '../integrations/feishu-im/native-session-scope.js';
 
 const key='codex:default',system={kind:'system',purpose:'scheduler'} as const;
+const feishuKey = feishuExecutionResource('codex');
 const gate=()=>{let resolve!:()=>void;const promise=new Promise<void>(r=>{resolve=r;});return{promise,resolve};};
 async function until(check:()=>boolean){for(let i=0;i<200&&!check();i++)await new Promise<void>(r=>setTimeout(r,5));assert.ok(check(),'mock stage timed out');}
 async function setup(nativeHost=false,acknowledge=true,auto=false,onRuntimeChanged?:()=>Promise<void>){
   const f=fixture();f.mutate('DELETE FROM engine_resource_leases');
-  const port=await StorageWorkerClient.open({filename:f.filename,storeId:'store',generation:1,initialize:true,defaultConcurrency:{[key]:1}});
+  const port=await StorageWorkerClient.open({filename:f.filename,storeId:'store',generation:1,initialize:true,defaultConcurrency:{[key]:1,[feishuKey]:1}});
   let nextTurn=0,modelCalls=0,available=true,readyId='external',closeOnConnect=false,modelGate:ReturnType<typeof gate>|undefined,publishGate:ReturnType<typeof gate>|undefined;
   const hostViews:Array<()=>string|undefined>=[];
   let cancelGate:ReturnType<typeof gate>|undefined,cancelFails=false,cancelCalls=0;
@@ -76,6 +80,26 @@ async function setup(nativeHost=false,acknowledge=true,auto=false,onRuntimeChang
     models:(value:ReturnType<typeof gate>|undefined)=>{modelGate=value;},publication:(value:ReturnType<typeof gate>|undefined)=>{publishGate=value;},ready:(id:string)=>{readyId=id;},immediateClose:()=>{closeOnConnect=true;},
     cleanup:async()=>{modelGate?.resolve();publishGate?.resolve();cancelGate?.resolve();await scheduler.close();for(const connection of raw)connection.close();await port.close();f.cleanup();}};
 }
+
+test('a Feishu handoff supplies history on the first engine turn without altering the saved user message',async()=>{
+  const h=await setup();try{
+    h.f.mutate(FEISHU_IM_SCHEMA_SQL);
+    await h.enqueue(1);
+    h.f.mutate(`INSERT INTO feishu_im_matters(id,bot_id,tenant_key,chat_id,project_id,task_id,title,sender_id,created_at,updated_at)
+      VALUES('matter','bot','tenant','chat','project','task','title','sender',1,1);
+      INSERT INTO feishu_im_matter_sessions(session_id,matter_id,created_at,handoff) VALUES('draft','matter',1,'saved Feishu summary');`);
+    await h.scheduler.drain(key);
+    await until(()=>h.runtimes.get('draft')?.currentTurnId==='turn-1');
+    assert.match(h.raw[0]!.inputs[0]!, /"saved Feishu summary"[\s\S]+input-1$/);
+    assert.equal(h.f.scalar("SELECT content FROM messages WHERE id='user-1'"),'input-1');
+    await h.finish(1);
+    await h.enqueue(2);
+    await h.scheduler.drain(key);
+    await until(()=>h.runtimes.get('draft')?.currentTurnId==='turn-2');
+    assert.equal(h.raw.at(-1)!.inputs.at(-1),'input-2');
+    await h.finish(2);
+  }finally{await h.cleanup();}
+});
 
 test('Native async questions reserve one answer atomically, release an unsent cancelled answer and preserve late questions independently',async()=>{
   const h=await setup();try{
@@ -256,6 +280,125 @@ test('Native host delivery commits before terminal and reused connections reload
     assert.deepEqual(h.failures,[]);
   }finally{await h.cleanup();}
 });
+
+test('Feishu group sends update the host marker and use the current sender when quoting another speaker', async () => {
+  const h = await setup(true);
+  const workspacePath = 'D:/synthetic';
+  const configurationId = '00000000-0000-4000-8000-000000000001';
+  const bot = { ...feishuBotConfigSchema.parse({ id: configurationId, appId: 'cli_a', appSecret: 'test', projectId: 'project' }),
+    workspaceName: 'Test', workspacePath };
+  try {
+    h.f.mutate(FEISHU_IM_SCHEMA_SQL);
+    h.f.mutate(`INSERT INTO feishu_im_settings VALUES('${configurationId}','cli_a','project','Test',1,1,'{}','secret',NULL)`);
+    for (const n of [1, 2]) {
+      const senderDisplayName = n === 1 ? '张三' : '李四';
+      const inbound = normalizeFeishuInbound(bot, 'ou_bot', { app_id: 'cli_a', tenant_key: 'tenant',
+        sender: { sender_type: 'user', sender_id: { open_id: n === 1 ? 'ou_alice' : 'ou_bob' } },
+        message: { chat_type: 'group', chat_id: 'oc_group', message_id: `om_input_${n}`, message_type: 'text',
+          ...(n === 2 ? { parent_id: 'om_input_1' } : {}), mentions: [{ key: '@_user_1', id: { open_id: 'ou_bot' } }],
+          content: JSON.stringify({ text: `@_user_1 input-${n}` }) } });
+      assert.ok(inbound);
+      h.f.mutate(`INSERT OR IGNORE INTO feishu_im_user_access VALUES('${inbound.botId}','${inbound.tenantKey}','${inbound.projectId}','${inbound.senderId}')`);
+      assert.equal(await h.port.acceptFeishuInbound({ inbound, workspacePath }), 'received');
+      const scope = { botId: inbound.botId, tenantKey: inbound.tenantKey, workspacePath };
+      const pending = await h.port.runFeishuWork({ ...scope, action: 'pending' });
+      assert.ok(pending?.kind === 'inbound');
+      const mapped = await h.port.runFeishuWork({ ...scope, action: 'prepareRelayTurn', sequence: pending.sequence, engineId: 'codex', configurationId, senderDisplayName });
+      assert.ok(mapped?.kind === 'relayTurnPrepared');
+      if (n === 2) assert.equal(mapped.turn.referenced, true);
+      const { sessionId, messageId } = mapped.turn;
+      const attemptId = feishuExecutionId([messageId, 'attempt']);
+      if (n === 1) {
+        const metadata = JSON.stringify({ relayHostContext: { version: RELAY_HOST_CONTEXT_VERSION, externalSessionId: 'external', compactionCount: 0 } });
+        h.f.mutate(`UPDATE sessions SET engine_session_id='external',engine_metadata='${metadata}' WHERE id='${sessionId}'`);
+      }
+      const enqueued = await h.port.execute({ ...markRead(), principal: system, operationId: `enqueue-feishu-${n}`,
+        command: { name: 'turn.enqueue', input: { sessionId, messageId, attemptId, engineId: 'codex', resourceKey: feishuKey,
+          content: mapped.content, metadata: null, expectedPreferencesRevision: mapped.preferencesRevision,
+          origin: { kind: 'feishu', botId: scope.botId, tenantKey: scope.tenantKey, sequence: pending.sequence } } } });
+      assert.equal(enqueued.state, 'committed');
+      await h.scheduler.drain(feishuKey);
+      await until(() => h.raw[0]?.inputs.length === n);
+      const input = h.raw[0]!.inputs[n - 1]!;
+      if (n === 1) {
+        assert.ok(input.startsWith(`${FEISHU_HOST_CONTEXT.text}\n\n`));
+        assert.match(input, /当前对话通过 Relay 平台接入，用户通过飞书聊天与你交互。/);
+        assert.doesNotMatch(input, /用户通过 Relay 界面/);
+      } else {
+        assert.doesNotMatch(input, /<relay_host_context>/);
+      }
+      assert.ok(input.includes(`本轮发言人（飞书显示名）：${JSON.stringify(senderDisplayName)}`));
+      if (n === 2) assert.doesNotMatch(input, /张三/);
+      assert.match(input, /本轮用户消息：\ninput-\d$/);
+      h.raw[0]!.finish();
+      await until(() => h.terminals.includes(attemptId));
+      const metadata = JSON.parse(String(h.f.scalar(`SELECT engine_metadata FROM sessions WHERE id='${sessionId}'`)));
+      assert.equal(metadata.relayHostContext.version, FEISHU_HOST_CONTEXT.version);
+      assert.equal(h.f.scalar(`SELECT content FROM messages WHERE id='${messageId}'`), `input-${n}`);
+      await h.port.runFeishuWork({ ...scope, action: 'prepare', sequence: pending.sequence, response: null });
+    }
+    assert.deepEqual(h.failures, []);
+  } finally { await h.cleanup(); }
+});
+
+test('Feishu private peer is introduced once and can be supplemented after compaction or a missing name', async () => {
+  const h = await setup(true);
+  const workspacePath = 'D:/synthetic';
+  const configurationId = '00000000-0000-4000-8000-000000000001';
+  const bot = { ...feishuBotConfigSchema.parse({ id: configurationId, appId: 'cli_a', appSecret: 'test', projectId: 'project' }),
+    workspaceName: 'Test', workspacePath };
+  try {
+    h.f.mutate(FEISHU_IM_SCHEMA_SQL);
+    h.f.mutate(`INSERT INTO feishu_im_settings VALUES('${configurationId}','cli_a','project','Test',1,1,'{}','secret',NULL)`);
+    const steps = [
+      { name: '张"三', host: true, intro: true },
+      { name: '张三', compact: true },
+      { host: true },
+      { name: '张三', intro: true },
+      { name: '张三' },
+    ];
+    for (const [index, step] of steps.entries()) {
+      const n = index + 1;
+      const inbound = normalizeFeishuInbound(bot, 'ou_bot', { app_id: 'cli_a', tenant_key: 'tenant',
+        sender: { sender_type: 'user', sender_id: { open_id: 'ou_user' } },
+        message: { chat_type: 'p2p', chat_id: 'oc_private', message_id: `om_private_${n}`, message_type: 'text',
+          content: JSON.stringify({ text: `input-${n}` }) } });
+      assert.ok(inbound);
+      h.f.mutate(`INSERT OR IGNORE INTO feishu_im_user_access VALUES('${inbound.botId}','${inbound.tenantKey}','${inbound.projectId}','${inbound.senderId}')`);
+      assert.equal(await h.port.acceptFeishuInbound({ inbound, workspacePath }), 'received');
+      const scope = { botId: inbound.botId, tenantKey: inbound.tenantKey, workspacePath };
+      const pending = await h.port.runFeishuWork({ ...scope, action: 'pending' });
+      assert.ok(pending?.kind === 'inbound');
+      const mapped = await h.port.runFeishuWork({ ...scope, action: 'prepareRelayTurn', sequence: pending.sequence, engineId: 'codex', configurationId,
+        ...(step.name ? { senderDisplayName: step.name } : {}) });
+      assert.ok(mapped?.kind === 'relayTurnPrepared');
+      const { sessionId, messageId } = mapped.turn;
+      const attemptId = feishuExecutionId([messageId, 'attempt']);
+      const enqueued = await h.port.execute({ ...markRead(), principal: system, operationId: `enqueue-private-${n}`,
+        command: { name: 'turn.enqueue', input: { sessionId, messageId, attemptId, engineId: 'codex', resourceKey: feishuKey,
+          content: mapped.content, metadata: null, expectedPreferencesRevision: mapped.preferencesRevision,
+          origin: { kind: 'feishu', botId: scope.botId, tenantKey: scope.tenantKey, sequence: pending.sequence } } } });
+      assert.equal(enqueued.state, 'committed');
+      await h.scheduler.drain(feishuKey);
+      await until(() => h.raw[0]?.inputs.length === n);
+      const input = h.raw[0]!.inputs[index]!;
+      assert.equal(input.startsWith(FEISHU_HOST_CONTEXT.text), !!step.host);
+      assert.equal(input.includes('当前私聊对象（飞书显示名）：'), !!step.intro);
+      if (step.intro) assert.ok(input.includes(`当前私聊对象（飞书显示名）：${JSON.stringify(step.name)}\n显示名仅用于识别对话对象。`));
+      assert.doesNotMatch(input, /本轮发言人（飞书显示名）/);
+      assert.ok(input.endsWith(`本轮用户消息：\ninput-${n}`));
+      if (step.compact) h.raw[0]!.emit({ type: 'system_notice', noticeType: 'context_compaction', title: 'compacted' }, `turn-${n}`);
+      h.raw[0]!.finish();
+      await until(() => h.terminals.includes(attemptId));
+      const metadata = JSON.parse(String(h.f.scalar(`SELECT engine_metadata FROM sessions WHERE id='${sessionId}'`)));
+      assert.equal(metadata.relayHostContext?.privatePeerIncluded, n === 1 || n >= 4 ? true : undefined);
+      assert.equal(h.f.scalar(`SELECT content FROM messages WHERE id='${messageId}'`), `input-${n}`);
+      await h.port.runFeishuWork({ ...scope, action: 'prepare', sequence: pending.sequence, response: null });
+    }
+    assert.deepEqual(h.failures, []);
+  } finally { await h.cleanup(); }
+});
+
 test('actual registry/dispatcher reuses a physical connection with new Native attempts and fences old turn events',async()=>{
   const h=await setup();try{await h.enqueue(1);await h.scheduler.drain(key);await until(()=>h.runtimes.get('draft')?.currentTurnId==='turn-1');
     h.runtimes.get('draft')!.currentContent='buffered stream';h.runtimes.get('draft')!.turnItems=[{id:'tool',type:'commandExecution',status:'completed',aggregatedOutput:'x'.repeat(100_000)}];

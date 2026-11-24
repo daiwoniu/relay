@@ -103,6 +103,48 @@ export class PageSession {
     return filePath;
   }
 
+  async inspectAccountSettings(category) {
+    return this.#evaluate(async (label) => {
+      const wait = async (find, timeout = 7000) => {
+        const deadline = Date.now() + timeout;
+        while (Date.now() < deadline) {
+          const result = find();
+          if (result) return result;
+          await new Promise(resolve => setTimeout(resolve, 40));
+        }
+        return null;
+      };
+      const probe = document.createElement('div');
+      const scrollToReturnsPromise = typeof probe.scrollTo?.(0, 0)?.then === 'function';
+      const nativeError = console.error;
+      let error;
+      console.error = function (...args) {
+        const thrown = args.find(item => item instanceof Error);
+        if (thrown) error = (thrown.name + ': ' + thrown.message).match(/(?:TypeError|ReferenceError|Error): (?:Minified React error #\d+|[^\n]{1,100})/)?.[0] || '设置渲染异常';
+        nativeError.apply(this, args);
+      };
+      try {
+        if (!document.getElementById('account-settings-title')) {
+          const trigger = await wait(() => document.querySelector('.user-menu__trigger'));
+          if (!trigger) return { ready: false, error: '账号菜单未显示' };
+          trigger.click();
+          const accountMenuEntry = await wait(() => document.querySelector('.user-menu__account'));
+          if (!accountMenuEntry) return { ready: false, error: '设置入口未显示' };
+          accountMenuEntry.click();
+        }
+        const tab = await wait(() => [...document.querySelectorAll('.settings-navigation__item')].find(button => button.querySelector('.settings-navigation__label')?.textContent === label));
+        if (!tab) return { ready: false, error: '设置分类未显示' };
+        tab.click();
+        const content = label === '新对话默认值' ? '.conversation-defaults select' : '.notification-settings-dialog button[role="switch"]';
+        await wait(() => error || document.querySelector(content));
+        await new Promise(resolve => setTimeout(resolve, 650));
+        return { ready: Boolean(document.querySelector(content)), error, scrollToReturnsPromise };
+      } finally {
+        console.error = nativeError;
+      }
+    }, category, '设置页面检查失败');
+  }
+
   getEvidence() { return structuredClone(this.#evidence); }
   waitForWorkbench() {
     return this.#waitForValue(()=>Boolean(document.querySelector('.workspace-workbench__task-lanes'))

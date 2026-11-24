@@ -20,7 +20,7 @@ import {
   type AgentMessagePhase,
   type AgentMessageState,
 } from './client-agent-messages.js';
-import { buildThreadOpenRequest, isArchivedThreadError, isNotificationForActiveThread } from './client-thread.js';
+import { buildFeishuThreadOpenRequest, buildThreadOpenRequest, feishuPermissionProfile, isArchivedThreadError, isNotificationForActiveThread } from './client-thread.js';
 import {
   retireTurn,
   extractAsyncAgentMessageNotification,
@@ -142,6 +142,7 @@ function isUnknownRpcMethodError(error: unknown, method: string): boolean {
 // ── Session state ────────────────────────────────────────────────────
 
 interface CodexSession extends AgentMessageState {
+  executionScope?: 'feishu';
   retryNoticeCount: number;
   onInputAccepted?: CodexConnectionOptions['onInputAccepted'];
   transport: WebSocketJsonRpcTransport;
@@ -196,6 +197,7 @@ export interface CodexConnection {
 }
 
 export interface CodexConnectionOptions {
+  executionScope?: 'feishu';
   cwd?: string;
   threadId?: string | null;
   onThreadReady?: (threadId: string) => unknown;
@@ -306,6 +308,7 @@ export function createCodexConnection(
   let connectionTimer: ReturnType<typeof setTimeout>;
 
   const session: CodexSession = {
+    executionScope: options.executionScope,
     retryNoticeCount: 0,
     transport,
     rpc,
@@ -449,7 +452,9 @@ export function createCodexConnection(
       }
 
       // Step 4: 首次创建 thread；已有记录则从磁盘恢复并继续上下文
-      const threadOpenRequest = buildThreadOpenRequest(savedThreadId, cwd, initialTurnOptions?.preferences.modelId);
+      const threadOpenRequest = options.executionScope === 'feishu'
+        ? buildFeishuThreadOpenRequest(initialTurnOptions?.preferences.modelId, Object.keys(effectiveConfig?.mcp_servers ?? {}))
+        : buildThreadOpenRequest(savedThreadId, cwd, initialTurnOptions?.preferences.modelId);
       let threadResult: any;
       try {
         const timeoutMs = threadOpenRequest.method === 'thread/start' ? threadStartTimeoutMs : rpcTimeoutMs;
@@ -464,11 +469,23 @@ export function createCodexConnection(
         }
         throw err;
       }
+      if (options.executionScope === 'feishu' && (threadResult?.activePermissionProfile?.id !== feishuPermissionProfile
+        || threadResult?.approvalPolicy !== 'never')) throw new Error('FEISHU_CODEX_PERMISSION_UNCONFIRMED');
       logVerbose('[Codex] thread 原始结果:', JSON.stringify(threadResult, null, 2));
       session.threadId = typeof threadResult?.thread?.id === 'string' && threadResult.thread.id
         ? threadResult.thread.id
         : null;
       if (!session.threadId) throw new Error('Codex thread 响应缺少有效 ID');
+      if (session.executionScope === 'feishu') {
+        const inventory: { data?: Array<{ runtimeStatus?: string; tools?: Record<string, unknown> }>; nextCursor?: string | null } =
+          await sendRequest(session, 'mcpServerStatus/list', {
+          threadId: session.threadId, limit: 100, detail: 'toolsAndAuthOnly',
+        });
+        if (!Array.isArray(inventory?.data) || inventory.nextCursor
+          || inventory.data.some(server => !server || server.runtimeStatus !== 'disabled' || !server.tools || Object.keys(server.tools).length)) {
+          throw new Error('FEISHU_CODEX_TOOLS_UNCONFIRMED');
+        }
+      }
       if (session.threadId && onThreadReady) {
         try {
           await onThreadReady(session.threadId);
@@ -744,6 +761,7 @@ async function sendTurnStartWithRetry(
         {
           threadId: session.threadId,
           input: [{ type: 'text', text: content }],
+          ...(session.executionScope === 'feishu' ? { environments: [] } : {}),
           ...(options?.preferences.modelId ? { model: options.preferences.modelId } : {}),
           ...(options?.preferences.reasoningEffort ? { effort: options.preferences.reasoningEffort } : {}),
           ...(options?.preferences.serviceTier ? { serviceTierForTurn: options.preferences.serviceTier } : {}),

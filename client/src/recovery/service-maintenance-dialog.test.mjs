@@ -14,7 +14,7 @@ test('环境异常时维护面板提供受控修复入口和确认说明', () =>
   assert.match(source, /环境修复开始于/);
 });
 const sidebar = fs.readFileSync(new URL('../components/layout/Sidebar.tsx', import.meta.url), 'utf8');
-const userMenu = fs.readFileSync(new URL('../components/layout/UserMenu.tsx', import.meta.url), 'utf8');
+const administration = fs.readFileSync(new URL('../components/layout/AdministrationCenter.tsx', import.meta.url), 'utf8');
 test('服务维护界面将全部服务与启动器重启收进高级操作', () => {
   assert.match(source, /restart_frontend/);
   assert.match(source, /restart_backend/);
@@ -56,9 +56,8 @@ test('维护操作命令参考只展示在二次确认 subject 中', () => {
   assert.doesNotMatch(source, /MaintenanceCommandReference/);
 });
 test('管理员菜单分别提供 Relay 维护与引擎维护', () => {
-  assert.match(userMenu, /<span\b[^>]*>Relay 维护<\/span>/);
+  assert.match(administration, /label: 'Relay 维护', panel: 'server'/);
   assert.match(source, /: 'Relay 维护'/);
-  assert.match(userMenu, />引擎维护</);
-  assert.doesNotMatch(userMenu, /user-menu__engine-row/);
+  assert.match(administration, /label: '引擎维护', panel: 'engines'/);
   assert.match(sidebar, /EngineMaintenanceDialog/);
 });

@@ -10,6 +10,11 @@ const {ToolsRanking,Ranking,RecentVisits}=await loadTsxForTest(new URL('./Analyt
 const render=(component,props)=>renderToStaticMarkup(React.createElement(component,props));
 const now=Date.parse('2026-11-17T16:01:00Z'),since=Date.parse('2026-11-15T16:00:00Z');
 
+test('飞书管理和历史未识别事件显示对应页面名称',()=>{
+  assert.equal(analyticsName('feishu_bots'),'飞书管理');
+  assert.equal(analyticsName('unknown'),'未识别');
+});
+
 test('补录提示仅在带标记的访问详情显示，帮助按钮不放入展开触发器',()=>{
   const row={id:'filled',at:now,name:'page_view',page:'tools',role:'guest',ip:null,device:'desktop',browser:'Edge',os:'Windows',source:null,result:null,siteId:null};
   const props={rows:[row],range:'7d',loading:false,error:null,retry:()=>{}};

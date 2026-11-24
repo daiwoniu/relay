@@ -1,0 +1,18 @@
+import type { MediaToolId } from '../../../../../server/src/analytics/registry.ts';
+import { lazy, type ComponentType } from 'react';
+
+const panels: Record<MediaToolId, ComponentType<{ storageKey: string }>> = {
+  'image-edit': lazy(() => import('./ImageTools').then(({ ImageEdit }) => ({ default: ImageEdit }))),
+  'image-stitch': lazy(() => import('./ImageTools').then(({ ImageStitch }) => ({ default: ImageStitch }))),
+  'image-layout': lazy(() => import('./ImageTools').then(({ ImageLayout }) => ({ default: ImageLayout }))),
+  'audio-edit': lazy(() => import('./AudioTools').then(({ AudioEdit }) => ({ default: AudioEdit }))),
+  'tone-generator': lazy(() => import('./AudioTools').then(({ ToneGenerator }) => ({ default: ToneGenerator }))),
+  'subtitle-edit': lazy(() => import('./SubtitleTool')),
+  'image-motion': lazy(() => import('./VideoTools').then(({ ImageMotion }) => ({ default: ImageMotion }))),
+  'video-edit': lazy(() => import('./VideoTools').then(({ VideoEdit }) => ({ default: VideoEdit }))),
+};
+
+export default function MediaTools({ id, storageKey }: { id: MediaToolId; storageKey: string }) {
+  const Panel = panels[id];
+  return <Panel storageKey={storageKey} />;
+}

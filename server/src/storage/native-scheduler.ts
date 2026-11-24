@@ -8,12 +8,22 @@ import { getConcurrencySettingInDatabase, getCooldownInDatabase } from '../db/en
 import { assertPurgeWriteFence } from './native-purge.js';
 import { assertDeletionWriteFence } from './native-deletion-fence.js';
 import { assertUploadCleanupWriteFence } from './native-upload-cleanup.js';
+import { canDispatchFeishuRelayTurn } from './native-feishu-im.js';
+import { feishuExecutionBinding, isFeishuExecutionActor, isFeishuExecutionResource } from '../integrations/feishu-im/native-session-scope.js';
+import { feishuDefaultConcurrency } from '../integrations/feishu-im/inbound.js';
 
 type DB=ReturnType<typeof nativeQueries>;
 const id=z.string().min(1).max(256);
 const principal=z.object({kind:z.literal('system'),purpose:z.literal('scheduler')}).strict();
 const claim=z.object({queueId:id,sessionId:id,attemptId:id,userMessageId:id,engineId:EngineIdSchema,resourceKey:id,requestedByUserId:id,claimToken:id,leaseToken:id}).strict();
 function parse<T>(schema:z.ZodType<T>,input:unknown):T{const result=schema.safeParse(input);if(!result.success)throw new StorageContractError('INVALID_ARGUMENT');return result.data;}
+
+export function feishuClaimLimit(db: DB, key: string): number {
+  const configured = db.get('SELECT max_concurrent FROM feishu_im_runtime WHERE singleton=1')?.max_concurrent ?? feishuDefaultConcurrency;
+  const activeElsewhere = db.get(`SELECT count(*) AS total FROM engine_resource_leases
+    WHERE resource_key<>? AND resource_key IN ('codex:feishu','codebuddy:feishu','opencode:feishu','zcode:feishu')`, [key]);
+  return Math.max(0, Number(configured) - Number(activeElsewhere?.total ?? 0));
+}
 
 export function schedulerState(db:DB,input:Parameters<CoreStoragePort['readSchedulerState']>[0],defaults:Readonly<Record<string,number>>){
   const value=parse(z.object({principal,resourceKey:id}).strict(),input);
@@ -36,6 +46,7 @@ export function queueDispatch(db:DB,input:Parameters<CoreStoragePort['checkQueue
       AND owner.disabled_at IS NULL AND requester.disabled_at IS NULL AND requester.must_change_password=0`,
     [c.queueId,c.sessionId,c.attemptId,c.userMessageId,c.engineId,c.resourceKey,c.requestedByUserId,c.claimToken,c.leaseToken]);
   if(!row||row.owner_user_id!==c.requestedByUserId&&row.requester_role!=='admin')return false;
+  if ((isFeishuExecutionActor(c.requestedByUserId) || isFeishuExecutionResource(c.resourceKey)) && !canDispatchFeishuRelayTurn(db,c)) return false;
   const command={name:'queue.markRunning' as const,input:{sessionId:c.sessionId,attemptId:c.attemptId,leaseToken:c.leaseToken}};
   try{assertPurgeWriteFence(db,command,value.principal);assertDeletionWriteFence(db,command,value.principal,'soft');assertUploadCleanupWriteFence(db,command,value.principal);}
   catch(error){if(error instanceof StorageContractError&&error.code==='CONFLICT')return false;throw error;}
@@ -53,7 +64,20 @@ export function claimedPayload(db:DB,c:QueueClaim):StoredClaimedTurn|null{
       AND length(CAST(COALESCE(s.engine_metadata,'') AS BLOB))<=524288 AND length(p.path)<=32768`,
     [c.userMessageId,c.sessionId,c.attemptId]);
   if(!row)return null;
+  const hasFeishu = db.get("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='feishu_im_matter_sessions'");
+  const binding = feishuExecutionBinding(c.requestedByUserId);
+  const feishu = binding ? db.get(`SELECT json_extract(data_json,'$.relayTurn.handoff') AS handoff, json_extract(data_json,'$.chatType') AS chatType,
+    json_extract(data_json,'$.relayTurn.senderDisplayName') AS senderDisplayName FROM feishu_im_inbox
+    WHERE bot_id=? AND json_extract(data_json,'$.relayTurn.messageId')=? AND json_extract(data_json,'$.relayTurn.sessionId')=?`,
+  [binding,c.userMessageId,c.sessionId]) : null;
+  const handoff = binding ? feishu?.handoff
+    : hasFeishu ? db.get(`SELECT h.handoff FROM feishu_im_matter_sessions h WHERE h.session_id=? AND h.handoff IS NOT NULL
+    AND NOT EXISTS(SELECT 1 FROM messages prior WHERE prior.session_id=h.session_id AND prior.role='assistant'
+      AND prior.phase='final_answer' AND COALESCE(prior.stopped,0)=0 AND length(trim(prior.content))>0)`, [c.sessionId])?.handoff : null;
   const data:Omit<StoredClaimedTurn,'sourceDigest'>={claimedAt:row.claimed_at,message:{id:row.id,sessionId:row.session_id,attemptId:row.turn_id,content:row.content,metadata:row.metadata},
+    ...(typeof handoff === 'string' ? { feishuHandoff: handoff } : {}),
+    ...(typeof feishu?.senderDisplayName === 'string' ? feishu.chatType === 'p2p'
+      ? { feishuPrivatePeerDisplayName: feishu.senderDisplayName } : { feishuSenderDisplayName: feishu.senderDisplayName } : {}),
     session:{ownerUserId:row.owner_user_id,projectId:row.project_id,projectPath:row.path,engineSessionId:row.engine_session_id,engineMetadata:row.engine_metadata,
       contextCompactionCount:row.context_compaction_count,preferencesRevision:row.engine_preferences_revision,modelId:row.selected_model_id,
       reasoningEffort:row.selected_reasoning_effort,serviceTier:row.selected_service_tier}};

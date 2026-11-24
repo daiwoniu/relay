@@ -213,6 +213,26 @@ test('共用环境解析及其类型变化使前端构建指纹失效',()=>{
   }finally{fs.rmSync(root,{recursive:true,force:true});}
 });
 
+test('共享页面路由或统计注册表单独变化时，旧前端构建失效', () => {
+  const root = createRoot();
+  try {
+    const directory = path.join(root, 'server', 'src', 'analytics');
+    fs.mkdirSync(directory, { recursive: true });
+    for (const name of ['pages.ts', 'registry.ts']) fs.writeFileSync(path.join(directory, name), 'export {};');
+    prepareFrontendBuild({ root, run: successfulRunner });
+    activatePreparedFrontendBuild(root);
+    assert.equal(getFrontendBuildStatus(root).fresh, true);
+
+    for (const name of ['pages.ts', 'registry.ts']) {
+      const file = path.join(directory, name);
+      fs.writeFileSync(file, 'export const changed = true;');
+      assert.equal(getFrontendBuildStatus(root).fresh, false, name);
+      fs.writeFileSync(file, 'export {};');
+    }
+    assert.equal(getFrontendBuildStatus(root).fresh, true);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
 test('relay local override creation, changes and removal invalidate the build; feature secrets do not', () => {
   const root = createRoot();
   try {

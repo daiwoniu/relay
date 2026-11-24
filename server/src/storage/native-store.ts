@@ -1,5 +1,7 @@
 import { applyInitialNativeMigration,assertNativeMigration } from './native-migrations.js';
 import { readHostedSites,saveHostedSite,deleteHostedSite } from './native-hosting.js';
+import { acceptFeishuInbound, authorizeFeishuRelayAdmission, feishuAutoApproval, runFeishuAdmin, runFeishuWork } from './native-feishu-im.js';
+import { feishuExecutionActorPattern, isFeishuExecutionActor, isFeishuExecutionResource, resolveExecutionTrust } from '../integrations/feishu-im/native-session-scope.js';
 import { appendAnalytics,readAnalytics } from './native-analytics.js';
 import { AnalyticsRecordSchema,AnalyticsQuerySchema } from '../analytics/contract.js';
 import { updateAcceptedAutomaticTitle } from './native-session-title.js';
@@ -12,6 +14,7 @@ import { canonicalJson, operationIdentity, parseCommandEnvelope, parseStoragePri
 import type { CoreCommandName, CommandResult, CoreStoragePort, FinalOperationRecord, StoragePrincipal, StoredMessage, StorageCommandEnvelope, TrashReadInputs } from './contracts.js';
 import { markSessionResultRead } from '../db/session-attention.js';
 import { createSessionHostContextDelivery } from '../db/session-host-context.js';
+import { FEISHU_HOST_CONTEXT, RELAY_HOST_CONTEXT_VERSION } from '../engine/host-context.js';
 import { enqueueTurnWithMessageInDatabase, claimNextQueuedEntryInDatabase, markLeaseRunningInDatabase,
   cancelQueuedTurnInDatabase, getConcurrencySettingInDatabase, getCooldownInDatabase,
   upsertCooldownInDatabase, appendCapacityEventInDatabase, disableUserAndCancelQueuedTurnsInDatabase } from '../db/engine-concurrency.js';
@@ -19,7 +22,7 @@ import { getCapacityWindowsInDatabase,upsertConcurrencySettingInDatabase,countAc
 import { appendAdminAuditEventInDatabase } from '../db/admin-audit.js';
 import { inspectCooldown, acceptCooldownProbe, computeOverloadCooldown } from '../engine/concurrency/cooldown.js';
 import { randomUUID, createHash } from 'node:crypto';
-import { schedulerState,queueDispatch,readClaimedTurn } from './native-scheduler.js';
+import { schedulerState,queueDispatch,readClaimedTurn,feishuClaimLimit } from './native-scheduler.js';
 import { requestStop,checkStop,finishStopAudits } from './native-stop.js';
 import { finishUnstarted } from './native-unstarted-turn.js';
 import { terminalFromFact } from './native-runtime-terminal.js';
@@ -78,6 +81,25 @@ function deny(code: ConstructorParameters<typeof StorageContractError>[0]): neve
 
 /** Worker-only connection. It never consults RELAY_DB_PATH or imports application bootstrap. */
 export class NativeStore {
+  runFeishuAdmin(input: Parameters<CoreStoragePort['runFeishuAdmin']>[0]) {
+    canonicalJson(input, 16 * 1024);
+    const run = () => {
+      const actor = this.resourceActor(input, ['principal', 'request']);
+      if (actor.role !== 'admin') deny('FORBIDDEN');
+      return runFeishuAdmin(nativeQueries(this.db), input.request, actor.id);
+    };
+    return ['inspect', 'session', 'settingsList', 'reviewTurn', 'listUserAccess'].includes(input.request.action) ? this.readOnly(run) : this.transaction(run);
+  }
+  runFeishuWork(input: Parameters<CoreStoragePort['runFeishuWork']>[0]) {
+    canonicalJson(input, 64 * 1024);
+    const run = () => runFeishuWork(nativeQueries(this.db), input);
+    return ['project', 'tenant', 'settings', 'settingsGroups', 'modelTargets', 'runtimeSettings', 'readRelayTurn', 'readSummaryReplies'].includes(input.action)
+      ? this.readOnly(run) : this.transaction(run);
+  }
+  acceptFeishuInbound(input: Parameters<CoreStoragePort['acceptFeishuInbound']>[0]) {
+    canonicalJson(input, 64 * 1024);
+    return this.transaction(() => acceptFeishuInbound(nativeQueries(this.db), input));
+  }
   appendAnalytics(input:Parameters<CoreStoragePort['appendAnalytics']>[0]){
     canonicalJson(input,32*1024);
     if(!input||Object.keys(input).length!==1||!Array.isArray(input.records)||input.records.length<1||input.records.length>20)deny('INVALID_ARGUMENT');
@@ -95,12 +117,12 @@ export class NativeStore {
     return this.readOnly(()=>{
       canonicalJson(input);
       if(!input||typeof input!=='object'||Object.keys(input).length!==1)deny('INVALID_ARGUMENT');
-      if('siteId' in input){this.resourceId(input.siteId);return readHostedSites(nativeQueries(this.db),input.siteId).filter(site=>site.enabled);}
+      if('siteId' in input){this.resourceId(input.siteId);return readHostedSites(nativeQueries(this.db),{id:input.siteId}).filter(site=>site.enabled);}
       const principal=parseStoragePrincipal(input.principal);
       if(principal.kind==='system'){
         if(principal.purpose!=='recovery')deny('FORBIDDEN');
       }else{const actor=this.resourceActor(input,['principal']);if(actor.role!=='admin')deny('FORBIDDEN');}
-      return readHostedSites(nativeQueries(this.db));
+      return readHostedSites(nativeQueries(this.db),{includeSource:principal.kind==='user'});
     });
   }
   readCreditResetJob(request:Parameters<CoreStoragePort['readCreditResetJob']>[0]){
@@ -144,7 +166,7 @@ export class NativeStore {
     return this.readOnly(()=>{
       const actor=this.resourceActor(input,['principal','resourceKey']);
       if(typeof input.resourceKey!=='string'||!/^[a-z0-9][a-z0-9:._-]{0,119}$/.test(input.resourceKey))deny('INVALID_ARGUMENT');
-      if(!Object.hasOwn(this.defaultConcurrency,input.resourceKey))deny('NOT_FOUND');
+      if(isFeishuExecutionResource(input.resourceKey)||!Object.hasOwn(this.defaultConcurrency,input.resourceKey))deny('NOT_FOUND');
       const db=nativeQueries(this.db),key=input.resourceKey,cooldown=getCooldownInDatabase(db,key);
       return {resourceKey:key,maxActiveTurns:getConcurrencySettingInDatabase(db,key)?.maxActiveTurns??this.defaultConcurrency[key],
         activeTurns:actor.role==='admin'?countActiveLeasesInDatabase(db,key):countActiveLeasesForUserInDatabase(db,key,actor.id),
@@ -564,7 +586,7 @@ export class NativeStore {
   private searchArguments(query: unknown, limit: unknown) {
     if (typeof query !== 'string' || !query.trim() || query.trim().length > 100 || !Number.isSafeInteger(limit) || Number(limit) < 1 || Number(limit) > 500) deny('INVALID_ARGUMENT');
   }
-  private guardSearchRows(actor: AccessActor, scope: 'mine' | 'all', sessionId: string | null, includeItems: boolean, query: string) {
+  private guardSearchRows(actor: AccessActor, scope: 'mine' | 'all', sessionId: string | null, includeItems: boolean, query: string, ownerUserId?: string) {
     const row = this.get(`SELECT max(coalesce(length(CAST(m.content AS BLOB)),0)+coalesce(length(CAST(m.metadata AS BLOB)),0)
       ${includeItems ? '+coalesce(length(CAST(m.items AS BLOB)),0)' : ''}) AS bytes FROM messages m
       JOIN sessions s ON s.id=m.session_id JOIN projects p ON p.id=s.project_id
@@ -572,18 +594,25 @@ export class NativeStore {
         AND (? IS NULL OR s.id=?) AND (? IS NOT NULL OR s.archived=0)
         AND (?=1 OR s.owner_user_id=? OR p.owner_user_id=? OR EXISTS (SELECT 1 FROM project_members pm
           WHERE pm.project_id=p.id AND pm.user_id=? AND pm.role IN ('viewer','collaborator','manager') AND pm.can_view_sessions=1))
+        ${ownerUserId ? 'AND s.owner_user_id = ?' : ''}
         ${includeItems ? '' : `AND (LOWER(m.content) LIKE LOWER(?) ESCAPE '\\' OR EXISTS (
           SELECT 1 FROM json_each(CASE WHEN json_valid(m.metadata) THEN m.metadata ELSE '{}' END, '$.attachments') attachment
           WHERE LOWER(json_extract(attachment.value, '$.name')) LIKE LOWER(?) ESCAPE '\\'))`}`,
-    [sessionId, sessionId, sessionId, Number(scope === 'all'), actor.id, actor.id, actor.id,
+    [sessionId, sessionId, sessionId, Number(scope === 'all'), actor.id, actor.id, actor.id, ...(ownerUserId ? [ownerUserId] : []),
       ...(includeItems ? [] : [createLiteralSearchPattern(query), createLiteralSearchPattern(query)])]);
     if (Number(row?.bytes ?? 0) > 7*1024*1024) deny('PAYLOAD_TOO_LARGE');
   }
   searchSessions(request: Parameters<CoreStoragePort['searchSessions']>[0]) {
-    const actor = this.resourceActor(request, ['principal','query','limit','scope']); this.searchArguments(request.query, request.limit); this.resourceScope(request.scope, actor);
-    this.guardSearchRows(actor, request.scope, null, false, request.query);
+    const keys = ['principal','query','limit','scope'];
+    if (request && Object.hasOwn(request, 'ownerUserId')) keys.push('ownerUserId');
+    const actor = this.resourceActor(request, keys); this.searchArguments(request.query, request.limit); this.resourceScope(request.scope, actor);
+    if (request.ownerUserId !== undefined) {
+      this.resourceId(request.ownerUserId);
+      if (actor.role !== 'admin' && request.ownerUserId !== actor.id) deny('FORBIDDEN');
+    }
+    this.guardSearchRows(actor, request.scope, null, false, request.query, request.ownerUserId);
     const db = nativeQueries(this.db);
-    const matches = searchSessionsInDatabase(db, request.query, request.limit, request.scope === 'all' ? undefined : actor.id, true);
+    const matches = searchSessionsInDatabase(db, request.query, request.limit, request.scope === 'all' ? undefined : actor.id, true, request.ownerUserId, feishuExecutionActorPattern);
     const results = matches.flatMap(({ session, ...match }) => {
       const current = resources.readSession(db, actor, session.id); return current ? [{ session: current, ...match }] : [];
     });
@@ -619,10 +648,13 @@ export class NativeStore {
     if (matches.length === 1) message.requestTurnId = String(matches[0].attempt_id);
   }
   listSessionsOffset(request: Parameters<CoreStoragePort['listSessionsOffset']>[0]) {
-    const actor = this.resourceActor(request, ['principal','scope','projectId','limit','offset']); this.resourceScope(request.scope, actor);
+    const keys = ['principal','scope','projectId','limit','offset'];
+    if (request && Object.hasOwn(request, 'afterId')) keys.push('afterId');
+    const actor = this.resourceActor(request, keys); this.resourceScope(request.scope, actor);
     if (request.projectId !== null) this.resourceId(request.projectId);
     if (!Number.isSafeInteger(request.limit) || request.limit < 1 || request.limit > 500
       || !Number.isSafeInteger(request.offset) || request.offset < 0 || request.offset > 100_000) deny('INVALID_ARGUMENT');
+    if (request.afterId !== undefined && (request.offset !== 0 || typeof request.afterId !== 'string' || request.afterId.length > 256)) deny('INVALID_ARGUMENT');
     if (request.projectId !== null && !resources.visibleResource(nativeQueries(this.db), actor, { kind: 'project', id: request.projectId })) deny('FORBIDDEN');
     return resources.listSessions(nativeQueries(this.db), actor, { ...request, before: null }).sessions;
   }
@@ -759,6 +791,7 @@ export class NativeStore {
     catch (error) { try { this.db.exec('ROLLBACK'); } catch { throw new Error('TRANSACTION_RESULT_UNKNOWN'); } throw error; }
   }
   private user(actor: Extract<StoragePrincipal, { kind: 'user' }>) {
+    if (isFeishuExecutionActor(actor.userId)) deny('FORBIDDEN');
     const user = this.get(`SELECT u.id,u.role FROM users u JOIN auth_sessions a ON a.user_id=u.id
       WHERE u.id=? AND a.token_hash=? AND a.expires_at>? AND u.disabled_at IS NULL AND u.must_change_password=0`,
     [actor.userId, actor.authSessionHash, Date.now()]);
@@ -775,7 +808,7 @@ export class NativeStore {
       FROM auth_sessions a JOIN users u ON u.id=a.user_id
       WHERE a.token_hash=? AND a.expires_at>? AND u.disabled_at IS NULL`, [request.tokenHash, Date.now()]);
     // Password-change gating belongs to the HTTP/WS policy, not this authentication lookup.
-    return row ? { user: presentPublicUser(row as User), expiresAt: Number(row.expires_at) } : null;
+    return row && !isFeishuExecutionActor(String(row.id)) ? { user: presentPublicUser(row as User), expiresAt: Number(row.expires_at) } : null;
   }
   private authorizeReadReceipt(principal:StoragePrincipal,sessionId:string){
     if(principal.kind!=='user'||!resources.visibleResource(nativeQueries(this.db),this.user(principal) as AccessActor,{kind:'session',id:sessionId}))deny('FORBIDDEN');
@@ -841,7 +874,7 @@ export class NativeStore {
         if(request.command.name==='hosting.save'||request.command.name==='hosting.delete')this.accountAdmin(request.principal);
         if(request.command.name==='concurrency.set'){
           this.accountAdmin(request.principal);
-          if(!Object.hasOwn(this.defaultConcurrency,request.command.input.resourceKey))deny('NOT_FOUND');
+          if(isFeishuExecutionResource(request.command.input.resourceKey)||!Object.hasOwn(this.defaultConcurrency,request.command.input.resourceKey))deny('NOT_FOUND');
           if(!request.command.input.resourceKey.startsWith(request.command.input.engineId+':'))deny('INVALID_ARGUMENT');
         }
         if(request.command.name==='sidebar.move'){
@@ -959,7 +992,8 @@ export class NativeStore {
             :this.get(`SELECT u.id,u.role FROM engine_queue_entries q JOIN users u ON u.id=q.requested_by_user_id
             WHERE q.session_id=? AND q.attempt_id=? AND q.state='claimed' AND u.disabled_at IS NULL AND u.must_change_password=0`,[runtime.sessionId,runtime.attemptId]);
           if(!actor)deny('FORBIDDEN');
-          const trust=approvalTrustService(nativeQueries(this.db),Date.now()).getSessionState(actor.id,runtime.sessionId).effective;
+          const trust=resolveExecutionTrust(actor.id,()=>approvalTrustService(nativeQueries(this.db),Date.now()).getSessionState(actor.id,runtime.sessionId).effective,
+            () => feishuAutoApproval(nativeQueries(this.db),actor.id,runtime.sessionId,runtime.attemptId,Date.now()));
           if(!trust.trusted||trust.diagnostic||!['session_trust','project_trust'].includes(trust.source)
             ||this.get("SELECT 1 FROM _relay_interaction_responses WHERE session_id=? AND phase='prepared' LIMIT 1",[runtime.sessionId]))value={prepared:false};
           else{
@@ -973,7 +1007,8 @@ export class NativeStore {
           if(!job||job.sessionId!==runtime.sessionId||job.attemptId!==runtime.attemptId||job.connectionId!==runtime.connectionId||job.runtimeVersion!==runtime.runtimeVersion)deny('CONFLICT');
           const proof=this.get("SELECT result_json FROM _relay_storage_operations WHERE operation_id=? AND command_name='turn.prepareAutoResponse'",[job.jobId]);
           const actor=this.get('SELECT id,role FROM users WHERE id=? AND disabled_at IS NULL AND must_change_password=0',[job.actorUserId]);
-          const trust=actor?approvalTrustService(nativeQueries(this.db),Date.now()).getSessionState(actor.id,runtime.sessionId).effective:null;
+          const trust=actor?resolveExecutionTrust(actor.id,()=>approvalTrustService(nativeQueries(this.db),Date.now()).getSessionState(actor.id,runtime.sessionId).effective,
+            () => feishuAutoApproval(nativeQueries(this.db),actor.id,runtime.sessionId,runtime.attemptId,Date.now())):null;
           const prior=proof?JSON.parse(proof.result_json):null;
           const allowed=!!(prior?.prepared&&trust?.trusted&&!trust.diagnostic&&trust.source===prior.source&&trust.expiresAt===prior.expiresAt&&job.phase==='prepared'
             &&interactionResponseSource(nativeQueries(this.db),job));
@@ -1087,9 +1122,26 @@ export class NativeStore {
             if(input.workspaceTaskLink.targetRef&&(!parseFeishuTarget(input.workspaceTaskLink.targetRef)||input.workspaceTaskLink.connectionScope!==WORKSPACE_CONNECTION_SCOPE))deny('INVALID_ARGUMENT');
           }
           let requestedByUserId: string;
+          let preferencesRevision = input.expectedPreferencesRevision;
           let metadata = input.metadata === null ? null : canonicalJson(input.metadata);
           let followupId: string | null = null;
-          if (request.principal.kind === 'user') requestedByUserId = request.principal.userId;
+          if (input.origin.kind === 'feishu') {
+            const db = nativeQueries(this.db);
+            const turn = authorizeFeishuRelayAdmission(db, input);
+            requestedByUserId = turn.actorId;
+            if (turn.preferences) {
+              const saved = db.get(`SELECT selected_model_id, selected_reasoning_effort, selected_service_tier, active_attempt_id
+                FROM sessions WHERE id=?`, [turn.sessionId]);
+              if (!saved || saved.active_attempt_id) deny('CONFLICT');
+              if (saved.selected_model_id !== turn.preferences.modelId || saved.selected_reasoning_effort !== turn.preferences.reasoningEffort
+                || saved.selected_service_tier !== turn.preferences.serviceTier) {
+                executeResourceWrite(db, { id: turn.actorId, role: 'member' }, { name: 'session.setPreferences',
+                  input: { sessionId: turn.sessionId, ...turn.preferences, expectedRevision: preferencesRevision } });
+                preferencesRevision++;
+              }
+            }
+          } else if (isFeishuExecutionResource(input.resourceKey)) deny('FORBIDDEN');
+          else if (request.principal.kind === 'user') requestedByUserId = request.principal.userId;
           else {
             if (input.origin.kind !== 'followup' || input.draft || input.bind || input.workspaceTaskLink) deny('INVALID_ARGUMENT');
             const row = this.get(`SELECT f.* FROM session_followups f
@@ -1122,7 +1174,7 @@ export class NativeStore {
           try {
             const now = Date.now();
             const result = enqueueTurnWithMessageInDatabase(nativeQueries(this.db), {
-              now, expectedPreferencesRevision: input.expectedPreferencesRevision,
+              now, expectedPreferencesRevision: preferencesRevision,
               message: { id: input.messageId, session_id: input.sessionId, turn_id: input.attemptId,
                 role: 'user', content: input.content, phase: null, items: null,
                 metadata },
@@ -1152,9 +1204,10 @@ export class NativeStore {
           const now = Date.now();
           const cooldown = getCooldownInDatabase(bridge, input.resourceKey);
           const inspection = inspectCooldown(cooldown, now);
-          const result = inspection.state === 'blocked' || inspection.state === 'probe_in_progress' ? null
+          const availableLimit = isFeishuExecutionResource(input.resourceKey) ? feishuClaimLimit(bridge, input.resourceKey) : limit!;
+          const result = availableLimit < 1 || inspection.state === 'blocked' || inspection.state === 'probe_in_progress' ? null
             : claimNextQueuedEntryInDatabase(bridge, { resourceKey: input.resourceKey,
-              maxActiveTurns: limit!, claimToken: input.claimToken, now });
+              maxActiveTurns: availableLimit, claimToken: input.claimToken, now });
           if (result && !this.get(`SELECT s.id FROM sessions s JOIN users owner ON owner.id=s.owner_user_id
             JOIN users requester ON requester.id=? WHERE s.id=? AND s.deleted_at IS NULL
             AND owner.disabled_at IS NULL AND requester.disabled_at IS NULL`, [result.queue.requestedByUserId, result.queue.sessionId])) deny('FORBIDDEN');
@@ -1340,11 +1393,14 @@ export class NativeStore {
           }}catch{/* Preserve malformed legacy metadata. */}
           value={count:Number(this.get('SELECT context_compaction_count FROM sessions WHERE id=?',[data.sessionId])!.context_compaction_count),incremented:Number(inserted)>0};
         } else if (request.command.name === 'turn.setHostContext') {
-          const row = this.get('SELECT engine,engine_session_id,context_compaction_count FROM sessions WHERE id=? AND deleted_at IS NULL', [data.sessionId]);
-            if (!row || row.engine !== data.engineId || row.engine_session_id !== data.externalSessionId || data.delivered && Number(row.context_compaction_count) !== data.compactionCount) deny('CONFLICT');
+          const row = this.get('SELECT engine,engine_session_id,context_compaction_count,owner_user_id FROM sessions WHERE id=? AND deleted_at IS NULL', [data.sessionId]);
+          if (!row || row.engine !== data.engineId || row.engine_session_id !== data.externalSessionId || data.delivered && Number(row.context_compaction_count) !== data.compactionCount) deny('CONFLICT');
+          const feishu = isFeishuExecutionActor(row.owner_user_id);
+          if (data.privatePeerIncluded && (!feishu || !data.delivered)) deny('INVALID_ARGUMENT');
+          const version = feishu ? FEISHU_HOST_CONTEXT.version : RELAY_HOST_CONTEXT_VERSION;
           const state = createSessionHostContextDelivery({ get: this.get.bind(this), run: this.run.bind(this), scheduleSaveToFile: () => {
             if (!this.db.isTransaction) deny('STORAGE_UNAVAILABLE');
-          } }, data.sessionId, data.engineId, data.externalSessionId);
+          } }, data.sessionId, data.engineId, data.externalSessionId, version, data.privatePeerIncluded);
           const before = Number(this.get('SELECT total_changes() AS n')?.n);
           if (data.delivered) state.onDelivered(data.externalSessionId); else state.onInvalidated?.(data.externalSessionId);
           value = { updated: Number(this.get('SELECT total_changes() AS n')?.n) > before };

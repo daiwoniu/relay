@@ -12,7 +12,8 @@ import type { LocalStorageResult } from './local-storage-initializer.js';
 import { nativeQueries } from './native-queries.js';
 import { PREVIEW_PREFERENCES_SCHEMA_SQL } from '../contracts/preview-preferences.js';
 import { TOOLS_SCHEMA_SQL } from './tools-contract.js';
-import { HOSTING_SCHEMA_SQL } from '../page-hosting/contract.js';
+import { FEISHU_IM_BINDINGS_SQL, FEISHU_IM_GROUPS_SQL, FEISHU_IM_RECEIPTS_SQL, FEISHU_IM_RUNTIME_SQL, FEISHU_IM_SCHEMA_SQL, FEISHU_IM_SETTINGS_SQL, FEISHU_IM_USER_ACCESS_SQL } from './native-feishu-im.js';
+import { HOSTING_ADD_SOURCE_COLUMN_SQL, HOSTING_SCHEMA_SQL } from '../page-hosting/contract.js';
 import { ANALYTICS_SCHEMA_SQL } from '../analytics/contract.js';
 import { createMemberWithDefaultProjectInDatabase } from '../db/queries-account.js';
 import { hashPassword } from '../auth/password.js';
@@ -157,9 +158,10 @@ async function initialize() {
       transaction(db, () => db.exec(PREVIEW_PREFERENCES_SCHEMA_SQL), null);
       if (action === 'current') action = 'migrated';
     }
-    if (!has(db, 'hosted_sites')) {
+    const hasHostedSites = has(db, 'hosted_sites');
+    if (!hasHostedSites || !bridge.all('PRAGMA table_info(hosted_sites)').some(row => row.name === 'source_json')) {
       if (!workerData.fresh && backups.length === 0) await makeBackup(db, filename, backups, contents(db));
-      transaction(db, () => db.exec(HOSTING_SCHEMA_SQL), null);
+      transaction(db, () => db.exec(hasHostedSites ? HOSTING_ADD_SOURCE_COLUMN_SQL : HOSTING_SCHEMA_SQL), null);
       if (action === 'current') action = 'migrated';
     }
     if (!has(db, 'analytics_events')) {
@@ -170,6 +172,37 @@ async function initialize() {
     if (!has(db, 'user_tools_settings')) {
       if (!workerData.fresh && backups.length === 0) await makeBackup(db, filename, backups, contents(db));
       transaction(db, () => db.exec(TOOLS_SCHEMA_SQL), null);
+      if (action === 'current') action = 'migrated';
+    }
+    if (!has(db, 'feishu_im_inbox')) {
+      if (!workerData.fresh && backups.length === 0) await makeBackup(db, filename, backups, contents(db));
+      transaction(db, () => db.exec(FEISHU_IM_SCHEMA_SQL), null);
+      if (action === 'current') action = 'migrated';
+    } else if (!has(db, 'feishu_im_bindings')) {
+      if (!workerData.fresh && backups.length === 0) await makeBackup(db, filename, backups, contents(db));
+      transaction(db, () => db.exec(`${FEISHU_IM_BINDINGS_SQL}
+        ALTER TABLE feishu_im_inbox RENAME COLUMN user_id TO sender_id;
+        UPDATE feishu_im_inbox SET sender_id=COALESCE(json_extract(data_json,'$.senderId'),sender_id);
+        CREATE INDEX feishu_im_inbox_chat ON feishu_im_inbox(bot_id,tenant_key,chat_id);
+        ALTER TABLE feishu_im_matters ADD COLUMN sender_id TEXT NOT NULL DEFAULT '';
+        UPDATE feishu_im_matters SET sender_id=COALESCE((SELECT i.sender_id FROM feishu_im_inbox i
+          WHERE i.matter_id=feishu_im_matters.id ORDER BY i.sequence LIMIT 1),'');`), null);
+      if (action === 'current') action = 'migrated';
+    }
+    if (!has(db, 'feishu_im_settings')) {
+      if (!workerData.fresh && backups.length === 0) await makeBackup(db, filename, backups, contents(db));
+      transaction(db, () => db.exec(FEISHU_IM_SETTINGS_SQL), null);
+      if (action === 'current') action = 'migrated';
+    }
+    if (!bridge.all('PRAGMA table_info(feishu_im_outbox)').some(row => row.name === 'retry_analytics_operation')) {
+      if (!workerData.fresh && backups.length === 0) await makeBackup(db, filename, backups, contents(db));
+      transaction(db, () => db.exec(`ALTER TABLE feishu_im_outbox ADD COLUMN retry_analytics_operation TEXT;
+        ALTER TABLE feishu_im_outbox ADD COLUMN retry_analytics_actor TEXT;`), null);
+      if (action === 'current') action = 'migrated';
+    }
+    if (!has(db, 'feishu_im_groups') || !has(db, 'feishu_im_runtime') || !has(db, 'feishu_im_receipt_reactions') || !has(db, 'feishu_im_user_access')) {
+      if (!workerData.fresh && backups.length === 0) await makeBackup(db, filename, backups, contents(db));
+      transaction(db, () => db.exec(`${FEISHU_IM_GROUPS_SQL}\n${FEISHU_IM_RUNTIME_SQL}\n${FEISHU_IM_RECEIPTS_SQL}\n${FEISHU_IM_USER_ACCESS_SQL}`), null);
       if (action === 'current') action = 'migrated';
     }
   } finally { db.close(); }

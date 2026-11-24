@@ -32,6 +32,13 @@ test('分组、项目和会话行使用稳定的资源导航骨架', () => {
   assert.match(navigation, /sidebar-resource-row--dragging/);
 });
 
+test('项目空态只在导航就绪且未搜索时出现，并区分全部置顶与零会话', () => {
+  assert.match(sidebar, /const canShowProjectEmptyState = navigationReady && !searchMode/);
+  assert.match(navigation, /const emptyLabel = sessionCount === 0 \? '暂无会话' : pinnedSessionCount > 0 \? `\$\{pinnedSessionCount\} 个会话在置顶`/);
+  assert.match(sidebar, /const hasNoProjects = canShowProjectEmptyState && scopedProjectCount === 0/);
+  assert.match(sidebar, /canShowAllProjects && \(\s*<button type="button" onClick=\{toggleShowAllProjects\}/);
+});
+
 test('共享样式约束当前会话标记、按需状态槽和移动触控热区', () => {
   assert.match(styles, /\.sidebar-session-row--active::before/);
   assert.match(styles, /\.sidebar-resource-status/);
@@ -101,6 +108,6 @@ test('侧栏搜索复用共享输入和状态且错误不会叠加空结果', ()
   assert.match(sidebar, /<ListState kind="loading"/);
   assert.match(sidebar, /<ListState kind="error"/);
   assert.match(sidebar, /<ListState kind="empty"/);
-  assert.match(sidebar, /searchStatus === 'ready' && filteredSessions\.length === 0/);
-  assert.doesNotMatch(sidebar, /searchStatus === 'idle' && filteredSessions\.length === 0/);
+  assert.match(sidebar, /searchStatus === 'ready' && pinnedItems\.length === 0 && projectItems\.length === 0/);
+  assert.doesNotMatch(sidebar, /searchStatus === 'idle' && pinnedItems\.length === 0/);
 });

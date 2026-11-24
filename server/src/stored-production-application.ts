@@ -8,6 +8,8 @@ import { StorageContractError } from './storage/command-boundary.js';
 import { codeBuddyProcessManager } from './codebuddy/process-manager.js';
 import { openCodeProcessManager } from './opencode/process-manager.js';
 import { zcodeProcessManager } from './zcode/process-manager.js';
+import { feishuExecutionResource, isFeishuExecutionResource } from './integrations/feishu-im/native-session-scope.js';
+import { FEISHU_MAX_CONCURRENCY } from './contracts/dto.js';
 
 export interface StoredProductionApplicationOptions extends Omit<StoredProductionDependencyOptions, 'engines' | 'attachmentAvailability'> {
   root: string;
@@ -27,7 +29,7 @@ export async function prepareStoredProductionApplication(options: StoredProducti
   try {
     const defaultConcurrency=Object.fromEntries(engines.registry.list().flatMap(adapter=>{
       const resource=adapter.concurrency?.resolveResource({sessionId:'default',projectId:'default'});
-      return resource?[[resource.resourceKey,resource.defaultMaxActiveTurns]]:[];
+      return resource ? [[resource.resourceKey,resource.defaultMaxActiveTurns], [feishuExecutionResource(adapter.id),FEISHU_MAX_CONCURRENCY]] : [];
     }));
     const application=await createStoredApplication({ storage: {...options.storage,defaultConcurrency:{...defaultConcurrency,...options.storage.defaultConcurrency}}, storageOwner: options.storageOwner,
       afterRuntimeSuspend:async()=>{await Promise.all([codeBuddyProcessManager.closeAll(),openCodeProcessManager.closeAll(),zcodeProcessManager.shutdown()]);},
@@ -37,6 +39,7 @@ export async function prepareStoredProductionApplication(options: StoredProducti
           return filename => values.get(filename) ?? false;
         },
         resolveResource: key => {
+          if (isFeishuExecutionResource(key)) return { label: '飞书', defaultMaxActiveTurns: FEISHU_MAX_CONCURRENCY };
           for (const adapter of engines.registry.list()) {
             const resource = adapter.concurrency?.resolveResource({ sessionId: 'default', projectId: 'default' });
             if (resource?.resourceKey === key) return resource;
@@ -54,6 +57,15 @@ export async function prepareStoredProductionApplication(options: StoredProducti
         context.own(attachments, value => value.dispose());
         context.own(files, value => value.dispose());
         configured = await createStoredProductionDependencies(context, { ...options, engines, attachmentAvailability: () => false });
+        configured.dependencies.feishuIm = { keyPath: `${options.storage.filename}.feishu-key`,
+          diagnostic: () => options.diagnostic('FEISHU_IM_RECEIVER_UNAVAILABLE'),
+          summaryPlatform: {
+            getCatalog: () => engines.modelCatalog.get('codex'),
+            getApiKey: () => {
+              const baseUrl = process.env.OPENAI_BASE_URL?.trim().replace(/\/+$/, '');
+              return !baseUrl || baseUrl === 'https://api.openai.com/v1' ? process.env.OPENAI_API_KEY?.trim() || undefined : undefined;
+            },
+          } };
         return configured.dependencies;
       },
     });

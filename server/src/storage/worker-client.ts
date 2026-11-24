@@ -37,6 +37,9 @@ export class StorageWorkerClient implements CoreStoragePort, CredentialStoragePo
   readStartupWorkPage(input:Parameters<CoreStoragePort['readStartupWorkPage']>[0]):ReturnType<CoreStoragePort['readStartupWorkPage']>{return this.request('readStartupWorkPage',input);}
   readConcurrency(input:Parameters<CoreStoragePort['readConcurrency']>[0]):ReturnType<CoreStoragePort['readConcurrency']>{return this.request('readConcurrency',input);}
   readHostedSites(input:Parameters<CoreStoragePort['readHostedSites']>[0]):ReturnType<CoreStoragePort['readHostedSites']>{return this.request('readHostedSites',input);}
+  acceptFeishuInbound(input:Parameters<CoreStoragePort['acceptFeishuInbound']>[0]):ReturnType<CoreStoragePort['acceptFeishuInbound']>{return this.request('acceptFeishuInbound',input);}
+  runFeishuWork(input:Parameters<CoreStoragePort['runFeishuWork']>[0]):ReturnType<CoreStoragePort['runFeishuWork']>{return this.request('runFeishuWork',input);}
+  runFeishuAdmin(input:Parameters<CoreStoragePort['runFeishuAdmin']>[0]):ReturnType<CoreStoragePort['runFeishuAdmin']>{return this.request('runFeishuAdmin',input);}
   readSidebar(input:Parameters<CoreStoragePort['readSidebar']>[0]):ReturnType<CoreStoragePort['readSidebar']>{return this.request('readSidebar',input);}
   private queue: Pending[] = [];
   private current: Pending | undefined;

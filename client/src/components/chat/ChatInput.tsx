@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useLayoutEffect, useMemo, useCallback } fr
 import { useFeatureView,featureAction } from '../../analytics/features';
 import { useChatStore } from '../../stores/chat';
 import IconActionButton from '../ui/IconActionButton';
+import ExpandCornersIcon from '../ui/ExpandCornersIcon';
 import { appendNoteToDraft } from '../../stores/local-notes';
 import { useChatInputHistory } from './use-chat-input-history';
 import { clearChatDraft, getChatDraftKey, readChatDraft, writeChatDraft } from './chat-drafts';
@@ -26,7 +27,7 @@ import {
 } from './attachment-drafts';
 import { deleteUploadDraft, uploadProjectFile, type UploadProjectFileTask } from '../../api/project-uploads';
 import { generateUUID } from '../../utils/uuid';
-import { hasMultipleVisualLines } from './chat-input-layout';
+import { getVisualLineCount } from './chat-input-layout';
 import {
   getHostFileDirectoryKey,
   readHostFileDirectory,
@@ -104,12 +105,14 @@ interface Props {
   engineStatusNotice?: ComposerNoticePayload | null;
   tokenUsageAvailable: boolean;
   wideLayout?: boolean;
+  expanded: boolean;
+  onExpandedChange: (expanded: boolean) => void;
   suggestedReply?: SuggestedReplyCandidate | null;
   focusRequest?: ComposerFocusRequest | null;
   registerComposerFocusHandler: (handler: ComposerFocusHandler) => () => void;
 }
 
-export default function ChatInput({ onSend, onEnsureProject, onStop, onCancelQueued, isStreaming, isStopping = false, isAwaitingAction = false, canRespondToInteraction = true, isQueued = false, isQueueWaiting = false, isCancellingQueued = false, sessionId, projectName, selectedEngine, engineStatuses, engineLocked, engineFallbackNotice, onEngineChange, onEngineStatusesChange, engineStatusNotice = null, tokenUsageAvailable, wideLayout = false, suggestedReply = null, focusRequest = null, registerComposerFocusHandler }: Props) {
+export default function ChatInput({ onSend, onEnsureProject, onStop, onCancelQueued, isStreaming, isStopping = false, isAwaitingAction = false, canRespondToInteraction = true, isQueued = false, isQueueWaiting = false, isCancellingQueued = false, sessionId, projectName, selectedEngine, engineStatuses, engineLocked, engineFallbackNotice, onEngineChange, onEngineStatusesChange, engineStatusNotice = null, tokenUsageAvailable, wideLayout = false, expanded, onExpandedChange, suggestedReply = null, focusRequest = null, registerComposerFocusHandler }: Props) {
   useFeatureView('composer',true,'composer');
   const { user } = useAuth();
   const [projectMenuAnchor, setProjectMenuAnchor] = useState<DOMRect | null>(null);
@@ -125,7 +128,7 @@ export default function ChatInput({ onSend, onEnsureProject, onStop, onCancelQue
   const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
   const engineSelectionRequired = !selectedEngine;
   const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth < 1024);
-  const [isInputMultiline, setIsInputMultiline] = useState(false);
+  const [visualLineCount, setVisualLineCount] = useState(1);
   const [isFileDragActive, setIsFileDragActive] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const projectMenuButtonRef = useRef<HTMLButtonElement>(null);
@@ -174,6 +177,7 @@ export default function ChatInput({ onSend, onEnsureProject, onStop, onCancelQue
 
   const draftKey = getChatDraftKey({ sessionId: activeSessionId, pendingProjectPath, currentProjectId });
   useEffect(() => { setClearConfirmOpen(false); }, [draftKey]);
+  useLayoutEffect(() => { onExpandedChange(false); }, [draftKey, onExpandedChange]);
   const suggestedReplyDraftKey = getSuggestedReplyDraftKey(draftKey);
   const attachmentDraftKey = getAttachmentDraftKey(draftKey);
   const hostFileDirectoryKey = getHostFileDirectoryKey(draftKey);
@@ -411,27 +415,39 @@ export default function ChatInput({ onSend, onEnsureProject, onStop, onCancelQue
   const updateTextareaLayout = useCallback(() => {
     const el = textareaRef.current;
     if (!el) return;
+    if (expanded) {
+      el.style.height = '';
+      return;
+    }
 
     el.style.height = 'auto';
     const styles = window.getComputedStyle(el);
-    setIsInputMultiline(hasMultipleVisualLines(
-      el.scrollHeight,
-      Number.parseFloat(styles.lineHeight),
-      Number.parseFloat(styles.paddingTop),
-      Number.parseFloat(styles.paddingBottom),
-    ));
-    el.style.height = Math.min(el.scrollHeight, 200) + 'px';
-  }, []);
+    const { scrollHeight } = el;
+    const lineHeight = Number.parseFloat(styles.lineHeight);
+    const paddingTop = Number.parseFloat(styles.paddingTop);
+    const paddingBottom = Number.parseFloat(styles.paddingBottom);
+    setVisualLineCount(getVisualLineCount(scrollHeight, lineHeight, paddingTop, paddingBottom));
+    el.style.height = `${Math.min(scrollHeight, 200)}px`;
+  }, [expanded]);
 
   // Auto-resize textarea and track visual line wrapping.
   useLayoutEffect(() => {
     updateTextareaLayout();
-  }, [input, isInputMultiline, updateTextareaLayout]);
+  }, [input, updateTextareaLayout]);
 
   useEffect(() => {
-    window.addEventListener('resize', updateTextareaLayout);
-    return () => window.removeEventListener('resize', updateTextareaLayout);
-  }, [updateTextareaLayout]);
+    const el = textareaRef.current;
+    if (!el || expanded || typeof ResizeObserver === 'undefined') return;
+    let width = el.getBoundingClientRect().width;
+    const observer = new ResizeObserver(() => {
+      const nextWidth = el.getBoundingClientRect().width;
+      if (nextWidth === width || nextWidth === 0) return;
+      width = nextWidth;
+      updateTextareaLayout();
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [expanded, updateTextareaLayout]);
 
   const handleClearInput = () => { if(input)featureAction('composer','clear','composer');setInput(''); setClearConfirmOpen(false); textareaRef.current?.focus(); };
 
@@ -530,7 +546,7 @@ export default function ChatInput({ onSend, onEnsureProject, onStop, onCancelQue
         setSuggestedReplyActive(false);
         setAttachmentsState([]);
         messageDraftIdRef.current = null;
-        if (textareaRef.current) textareaRef.current.style.height = 'auto';
+        onExpandedChange(false);
       }
     } catch (error: unknown) {
       if (attachmentDraftKeyRef.current === submissionDraftKey) {
@@ -940,10 +956,14 @@ export default function ChatInput({ onSend, onEnsureProject, onStop, onCancelQue
     />
   ) : <span className="truncate whitespace-nowrap text-xs text-[var(--color-text-tertiary)]">请先选择引擎</span>;
 
+  const isInputMultiline = visualLineCount > 1;
+  const showClearInput = (isInputMultiline || expanded) && input.length > 0 && !isAwaitingAction && !isSubmitting;
+  const showExpandInput = expanded || (visualLineCount > 3 && input.length > 0);
+
   return (
     <>
-      <div className="composer-shell theme-region-section shrink-0 border-t border-[var(--color-border)]">
-        <form onSubmit={handleSubmit} className={`${wideLayout ? 'w-full max-w-none' : 'max-w-3xl'} mx-auto px-4 pt-1 pb-0`}>
+      <div className={`composer-shell theme-region-section shrink-0 border-t border-[var(--color-border)] ${expanded ? 'h-full' : ''}`}>
+        <form onSubmit={handleSubmit} className={`${wideLayout ? 'w-full max-w-none' : 'max-w-3xl'} mx-auto px-4 pt-1 pb-0 ${expanded ? 'flex h-full flex-col overflow-y-auto' : ''}`}>
           <ChatInputMetadataBar
             projects={selectableProjects}
             currentProjectId={currentProjectId}
@@ -995,7 +1015,7 @@ export default function ChatInput({ onSend, onEnsureProject, onStop, onCancelQue
 
           {/* 输入区域 */}
           <div
-            className={`composer-surface theme-input-surface relative flex items-end gap-2 rounded-2xl border px-1.5 py-2 transition-[min-height,border-color,box-shadow,background-color] focus-within:border-[var(--color-primary)]/50 ${isFileDragActive ? 'border-[var(--color-primary)] ring-2 ring-[var(--color-primary)]/20' : 'border-[var(--color-border)]'} ${isInputMultiline ? 'min-h-[84px]' : ''}`}
+            className={`composer-surface theme-input-surface relative flex items-end gap-2 rounded-2xl border px-1.5 py-2 transition-[min-height,border-color,box-shadow,background-color] focus-within:border-[var(--color-primary)]/50 ${isFileDragActive ? 'border-[var(--color-primary)] ring-2 ring-[var(--color-primary)]/20' : 'border-[var(--color-border)]'} ${expanded ? 'min-h-28 flex-1' : isInputMultiline ? 'min-h-[84px]' : ''}`}
             onDragEnter={handleFileDragEnter}
             onDragOver={handleFileDragOver}
             onDragLeave={handleFileDragLeave}
@@ -1027,9 +1047,9 @@ export default function ChatInput({ onSend, onEnsureProject, onStop, onCancelQue
               onInsertLocalNote={handleInsertLocalNote}
             />
 
-            {isInputMultiline && input.length > 0 && !isAwaitingAction && !isSubmitting && (
-              <div className="absolute right-1.5 top-2 z-[2] h-8 w-8">
-                <IconActionButton
+            {(showClearInput || showExpandInput) && (
+              <div className="absolute right-1.5 top-2 z-[2] flex w-8 flex-col">
+                {showClearInput && <IconActionButton
                   label="清空文字"
                   variant="neutral"
                   className="h-8 w-8 rounded-xl"
@@ -1039,11 +1059,24 @@ export default function ChatInput({ onSend, onEnsureProject, onStop, onCancelQue
                   <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
                     <path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
                   </svg>
-                </IconActionButton>
+                </IconActionButton>}
+                {showExpandInput && <IconActionButton
+                  label={expanded ? '还原输入框' : '放大输入框'}
+                  variant="neutral"
+                  className="h-8 w-8 rounded-xl"
+                  aria-expanded={expanded}
+                  onPointerDown={(event) => event.preventDefault()}
+                  onClick={() => {
+                    onExpandedChange(!expanded);
+                    textareaRef.current?.focus();
+                  }}
+                >
+                  <ExpandCornersIcon expanded={expanded} variant="diagonal" />
+                </IconActionButton>}
               </div>
             )}
 
-            <div className="min-w-0 flex-1">
+            <div className={`min-w-0 flex-1 ${expanded ? 'self-stretch' : ''}`}>
               <textarea
                 ref={textareaRef}
                 value={input}
@@ -1059,7 +1092,7 @@ export default function ChatInput({ onSend, onEnsureProject, onStop, onCancelQue
                 placeholder="随心输入"
                 readOnly={isSubmitting}
                 rows={1}
-                className="relative z-[1] -ml-3.5 block w-[calc(100%+0.875rem)] resize-none bg-transparent py-2 pl-[18px] pr-1 text-sm outline-none min-h-[24px] max-h-[200px] placeholder:text-[var(--color-text-tertiary)]"
+                className={`relative z-[1] -ml-3.5 block w-[calc(100%+0.875rem)] resize-none bg-transparent py-2 pl-[18px] pr-1 text-sm outline-none placeholder:text-[var(--color-text-tertiary)] ${expanded ? 'h-full' : 'min-h-[24px] max-h-[200px]'}`}
               />
             </div>
 

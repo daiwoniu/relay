@@ -2,15 +2,32 @@ import type { EngineConnection, EngineConnectionOptions } from './adapter.js';
 import type { EngineEventEnvelope } from './events.js';
 
 export const RELAY_HOST_CONTEXT_VERSION = 1;
-export const RELAY_HOST_CONTEXT = [
-  '<relay_host_context>',
-  '【宿主平台信息：由 Relay 自动附加，非用户输入】',
-  '当前对话通过 Relay 平台接入，用户通过 Relay 界面与你交互。此信息仅用于说明本次对话的宿主平台，不改变你的引擎或模型身份，不新增工具能力或权限，也不修改引擎、会话及项目的既有规则。对话中的“平台”“软件”等指代，应结合用户语境判断。',
-  '</relay_host_context>',
-].join('\n');
+function buildRelayHostContext(entryDescription: string) {
+  return [
+    '<relay_host_context>',
+    '【宿主平台信息：由 Relay 自动附加，非用户输入】',
+    `当前对话通过 Relay 平台接入，${entryDescription}。此信息仅用于说明本次对话的宿主平台，不改变你的引擎或模型身份，不新增工具能力或权限，也不修改引擎、会话及项目的既有规则。对话中的“平台”“软件”等指代，应结合用户语境判断。`,
+    '</relay_host_context>',
+  ].join('\n');
+}
+
+export const RELAY_HOST_CONTEXT = buildRelayHostContext('用户通过 Relay 界面与你交互');
+export const FEISHU_HOST_CONTEXT = { version: 2, text: buildRelayHostContext('用户通过飞书聊天与你交互') } as const;
+
+export function readRelayHostContextMarker(raw: unknown, externalSessionId: string | null, compactionCount: number, version: number):
+  { privatePeerIncluded?: true } | null {
+  if (!externalSessionId || typeof raw !== 'string') return null;
+  try {
+    const marker = JSON.parse(raw)?.relayHostContext;
+    if (marker?.version === version && marker.externalSessionId === externalSessionId
+      && Number(marker.compactionCount ?? 0) === compactionCount) return marker;
+  } catch { return null; }
+  return null;
+}
 
 export interface HostContextDelivery {
   delivered: boolean;
+  text?: string;
   /** Reused physical connections capture a fresh, immutable logical-turn scope per send. */
   capture?(): HostContextDelivery;
   acceptsEvent?(event: EngineEventEnvelope): boolean;
@@ -83,7 +100,7 @@ export function connectWithHostContext(
       delivery = state.capture?.() ?? state;
       if (state.capture) delivered = delivery.delivered;
       // 未观察到真实回复时，下一个回合仍可补发；不会在重试中递归拼接。
-      const input = delivered ? content : `${RELAY_HOST_CONTEXT}\n\n${content}`;
+      const input = delivered ? content : `${delivery.text ?? RELAY_HOST_CONTEXT}\n\n${content}`;
       pending = delivered ? null : { content: input, turnId: null, replies: new Set(), delivery };
       try { connection.send(input, turnOptions); }
       catch (error) { pending = null; throw error; }

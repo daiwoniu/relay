@@ -33,7 +33,7 @@ export function resourceEvent(db:DB,actor:Actor,resource:Resource,scope:'mine'|'
   }
   const row=db.get(`SELECT s.owner_user_id,s.deleted_at,s.archived,p.owner_user_id AS project_owner,p.deleted_at AS project_deleted,pm.role,pm.can_view_sessions
     FROM sessions s JOIN projects p ON p.id=s.project_id LEFT JOIN project_members pm ON pm.project_id=p.id AND pm.user_id=? WHERE s.id=?`,[actor.id,resource.id]);
-  if(!row||!row.owner_user_id||!row.project_owner||!(actor.role==='admin'&&scope==='all'||row.owner_user_id===actor.id||row.project_owner===actor.id||['viewer','collaborator','manager'].includes(row.role)&&row.can_view_sessions===1))return null;
+  if(!row||!row.owner_user_id||isFeishuExecutionActor(row.owner_user_id)||!row.project_owner||!(actor.role==='admin'&&scope==='all'||row.owner_user_id===actor.id||row.project_owner===actor.id||['viewer','collaborator','manager'].includes(row.role)&&row.can_view_sessions===1))return null;
   if(row.deleted_at!==null||row.project_deleted!==null||row.archived===1)return{type:'session_deleted' as const,sessionId:resource.id};
   const value=readSession(db,actor,resource.id);return value?{type:'session_updated' as const,sessionId:resource.id,session:value}:null;
 }
@@ -57,7 +57,7 @@ export function visibleResource(db: DB, actor: Actor, resource: Resource): boole
       LEFT JOIN project_members pm ON pm.project_id=p.id AND pm.user_id=?
       WHERE s.id=? AND s.deleted_at IS NULL AND p.deleted_at IS NULL AND s.owner_user_id IS NOT NULL AND p.owner_user_id IS NOT NULL`, [actor.id, resource.id]);
   const member = row && ['viewer', 'collaborator', 'manager'].includes(String(row.role));
-  return !!row && (actor.role === 'admin' || row.owner_user_id === actor.id
+  return !!row && (resource.kind !== 'session' || !isFeishuExecutionActor(row.owner_user_id)) && (actor.role === 'admin' || row.owner_user_id === actor.id
     || resource.kind === 'session' && row.project_owner_user_id === actor.id
     || !!member && (resource.kind === 'project' || row.can_view_sessions === 1));
 }
@@ -80,7 +80,7 @@ export function readProject(db: DB, actor: Actor, id: string) {
     || ['viewer', 'collaborator', 'manager'].includes(row.member_role) && row.member_can_view_sessions === 1;
   const count = db.get(`SELECT COUNT(*) AS count FROM sessions s
     JOIN users u ON u.id=s.owner_user_id WHERE s.project_id=? AND s.deleted_at IS NULL AND s.archived=0
-      AND (?=1 OR s.owner_user_id=?)`, [id, Number(canViewOthers), actor.id]);
+      AND s.owner_user_id NOT GLOB ? AND (?=1 OR s.owner_user_id=?)`, [id, feishuExecutionActorPattern, Number(canViewOthers), actor.id]);
   row.session_count = Number(count!.count);
   return budget(project(row, actor));
 }
@@ -109,15 +109,21 @@ export function readSession(db: DB, actor: Actor, id: string, details = false) {
   return budget(sessions(db, [row], details)[0]);
 }
 export function listSessions(db: DB, actor: Actor, request: { scope: 'mine' | 'all'; projectId: string | null;
-  limit: number; before: { updatedAt: number; id: string } | null; offset?: number }) {
+  limit: number; before: { updatedAt: number; id: string } | null; offset?: number; afterId?: string }) {
   const cursor = request.before;
+  // Sidebar scans all pages by immutable ID so recent activity cannot move a row across the cursor.
+  const byId = request.afterId !== undefined;
   const rows = db.all(`SELECT ${sessionColumns},${ownerColumns} FROM sessions s JOIN users u ON u.id=s.owner_user_id
     JOIN projects p ON p.id=s.project_id LEFT JOIN project_members pm ON pm.project_id=p.id AND pm.user_id=?
     WHERE s.deleted_at IS NULL AND s.archived=0 AND p.deleted_at IS NULL AND p.owner_user_id IS NOT NULL
+      AND s.owner_user_id NOT GLOB ?
       AND (?=1 OR s.owner_user_id=? OR p.owner_user_id=? OR (pm.role IN ('viewer','collaborator','manager') AND pm.can_view_sessions=1))
       AND (? IS NULL OR s.project_id=?) ${cursor ? 'AND (s.updated_at<? OR (s.updated_at=? AND s.id<?))' : ''}
-    ORDER BY s.updated_at DESC,s.id DESC LIMIT ? OFFSET ?`, [actor.id, Number(request.scope === 'all'), actor.id, actor.id,
-      request.projectId, request.projectId, ...(cursor ? [cursor.updatedAt, cursor.updatedAt, cursor.id] : []), request.limit+1, request.offset ?? 0]);
+      ${byId ? 'AND s.id>?' : ''}
+    ORDER BY ${byId ? 's.id ASC' : 's.updated_at DESC,s.id DESC'} LIMIT ? OFFSET ?`, [actor.id, feishuExecutionActorPattern, Number(request.scope === 'all'), actor.id, actor.id,
+      request.projectId, request.projectId, ...(cursor ? [cursor.updatedAt, cursor.updatedAt, cursor.id] : []),
+      ...(byId ? [request.afterId] : []), request.limit+1, request.offset ?? 0]);
   const page = rows.slice(0, request.limit); const result = sessions(db, page); const last = page.at(-1);
   return budget({ sessions: result, nextCursor: rows.length > page.length && last ? { updatedAt: Number(last.updated_at), id: String(last.id) } : null });
 }
+import { feishuExecutionActorPattern, isFeishuExecutionActor } from '../integrations/feishu-im/native-session-scope.js';

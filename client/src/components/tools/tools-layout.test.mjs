@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { expandedRowEnd } from './tools-layout.ts';
 import { readToolsState, recordToolUse, toolOrder, TOOL_IDS } from './tools-state.ts';
@@ -21,4 +22,15 @@ test('usage keeps accumulating while the visible frequent order waits for reload
   assert.deepEqual(toolOrder('frequent', state.usage), ['json', 'weather']);
   assert.deepEqual(toolOrder('all', state.usage), [...TOOL_IDS]);
   assert.deepEqual(toolOrder('all', atLoad), [...TOOL_IDS]);
+});
+
+test('only keyword searches show the result heading and a tab switch keeps the keyword', () => {
+  const page = readFileSync(new URL('./ToolsPage.tsx', import.meta.url), 'utf8');
+  assert.match(page, /searching && <h2[^>]*>\{searchTitle\}<\/h2>/);
+  assert.match(page, /const searchTitle = `搜索结果（\$\{resultCount\}）`/);
+  assert.ok(page.indexOf('aria-label="置顶工具"') < page.indexOf('aria-label="工具筛选"'));
+  assert.match(page, /置顶工具（\{pinned\.length\}）/);
+  const browse = page.slice(page.indexOf('function browse('), page.indexOf('function card('));
+  assert.match(browse, /if \(searching\) setSearchFilter\(value\)/);
+  assert.doesNotMatch(browse, /setQuery/);
 });

@@ -1,4 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { mkdtempSync, rmdirSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type {
   EngineAdapter,
   EngineAvailability,
@@ -15,7 +18,7 @@ import { JsonRpcCore } from '../engine/json-rpc/core.js';
 import { sanitizeEngineErrorMessage } from '../engine/diagnostics.js';
 import type { JsonRpcEnvelope } from '../engine/transports/transport.js';
 import { CODEBUDDY_CLIENT_CAPABILITIES } from './capabilities.js';
-import { codeBuddyProcessManager, type CodeBuddyProcessManager } from './process-manager.js';
+import { codeBuddyProcessManager, createFeishuCodeBuddyTransport, type CodeBuddyProcessManager } from './process-manager.js';
 import {
   AcpInitializeResultSchema,
   AcpPromptResultSchema,
@@ -99,6 +102,7 @@ export interface CodeBuddyAdapterOptions {
 }
 
 export class CodeBuddyAdapter implements EngineAdapter {
+  readonly supportsFeishuIsolation = true;
   readonly id = 'codebuddy' as const;
   readonly descriptor = ENGINE_CATALOG.codebuddy;
   private readonly manager: CodeBuddyProcessManager;
@@ -169,8 +173,23 @@ export class CodeBuddyAdapter implements EngineAdapter {
   }
 
   private connect(options: EngineConnectionOptions): EngineConnection {
-    if (!options.cwd) throw new Error('CodeBuddy 会话缺少项目目录');
-    const transport = this.manager.getOrCreate(options.sessionId, options.cwd);
+    const isolated = options.executionScope === 'feishu';
+    if (isolated && options.externalSessionId) throw new Error('FEISHU_ENGINE_CANNOT_RESUME');
+    const workspace = isolated ? mkdtempSync(join(tmpdir(), 'relay-feishu-codebuddy-')) : null;
+    const releaseWorkspace = () => {
+      if (workspace) {
+        try { rmdirSync(workspace); } catch { /* Keep any unexpected engine files for diagnosis. */ }
+      }
+    };
+    const cwd = workspace ?? options.cwd;
+    if (!cwd) throw new Error('CodeBuddy 会话缺少项目目录');
+    let transport;
+    try {
+      transport = isolated ? createFeishuCodeBuddyTransport(cwd) : this.manager.getOrCreate(options.sessionId, cwd);
+    } catch (error) {
+      releaseWorkspace();
+      throw error;
+    }
     const rpc = new JsonRpcCore(transport, { defaultTimeoutMs: this.requestTimeoutMs });
     let externalSessionId = options.externalSessionId;
     let closed = false;
@@ -212,7 +231,7 @@ export class CodeBuddyAdapter implements EngineAdapter {
       rpc.rejectAll();
       if (forceShutdownRequested) transport.terminate();
       else transport.close();
-      void this.manager.release(options.sessionId, transport).catch((error) => this.diagnostic(mapCodeBuddyError(error, { phase: 'close' }).code ?? ''));
+      if (!isolated) void this.manager.release(options.sessionId, transport).catch((error) => this.diagnostic(mapCodeBuddyError(error, { phase: 'close' }).code ?? ''));
       if (notifyRuntimeLater) setTimeout(() => options.onClosed(), 0);
     };
     const waitForOpen = () => new Promise<void>((resolve, reject) => {
@@ -319,7 +338,7 @@ export class CodeBuddyAdapter implements EngineAdapter {
       emit({ type: 'system_notice', noticeType: 'warning', title: 'CodeBuddy 请求不受支持', message: String(message.method) });
     });
     transport.onError((error) => emitError(error, 'process_exit'));
-    transport.onClose(() => { if (!closed) { closed = true; options.onClosed(); } });
+    transport.onClose(() => { releaseWorkspace(); if (!closed) { closed = true; options.onClosed(); } });
 
     const ready = (async () => {
       await waitForOpen();
@@ -334,8 +353,8 @@ export class CodeBuddyAdapter implements EngineAdapter {
       const result = AcpSessionResultSchema.parse(await rpc.request(
         externalSessionId ? 'session/load' : 'session/new',
         externalSessionId
-          ? { sessionId: externalSessionId, cwd: options.cwd, mcpServers: [] }
-          : { cwd: options.cwd, mcpServers: [] },
+          ? { sessionId: externalSessionId, cwd, mcpServers: [] }
+          : { cwd, mcpServers: [] },
       ));
       if (!externalSessionId) externalSessionId = result.sessionId ?? null;
       if (!externalSessionId) throw new Error('CodeBuddy 未返回 sessionId');

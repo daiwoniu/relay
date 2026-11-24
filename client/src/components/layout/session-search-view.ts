@@ -50,12 +50,6 @@ export function getFallbackTitleMatches<T extends { title: string }>(sessions: T
 
 export const SIDEBAR_SEARCH_DEBOUNCE_MS = 250;
 
-export function getVisibleSearchProjectIds(
-  results: ReadonlyArray<Pick<SessionSearchResultDto, 'session'>>,
-): Set<string> {
-  return new Set(results.map((result) => result.session.project_id).filter((id): id is string => Boolean(id)));
-}
-
 export function getSearchResultPresentation(result: Pick<
   SessionSearchResultDto,
   'messageMatchCount' | 'latestMessageMatch'

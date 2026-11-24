@@ -82,9 +82,10 @@ test('桌面预览支持主题自适应的四角最大化与还原且最大化�
   assert.match(panel, /\{!isMobile && \(/);
   assert.match(panel, /label=\{isMaximized \? '还原预览面板' : '最大化预览面板'\}/);
   assert.match(panel, /aria-pressed=\{isMaximized\}/);
-  assert.match(panel, /data-icon="expand-corners"/);
-  assert.match(panel, /data-icon="collapse-corners"/);
-  assert.match(panel, /data-icon="expand-corners"[\s\S]*?stroke="currentColor"/);
+  const icon = fs.readFileSync(new URL('../ui/ExpandCornersIcon.tsx', import.meta.url), 'utf8');
+  assert.match(panel, /<ExpandCornersIcon expanded=\{isMaximized\} \/>/);
+  assert.match(icon, /data-icon=\{expanded \? 'collapse-corners' : 'expand-corners'\}/);
+  assert.match(icon, /stroke="currentColor"/);
   assert.match(panel, /className=\{`workspace-preview-panel-action\$\{isMaximized \? ' is-pressed' : ''\}`\}/);
 });
 

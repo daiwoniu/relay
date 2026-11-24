@@ -43,6 +43,7 @@ import { createStoredSystemRouter,type StoredSystemOptions } from './routes/stor
 import { createStoredFilesystemRouter } from './routes/stored-filesystem.js';
 import { createChinaDayRouter } from './routes/china-day.js';
 import { createStoredNewsRouter } from './routes/stored-news.js';
+import { createStoredFeishuImRouter } from './routes/stored-feishu-im.js';
 
 type Configuration<F extends (...args:any[])=>unknown>=Omit<Parameters<F>[0],'port'|'storeId'|'generation'>;
 export interface StoredHttpApplicationOptions {
@@ -71,6 +72,7 @@ export interface StoredHttpApplicationOptions {
   filesystem:Configuration<typeof createStoredFilesystemRouter>;
   chinaDay:NonNullable<Parameters<typeof createChinaDayRouter>[0]>&{cache:NonNullable<NonNullable<Parameters<typeof createChinaDayRouter>[0]>['cache']>};
   news:Configuration<typeof createStoredNewsRouter>;
+  feishuIm?: Configuration<typeof createStoredFeishuImRouter>;
   codexDebugInfo?:()=>unknown;
 }
 
@@ -148,6 +150,7 @@ export function createStoredHttpApplication(options:StoredHttpApplicationOptions
   app.route('/api/china-day',createChinaDayRouter(options.chinaDay));
   app.route('/api/public/tools/china-day',createChinaDayRouter(options.chinaDay));
   for(const prefix of ['/api/public/news','/api/admin/news','/api/news'])app.route(prefix,createStoredNewsRouter({...options.news,...base}));
+  if(options.feishuIm)app.route('/api/admin/feishu-im',createStoredFeishuImRouter({...options.feishuIm,port}));
   app.get('/api/health',c=>{const ready=options.ready();return c.json({status:ready?'ok':'recovering',name:'Relay'},ready?200:503);});
   app.get('/api/debug/codex-info',c=>{
     const info=options.codexDebugInfo?.();

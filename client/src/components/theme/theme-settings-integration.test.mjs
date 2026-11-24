@@ -25,8 +25,8 @@ const themePresets = await readFile(new URL('../../theme/theme-presets.ts', impo
 const themeBackdrop = await readFile(new URL('./ThemeBackdrop.tsx', import.meta.url), 'utf8');
 
 test('登录后从账号菜单进入设置中心的外观分类', () => {
-  assert.match(userMenu, /进入设置中心/);
-  assert.match(sidebar, /onOpenSettings=\{\(\) => \{ restoreMinimizedPanel\('account-settings-title'\); setAccountSettingsOpen\(true\); \}\}/);
+  assert.match(userMenu, />设置中心</);
+  assert.match(sidebar, /onOpenSettings=\{\(\) => openSidebarPanel\('account-settings-title', setAccountSettingsOpen\)\}/);
   assert.match(accountSettings, /id: 'appearance',[\s\S]*?label: '外观'/);
   assert.match(accountSettings, /<ThemeSettingsDialog[\s\S]*embedded/);
   assert.doesNotMatch(sidebar, /setThemeSettingsOpen/);
@@ -110,11 +110,11 @@ test('主题弹窗可最小化为未保存预览条并保持草稿预览', () =>
   assert.match(dialog, /event\.key === 'Escape'\) closeAndRollback\(\)/);
   assert.match(dialog, /setLocalError\([\s\S]*setPreviewMinimized\(false\)/);
   assert.match(dialog, /useEffect\(\(\) => \(\) => \{[\s\S]*theme\.preview\(null\)/);
-  assert.match(previewBar, /createPortal/);
-  for (const text of ['主题预览中', '尚未保存', '返回编辑', '保存主题', '关闭主题预览']) {
+  assert.match(previewBar, /<MinimizedPanelBar/);
+  for (const text of ['主题预览中', '尚未保存', '返回编辑', '保存主题', '放弃预览']) {
     assert.match(previewBar, new RegExp(text));
   }
-  assert.match(previewBar, /useMinimizedPanelSlot\(open\)/);
+  assert.match(previewBar, /panelId="account-settings-title"/);
   assert.match(themeCss, /env\(safe-area-inset-bottom\)/);
 });
 
@@ -126,7 +126,7 @@ test('嵌入设置中心后由父面板接管最小化、草稿确认与资源�
   assert.match(dialog, /onDirtyChange\?\./);
   assert.match(dialog, /onMinimizedChange\?\./);
   assert.match(accountSettings, /themeSettingsRef/);
-  assert.match(accountSettings, /requestSettingsClose/);
+  assert.match(accountSettings, /requestSettingsNavigation/);
   assert.match(accountSettings, /requestSectionChange/);
   assert.match(accountSettings, /title="放弃未保存的外观设置？"/);
   assert.match(accountSettings, /themeSettingsRef\.current\?\.discardChanges\(\)/);

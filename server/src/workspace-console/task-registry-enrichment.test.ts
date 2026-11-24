@@ -16,19 +16,28 @@ test('issues inherit matching stories and native/explicit applications remain se
   const field=(field_key:string,field_value:unknown)=>({field_key,field_value});
   const issue=row('1','issue',[field('stories',['2'])]);
   const story=row('2','story',[field('canary',['3'])],[{id:'node',name:'金丝雀发布',status:2}]);
-  const app=row('4','application',[field('stories',['2']),field('finish_status',true)],[{id:'appnode',name:'结束',status:3}]);
+  const app=row('4','application',[field('new_stories',['2']),field('finish_status',true)],[{id:'appnode',name:'结束',status:3}]);
   const calls:string[]=[];
-  const client={metadata:async()=>['normal','canary','flag','stories'].map(field_key=>({field_key})),
+  let applicationDefinitionReads = 0;
+  const client={metadata:async(type:string,_selector?:string,itemFields?:Row[])=>{
+      if(type==='application'){
+        applicationDefinitionReads++;
+        return [{field_key:itemFields?'new_stories':'old_stories',field_name:'关联需求'}];
+      }
+      return ['normal','canary','flag','stories'].map(field_key=>({field_key}));
+    },
     details:async(type:string,ids:string[])=>{calls.push(type+':'+ids.join(','));return ids.map(id=>type==='story'?story:type==='version'?{id,name:'2026-12-01'}:app);},
     candidatesForType:async()=>[app],subtasks:async()=>[{sub_tasks:[]}],
   } as unknown as FeishuProjectClient;
-  const options={ADAPTER_VERSION_FIELD:'normal',ADAPTER_CANARY_VERSION_FIELD:'canary',ADAPTER_CANARY_FLAG_FIELD:'flag',ADAPTER_STORY_RELATION_FIELD:'stories',ADAPTER_APPLICATION_TYPE:'application',ADAPTER_APPLICATION_STORY_FIELD:'stories',ADAPTER_RELEASE_NODE_NAME:'金丝雀发布'};
+  const options={ADAPTER_VERSION_FIELD:'normal',ADAPTER_CANARY_VERSION_FIELD:'canary',ADAPTER_CANARY_FLAG_FIELD:'flag',ADAPTER_STORY_RELATION_FIELD:'stories',ADAPTER_APPLICATION_TYPE:'application',ADAPTER_APPLICATION_STORY_FIELD:'关联需求',ADAPTER_RELEASE_NODE_NAME:'金丝雀发布'};
   const registry={schemaVersion:1,generatedAt:null,tasks:[]};
   const result=await enrichRegistryItems(client,options,new Map([['1',issue]]),registry);
   assert.equal(result.partial,false);assert.equal(result.contexts.get('1')?.release?.source,'linked_story');
   assert.equal(result.contexts.get('1')?.release?.versionId,'3');
   assert.equal(result.contexts.get('2')?.applications?.[0].reconciliationRequired,true);
   assert.equal(result.contexts.get('1')?.applications?.[0].workItemId,'4');
+  assert.equal(result.contexts.get('1')?.applications?.[0].source,'native_relation');
+  assert.equal(applicationDefinitionReads,2);
   assert.deepEqual(calls,['story:2','version:3','application:4']);
 });
 

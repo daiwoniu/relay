@@ -84,6 +84,27 @@ test('candidate reads preserve project/session response contracts and offset pag
   } finally { await p.cleanup(); }
 });
 
+test('session ID pagination remains stable when a later row receives new activity and keeps actor scope', async () => {
+  const p = await prepared();
+  try {
+    const later = '44444444-4444-4444-8444-444444444444';
+    p.f.mutate(`INSERT INTO sessions(id,owner_user_id,project_id,status,updated_at)
+      VALUES('${later}','owner','${project}','idle',5)`);
+    const getIds = async (url: string, actor?: string) => {
+      const response = await p.get(url, actor);
+      assert.equal(response.status, 200);
+      return (await response.json() as Array<{ id: string }>).map(({ id }) => id);
+    };
+    assert.deepEqual(await getIds('/api/sessions?limit=1&afterId='), [session]);
+    p.f.mutate(`UPDATE sessions SET updated_at=20 WHERE id='${later}'`);
+    assert.deepEqual(await getIds(`/api/sessions?limit=1&afterId=${session}`), [later]);
+    assert.deepEqual(await getIds('/api/sessions?limit=1&offset=0'), [later]);
+    assert.deepEqual(await getIds('/api/sessions?afterId=', 'other'), []);
+    assert.deepEqual(await getIds(`/api/sessions?afterId=&scope=all&projectId=${project}`, 'admin'), [session, later]);
+    assert.equal((await p.get('/api/sessions?afterId=&offset=0')).status, 400);
+  } finally { await p.cleanup(); }
+});
+
 test('deletion previews preserve owner/admin authorization and count live archived sessions through the Worker', async () => {
   const p=await prepared();try{
     const sessionUrl=`/api/sessions/${session}/deletion-impact`,projectUrl=`/api/projects/${project}/deletion-impact`;
@@ -195,6 +216,27 @@ test('native search routes preserve literal/attachment/process/operation matchin
     assert.equal((await p.get(`${path}&includeOperations=1`, 'other')).status, 200);
     p.f.mutate(`UPDATE projects SET deleted_at=1 WHERE id='${project}'`);
     assert.deepEqual((await (await p.get('/api/sessions/search?q=synthetic', 'admin')).json() as any).results, []);
+  } finally { await p.cleanup(); }
+});
+
+test('session search applies the selected owner before ranking and limiting results', async () => {
+  const p = await prepared();
+  try {
+    const newer = '44444444-4444-4444-8444-444444444444';
+    p.f.mutate(`INSERT INTO sessions(id,owner_user_id,project_id,status,title,updated_at)
+      VALUES('${newer}','other','${project}','idle','synthetic search hit',20)`);
+    const searchIds = async (path: string, actor: string) => {
+      const response = await p.get(path, actor);
+      assert.equal(response.status, 200);
+      return (await response.json() as { results: Array<{ session: { id: string } }> }).results.map(({ session }) => session.id);
+    };
+    const path = '/api/sessions/search?q=synthetic&limit=1';
+    assert.deepEqual(await searchIds(path, 'admin'), [newer]);
+    assert.deepEqual(await searchIds(`${path}&ownerUserId=owner`, 'admin'), [session]);
+    assert.deepEqual(await searchIds(`${path}&ownerUserId=other`, 'admin'), [newer]);
+    assert.deepEqual(await searchIds(`${path}&ownerUserId=owner`, 'owner'), [session]);
+    assert.equal((await p.get(`${path}&ownerUserId=owner`, 'other')).status, 404);
+    assert.equal((await p.get(`${path}&ownerUserId=`, 'admin')).status, 400);
   } finally { await p.cleanup(); }
 });
 

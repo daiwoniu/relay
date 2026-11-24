@@ -42,6 +42,7 @@ function harness(t, { cached = null, fetch = async () => ready } = {}) {
   new Function('require', 'module', 'exports', '__RELAY_VERSION__', compiled)(name => {
     if (name === 'react') return hooks;
     if (name === 'react/jsx-runtime') return jsx;
+    if (name === '../../analytics/features') return { useFeatureView() {}, featureAction: (...args) => calls.push(['analytics', ...args]), localAction: () => () => {} };
     if (name === '../../api/codex-account') return { getCodexAccount() { calls.push(['fetch']); return fetch(); } };
     if (name === '../workspace-console/workspace-console-cache') return cache;
     if (name === '../workspace-console/workspace-persistent-snapshot') return { snapshotNotice: () => 'snapshot notice' };
@@ -50,8 +51,7 @@ function harness(t, { cached = null, fetch = async () => ready } = {}) {
   }, module, module.exports, 'test');
   const render = (nextUser = currentUser) => {
     currentUser = nextUser; cursor = 0;
-    return module.exports.default({ user: currentUser, anchorRect: null, mobile: false, showServiceMaintenance: false,
-      engineSummary: null, onClose() {}, onAnchorChange() {} });
+    return module.exports.default({ user: currentUser, anchorRect: null, mobile: false, onClose() {}, onAnchorChange() {} });
   };
   const flush = () => { for (const effect of effects.splice(0)) effect(); };
   t.after(() => {
@@ -70,6 +70,36 @@ function nodes(tree, predicate) {
 }
 const quotaNodes = tree => nodes(tree, node => node.props?.['aria-label'] === 'Codex 剩余额度'
   || node.props?.['aria-label'] === 'Codex 额度更新失败，查看提醒' || node.props?.label === 'Codex 额度提醒');
+
+test('只有管理员显示管理中心和全部账号回收站范围', t => {
+  const h = harness(t);
+  const byText = (tree, label) => nodes(tree, node => node.props?.children === label);
+  assert.equal(byText(h.render(user('member')), '管理中心').length, 0);
+  assert.equal(byText(h.render(user('member')), '全部账号').length, 0);
+  const administrator = h.render(user('admin'));
+  assert.equal(byText(administrator, '管理中心').length, 1);
+  assert.equal(byText(administrator, '全部账号').length, 1);
+  assert.equal(byText(administrator, '飞书管理').length, 0);
+});
+
+test('账号菜单方向键循环且支持 Home 和 End', t => {
+  const h = harness(t);
+  const [menu] = nodes(h.render(user('member')), node => node.props?.role === 'menu');
+  const items = menu.props.children.flatMap(region => nodes(region, node => node.props?.role === 'menuitem'))
+    .map(() => ({ focus() { document.activeElement = this; } }));
+  const currentTarget = { querySelectorAll: () => items };
+  function press(key, expected) {
+    let prevented = false;
+    menu.props.onKeyDown({ key, currentTarget, preventDefault() { prevented = true; } });
+    assert.equal(document.activeElement, items[expected]);
+    assert.equal(prevented, true);
+  }
+  items[0].focus();
+  press('ArrowUp', items.length - 1);
+  press('ArrowDown', 0);
+  press('End', items.length - 1);
+  press('Home', 0);
+});
 
 test('普通用户和未登录状态不读取缓存、不请求额度、不设置轮询且不显示额度警告', async t => {
   const h = harness(t, { cached: ready });

@@ -2,6 +2,7 @@ import type { SQLiteDB } from '../db/index.js';
 import { MoveSidebarOrderRequestSchema,SidebarOrderDtoSchema,type SidebarOrderScope,type SidebarOrderItemDto } from '../contracts/index.js';
 import { getDefaultSidebarOrder,listSidebarOrderScopes,reconcileSidebarOrder,moveSidebarOrderItem } from '../sidebar-order/model.js';
 import { StorageContractError } from './command-boundary.js';
+import { feishuExecutionActorPattern } from '../integrations/feishu-im/native-session-scope.js';
 
 type DB=Pick<SQLiteDB,'all'|'get'|'run'>;
 type Actor={id:string;role:string};
@@ -12,7 +13,8 @@ function snapshot(db:DB,actor:Actor){
   // Preserve existing per-account ordering visibility, including the administrator's all-resource view.
   const projects=db.all(`SELECT id,created_at,updated_at,pinned,pinned_at,is_system FROM projects WHERE deleted_at IS NULL AND (?=1 OR owner_user_id=?) LIMIT 501`,[Number(actor.role==='admin'),actor.id]);
   const sessions=db.all(`SELECT s.id,s.created_at,s.updated_at,s.pinned,s.pinned_at,s.archived,s.project_id FROM sessions s JOIN projects p ON p.id=s.project_id
-    WHERE s.deleted_at IS NULL AND p.deleted_at IS NULL AND (?=1 OR s.owner_user_id=?) LIMIT 10001`,[Number(actor.role==='admin'),actor.id]);
+    WHERE s.deleted_at IS NULL AND p.deleted_at IS NULL AND s.owner_user_id NOT GLOB ? AND (?=1 OR s.owner_user_id=?) LIMIT 10001`,
+    [feishuExecutionActorPattern,Number(actor.role==='admin'),actor.id]);
   if(projects.length>500||sessions.length>10000)throw new StorageContractError('PAYLOAD_TOO_LARGE');
   return {projects:projects as any[],sessions:sessions as any[]};
 }

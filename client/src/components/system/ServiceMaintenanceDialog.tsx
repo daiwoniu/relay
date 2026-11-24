@@ -18,12 +18,14 @@ import SystemResourceStatus from './SystemResourceStatus';
 import FailureNotice from '../ui/FailureNotice';
 
 interface ServiceMaintenanceDialogViewProps {
+  mobile?: boolean;
   open: boolean;
   onClose: () => void;
   controller: ServiceMaintenanceController;
 }
 
 interface ServiceMaintenanceDialogContainerProps {
+  mobile?: boolean;
   open: boolean;
   onClose: () => void;
   context?: 'manual' | 'protocol_mismatch';
@@ -193,8 +195,8 @@ function confirmationPresentation(controller: ServiceMaintenanceController, acti
   };
 }
 
-export function ServiceMaintenanceDialog({ open, onClose, controller }: ServiceMaintenanceDialogViewProps) {
-  useFeatureView('maintenance',open,'user_menu');
+export function ServiceMaintenanceDialog({ open, onClose, controller, mobile }: ServiceMaintenanceDialogViewProps) {
+  useFeatureView('maintenance',open,'user_menu','open_service');
   const capabilities = controller.capabilities;
   const recommendedAction = controller.policy.recommendedAction;
   const recommendedState = recommendedAction ? controller.policy.actions[recommendedAction] : null;
@@ -270,6 +272,7 @@ export function ServiceMaintenanceDialog({ open, onClose, controller }: ServiceM
   return (
     <>
       <PanelShell
+        mobile={mobile}
         open={open}
         onClose={() => { if (!controller.submitting) onClose(); }}
         closeDisabled={controller.submitting}
@@ -414,6 +417,7 @@ export default function ServiceMaintenanceDialogContainer({
   context = 'manual',
   mismatch = null,
   onReconnect,
+  mobile,
 }: ServiceMaintenanceDialogContainerProps) {
   const { user } = useAuth();
   const controller = useServiceMaintenance({
@@ -423,5 +427,5 @@ export default function ServiceMaintenanceDialogContainer({
     enabled: open,
     onReconnect,
   });
-  return <ServiceMaintenanceDialog open={open} onClose={onClose} controller={controller} />;
+  return <ServiceMaintenanceDialog mobile={mobile} open={open} onClose={onClose} controller={controller} />;
 }

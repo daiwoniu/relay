@@ -1,4 +1,4 @@
-import { FeishuProjectClient, FeishuApiError, numericId, object, rows, type Row, type FlowRoleDefinition } from './client.js';
+import { createFieldDefinitionReader, FeishuProjectClient, FeishuApiError, numericId, object, rows, type Row, type FlowRoleDefinition } from './client.js';
 
 export type Phase = 'current' | 'upcoming' | 'completed' | 'unknown';
 export type Actionability = 'current' | 'state_responsibility' | 'upcoming' | 'noncurrent' | 'archived' | 'unverified';
@@ -34,10 +34,24 @@ function roleEvidence(item: Row, user: string, extraRoles: readonly string[] = [
   const roleOwners = [...new Set(roles.filter(role => !excluded.has(role.role) && responsibilityRoles.has(role.role)).flatMap(role => owners(role.owners ?? [])))];
   const myRoles = roles.filter(role => !excluded.has(role.role) && responsibilityRoles.has(role.role) && owners(role.owners ?? []).includes(user)).map(role => String(role.role));
   const participatingRoleKeys = [...new Set(roles.filter(role => !excluded.has(role.role) && owners(role.owners ?? []).includes(user)).map(role => String(role.role)))];
-  return { roleField, roles, roleOwners, myRoles, participatingRoleKeys, unmapped: participatingRoleKeys.some(key => !responsibilityRoles.has(key)) };
+  return { roleField, roles, roleOwners, myRoles, participatingRoleKeys, unmappedRoleIds: participatingRoleKeys.filter(key => !responsibilityRoles.has(key)) };
 }
-export const needsFlowRoleDefinitions = (item: Row, user: string): boolean => roleEvidence(item, user).unmapped;
 export type ResponsibilityRoleResolver = (type: string, definitions: FlowRoleDefinition[]) => readonly string[];
+
+export function createRoleDefinitionReader(client: FeishuProjectClient) {
+  const checkedByType = new Map<string, { checked: Set<string>; definitions: FlowRoleDefinition[] }>();
+  return async (type: string, items: Row[]): Promise<FlowRoleDefinition[]> => {
+    const expected = [...new Set(items.flatMap(item => roleEvidence(item, client.config.userKey).unmappedRoleIds))];
+    const current = checkedByType.get(type) ?? { checked: new Set<string>(), definitions: [] };
+    if (expected.some(id => !current.checked.has(id))) {
+      current.definitions = await client.flowRoles(type, expected).catch(() => current.definitions);
+      for (const id of expected) current.checked.add(id);
+      for (const role of current.definitions) current.checked.add(role.id);
+      checkedByType.set(type, current);
+    }
+    return current.definitions;
+  };
+}
 /** Extra role labels do not invalidate a classification already established by native evidence. */
 function hasNativeClassification(fact: Pick<FeishuFact, 'actionability' | 'flowFinished'>): boolean {
   return ['current', 'upcoming', 'state_responsibility', 'archived'].includes(fact.actionability) || fact.flowFinished === true;
@@ -53,9 +67,16 @@ function resolveRoleDefinitions(fact: FeishuFact, definitions: FlowRoleDefinitio
   const namedRoles = new Set(definitions.map(role => role.id));
   const unresolved = (fact.participatingRoleKeys ?? []).filter(key => !fact.myRoles.includes(key));
   if (!unresolved.length || !unresolved.every(key => namedRoles.has(key))) return fact;
-  // A known label does not establish an action; preserve unresolved responsibility separately.
-  if (hasNativeClassification(fact)) fact.reasons.splice(index, 1);
-  else fact.reasons[index] = 'unverified_role_responsibility';
+  if (hasNativeClassification(fact)) {
+    fact.reasons.splice(index, 1);
+  } else if (fact.reasons.length === 1 && fact.myNodes.length
+    && fact.myNodes.every(node => node.phase === 'completed') && fact.mySubtasks.every(task => task.passed)) {
+    // A workflow may still be open for other people after all of my assigned work is complete.
+    fact.actionability = 'noncurrent';
+    fact.reasons.splice(index, 1);
+  } else {
+    fact.reasons[index] = 'unverified_role_responsibility';
+  }
   return fact;
 }
 export function timestamp(value: unknown): string | null {
@@ -71,12 +92,12 @@ export function projectResponsibility(item: Row, subtasks: Row[], client: Feishu
   if (item.project_key !== client.config.projectKey || !type) throw new Error('飞书工作项身份不匹配');
   const status = object(item.work_item_status ?? {}), stateBased = item.pattern === 'State' || type === 'issue';
   const baseOwner = field(item, 'owner'), operator = field(item, type === 'issue' ? 'issue_operator' : 'owner');
-  const { roleField, roles, roleOwners, myRoles, participatingRoleKeys, unmapped } = roleEvidence(item, user, extraRoles);
+  const { roleField, roles, roleOwners, myRoles, participatingRoleKeys, unmappedRoleIds } = roleEvidence(item, user, extraRoles);
   const operatorValues = operator == null ? [] : Array.isArray(operator) ? operator : [operator];
   if (operatorValues.some(value => typeof value !== 'string' && !(typeof value === 'number' && Number.isSafeInteger(value)))) throw new Error('飞书责任字段无效');
   const operatorIsMe = operatorValues.map(String).includes(user), baseOwnerIsMe = String(baseOwner ?? '') === user;
   const reasons: string[] = [];
-  if (unmapped) reasons.push('unmapped_role');
+  if (unmappedRoleIds.length) reasons.push('unmapped_role');
   if (roleField == null || operator === undefined) reasons.push('missing_responsibility_fields');
   const nodes = stateBased ? [] : rows(object(item.workflow_infos ?? {}).workflow_nodes ?? []);
   if (!stateBased && !nodes.length) reasons.push('unknown_workflow');
@@ -141,10 +162,23 @@ export class FeishuResponsibilityService {
   constructor(readonly client: FeishuProjectClient, private readonly now: () => number = Date.now,
     private readonly resolveResponsibilityRoles: ResponsibilityRoleResolver = () => [], private readonly storyRelationField?: string) {}
   async load(): Promise<FeishuResponsibility> {
-    const catalog = await this.client.catalog(), types = catalog.map(row => String(row.type_key)).filter(type => type !== 'sub_task');
-    if (!types.length || new Set(types).size !== types.length) throw new Error('飞书可用类型目录无效');
-    const [candidates, subtasks, space] = await Promise.all([this.client.candidates(types), this.client.subtaskCandidates(), this.client.space()]);
+    const catalogRequest = this.client.catalog();
+    const candidatesRequest = catalogRequest.then(catalog => {
+      const types = catalog.map(row => String(row.type_key)).filter(type => type !== 'sub_task');
+      if (!types.length || new Set(types).size !== types.length) throw new Error('飞书可用类型目录无效');
+      return this.client.candidates(types).then(candidates => ({ candidates, types }));
+    });
+    const [catalog, { candidates, types }, subtasks, space] = await Promise.all([
+      catalogRequest, candidatesRequest, this.client.subtaskCandidates(), this.client.space(),
+    ]);
     const byId = new Map(candidates.map(item => [numericId(item.id), item]));
+    const subtasksByParent = new Map<string, Row[]>();
+    for (const row of subtasks) {
+      const parentId = String(row.work_item_id);
+      const children = subtasksByParent.get(parentId) ?? [];
+      children.push(row);
+      subtasksByParent.set(parentId, children);
+    }
     const requiredParents = [...new Set(subtasks.filter(row => !row.sub_task.passed).map(row => numericId(row.work_item_id)))];
     const missing = requiredParents.filter(id => !byId.has(id));
     for (let offset = 0; offset < missing.length; offset += 50) {
@@ -157,40 +191,30 @@ export class FeishuResponsibilityService {
       const list = groups.get(row.work_item_type_key) ?? []; list.push(id); groups.set(row.work_item_type_key, list);
     }
     const facts: FeishuFact[] = [];
-    const contactMetadata = new Map<string, Promise<Row[]>>();
-    const roleMetadata = new Map<string, FlowRoleDefinition[]>();
+    const fieldDefinitions = createFieldDefinitionReader(this.client, type => type === 'issue' ? this.storyRelationField : undefined);
+    const readRoles = createRoleDefinitionReader(this.client);
     let relationComplete = true;
     for (const [type, ids] of groups) for (let offset = 0; offset < ids.length; offset += 50) {
       const details = await this.client.details(type, ids.slice(offset, offset + 50));
-      if (details.some(item => needsFlowRoleDefinitions(item, this.client.config.userKey)) && !roleMetadata.has(type)) {
-        roleMetadata.set(type, await this.client.flowRoles(type).catch(() => []));
-      }
-      const definitions = roleMetadata.get(type) ?? [];
+      const definitions = await readRoles(type, details);
       const extraRoles = this.resolveResponsibilityRoles(type, definitions);
       for (const detail of details) {
-        const id = numericId(detail.id), item = { ...byId.get(id), ...detail, work_item_type_key: type };
-        const fact = projectResponsibility(item, subtasks.filter(row => String(row.work_item_id) === id), this.client, catalog, space, definitions, extraRoles);
+        const id = numericId(detail.id);
+        const item: Row = { ...byId.get(id), ...detail, work_item_type_key: type };
+        const fact = projectResponsibility(item, subtasksByParent.get(id) ?? [], this.client, catalog, space, definitions, extraRoles);
         if (type==='issue' && this.storyRelationField) {
           try {
-            let metadata=contactMetadata.get(type);
-            if(!metadata){metadata=this.client.metadata(type);contactMetadata.set(type,metadata);}
-            const matches=(await metadata).filter(row=>row.field_name===this.storyRelationField);
-            if(matches.length!==1||typeof matches[0].field_key!=='string')throw new Error('关联需求字段未核实');
-            const ids=linkedWorkItemIds(item,matches[0].field_key);
+            const definition = await fieldDefinitions.find(type, this.storyRelationField, rows(item.fields ?? []));
+            if (!definition) throw new Error('关联需求字段未核实');
+            const ids=linkedWorkItemIds(item,definition.field_key);
             if(ids===null)throw new Error('关联需求字段未返回');
             fact.linkedStoryIds=ids;
           } catch { relationComplete=false; }
         }
         if (fact.actionability === 'state_responsibility') {
-          const stateFlow = await this.client.stateFlow(type, id);
-          const names = rows(stateFlow.state_flow_nodes).filter(node => node.id === fact.stateKey && typeof node.name === 'string' && node.name.trim());
-          if (names.length !== 1) throw new Error('飞书状态名称无法唯一核实');
-          fact.statusName = names[0].name.trim();
           if (fact.fallbackContact?.role !== 'reporter') {
             try {
-              let metadata = contactMetadata.get(type);
-              if (!metadata) { metadata = this.client.metadata(type); contactMetadata.set(type, metadata); }
-              const fields = await metadata;
+              const fields = await fieldDefinitions.list(type);
               for (const [label, role] of [['报告人', 'reporter'], ['创建人', 'creator']] as const) {
                 const matches = fields.filter(row => row.field_name === label);
                 if (matches.length !== 1) continue;
@@ -205,8 +229,22 @@ export class FeishuResponsibilityService {
       }
     }
     for (const parent of requiredParents) if (!facts.some(fact => fact.id === parent && fact.mySubtasks.some(task => !task.passed))) throw new Error('飞书未完成子任务无法核实父项');
-    if(catalog.some(row=>row.type_key==='sub_task'))await hydrateSubtaskTimes(this.client,facts);
-    await hydrateFactNames(this.client, facts);
+    const stateFacts = facts.filter(fact => fact.actionability === 'state_responsibility');
+    const hydrateStatusNames = async () => {
+      for (let offset = 0; offset < stateFacts.length; offset += 3) {
+        await Promise.all(stateFacts.slice(offset, offset + 3).map(async fact => {
+          const stateFlow = await this.client.stateFlow(fact.type, fact.id);
+          const names = rows(stateFlow.state_flow_nodes).filter(node => node.id === fact.stateKey && typeof node.name === 'string' && node.name.trim());
+          if (names.length !== 1) throw new Error('飞书状态名称无法唯一核实');
+          fact.statusName = names[0].name.trim();
+        }));
+      }
+    };
+    await Promise.all([
+      hydrateStatusNames().then(() => hydrateFactNames(this.client, facts)),
+      catalog.some(row => row.type_key === 'sub_task') ? hydrateSubtaskTimes(this.client, facts) : undefined,
+    ]);
+    this.client.warmDefinitions(groups.keys());
     const fetchedAt = this.now();
     return { generatedAt: new Date(fetchedAt).toISOString(), fetchedAt, retrievalComplete: true,
       classificationComplete: facts.every(fact => !hasUnverifiedResponsibility(fact)), relationCoverage: this.storyRelationField ? relationComplete?'complete':'partial' : 'not_queried', facts };

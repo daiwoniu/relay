@@ -168,10 +168,6 @@
   background: linear-gradient(115deg, var(--wb-hero-start) 0%, var(--wb-hero-mid) 55%, var(--wb-hero-end) 100%);
 }
 
-.workspace-workbench .workspace-workbench__refresh-banner {
-  color: var(--wb-text);
-}
-
 .workspace-workbench__hero-art {
   display: none;
   position: absolute;
@@ -211,10 +207,45 @@
 .workspace-workbench__header-meta { grid-area: meta; order: 1; flex: 1 1 16rem; min-width: 0; }
 .workspace-workbench__header-counts { display: flex; flex-wrap: wrap; gap: .25rem 1rem; }
 .workspace-workbench__header-counts > span { white-space: nowrap; }
-.workspace-workbench__source-times { display: flex; flex-wrap: wrap; align-items: flex-start; gap: .75rem 2rem; margin-top: .75rem; }
+.workspace-workbench__source-times { display: grid; grid-template-columns: repeat(2, minmax(0, 19rem)); align-items: start; gap: .75rem; margin-top: .75rem; }
 .workspace-workbench__source-time { display: grid; grid-template-columns: max-content minmax(0, 1fr); align-items: baseline; gap: .75rem; min-width: 0; max-width: 100%; }
-.workspace-workbench__source-time dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: .25rem .5rem; min-width: 0; margin: 0; }
+.workspace-workbench__source-time dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); align-items: center; gap: .25rem .5rem; min-width: 0; margin: 0; }
 .workspace-workbench__source-time dd { min-width: 0; margin: 0; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.workspace-workbench__source-refresh-row {
+  display: grid;
+  grid-template-columns: minmax(0, max-content) minmax(6.75rem, 1fr);
+  min-block-size: 1.5rem;
+  align-items: center;
+  column-gap: .25rem;
+}
+.workspace-workbench__source-refresh-status {
+  display: inline-flex;
+  justify-self: start;
+  align-items: center;
+  gap: .25rem;
+  padding-inline-start: .25rem;
+  border-radius: .375rem;
+  white-space: nowrap;
+}
+.workspace-workbench__source-refresh-status:is(:hover, :focus-within) {
+  color: var(--wb-text);
+  background: var(--wb-accent-soft);
+  box-shadow: inset 0 0 0 1px var(--wb-accent-border);
+}
+.workspace-workbench__source-refresh-status:is(:hover, :focus-within) > svg { filter: brightness(1.2); }
+.workspace-workbench__source-refresh-close {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  border-radius: inherit;
+  color: inherit;
+  opacity: .65;
+  cursor: pointer;
+}
+.workspace-workbench__source-refresh-status:is(:hover, :focus-within) .workspace-workbench__source-refresh-close { opacity: 1; }
+.workspace-workbench__source-refresh-close:focus-visible { outline: 2px solid var(--wb-accent); outline-offset: -2px; }
 
 .workspace-workbench__theme-trigger {
   display: inline-flex;
@@ -232,7 +263,8 @@
   display: block;
   flex-shrink: 0;
 }
-.workspace-workbench__theme-picker[open] > summary .workspace-workbench__theme-chevron {
+.workspace-workbench__theme-picker[open] > summary .workspace-workbench__theme-chevron,
+.workspace-workbench__refresh-trigger[aria-expanded='true'] .workspace-workbench__theme-chevron {
   transform: rotate(180deg);
 }
 .workspace-workbench__theme-menu {
@@ -299,7 +331,7 @@
   .workspace-workbench__header-toolbar .workspace-workbench__theme-menu { right: 0; left: auto; max-width: min(100%, calc(100vw - 4rem)); }
   .workspace-workbench__header-meta { margin-top: .25rem; border-top: 1px solid var(--wb-border); padding-top: .75rem; }
   .workspace-workbench__header-counts { gap: .25rem .75rem; }
-  .workspace-workbench__source-times { flex-direction: column; }
+  .workspace-workbench__source-times { grid-template-columns: minmax(0, 1fr); }
 }
 
 @media (max-width: 639px) {
@@ -650,10 +682,10 @@
   font-weight: 400;
   box-shadow: none;
 }
-.workspace-workbench .workspace-workbench__refresh-trigger.workspace-workbench__theme-trigger:hover:not([aria-disabled='true']) {
+.workspace-workbench .workspace-workbench__refresh-trigger.workspace-workbench__theme-trigger:hover:enabled {
   background: var(--wb-accent-soft);
 }
-.workspace-workbench .workspace-workbench__refresh-trigger.workspace-workbench__theme-trigger[aria-disabled='true']:hover {
+.workspace-workbench .workspace-workbench__refresh-trigger.workspace-workbench__theme-trigger:disabled:hover {
   background: transparent;
   box-shadow: none;
 }

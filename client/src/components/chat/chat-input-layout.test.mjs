@@ -1,20 +1,35 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
-import { hasMultipleVisualLines } from './chat-input-layout.ts';
+import { getVisualLineCount } from './chat-input-layout.ts';
 
 const read = (name) => readFile(new URL(name, import.meta.url), 'utf8');
 
 test('单行高度不显示清空按钮', () => {
-  assert.equal(hasMultipleVisualLines(36, 20, 8, 8), false);
+  assert.equal(getVisualLineCount(36, 20, 8, 8), 1);
 });
 
 test('自动换行或手动换行后显示清空按钮', () => {
-  assert.equal(hasMultipleVisualLines(56, 20, 8, 8), true);
+  assert.equal(getVisualLineCount(56, 20, 8, 8), 2);
 });
 
 test('浏览器无法解析行高时使用稳定的默认行高', () => {
-  assert.equal(hasMultipleVisualLines(57, Number.NaN, 8, 8), true);
+  assert.equal(getVisualLineCount(57, Number.NaN, 8, 8), 2);
+});
+
+test('放大按钮从第四行开始显示，容许 scrollHeight 取整', () => {
+  assert.equal(getVisualLineCount(77, 20.25, 8, 8), 3);
+  assert.equal(getVisualLineCount(97, 20.25, 8, 8), 4);
+});
+
+test('聊天和便签共用右上左下双箭头放大与还原图标', async () => {
+  const [chat, notes, icon] = await Promise.all([
+    read('./ChatInput.tsx'), read('./LocalNotesControl.tsx'), read('../ui/ExpandCornersIcon.tsx'),
+  ]);
+  assert.match(chat, /<ExpandCornersIcon expanded=\{expanded\} variant="diagonal"/);
+  assert.match(notes, /<ExpandCornersIcon expanded=\{editorExpanded\} variant="diagonal"/);
+  assert.match(icon, /expand: 'M9\.25 6\.75 13\.5 2\.5[^']*M6\.75 9\.25 2\.5 13\.5/);
+  assert.match(icon, /collapse: 'M13\.5 2\.5 9\.25 6\.75[^']*M2\.5 13\.5 6\.75 9\.25/);
 });
 
 test('输入框元信息保持项目到上下文的单行顺序与压缩优先级', async () => {

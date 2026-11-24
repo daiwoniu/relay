@@ -59,6 +59,7 @@ test('速度仅随声明 Fast 档位的模型显示，换到普通模型会回�
 test('Ultrafast 与后续目录档位可显示和保留，切换到不支持的模型才清空', () => {
   const sol = { ...models[0], defaultServiceTier: 'ultrafast', serviceTiers: [
     { id: 'priority', label: 'Fast' }, { id: 'ultrafast', label: 'Ultrafast' }, { id: 'future', label: 'Future tier' },
+    { id: 'ultrafast', label: '重复档位' }, { id: 'default', label: '默认' },
   ] };
   assert.deepEqual(getServiceTierChoices(sol), [
     { id: 'default', label: '标准（default）' }, { id: 'priority', label: '快速（priority）' },

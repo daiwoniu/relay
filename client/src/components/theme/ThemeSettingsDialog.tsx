@@ -177,13 +177,13 @@ const ThemeSettingsDialog = forwardRef<ThemeSettingsDialogHandle, ThemeSettingsD
   }), [discardChanges, setPreviewMinimized, theme.loading, theme.saving, uploading]);
 
   useEffect(() => {
-    if (!open || !minimized) return;
+    if (!open || !minimized || embedded) return;
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') closeAndRollback();
     };
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [closeAndRollback, minimized, open]);
+  }, [closeAndRollback, embedded, minimized, open]);
 
   const loadLatestSettings = () => {
     deleteAssets(pendingAssetIdsRef.current);
@@ -285,14 +285,14 @@ const ThemeSettingsDialog = forwardRef<ThemeSettingsDialogHandle, ThemeSettingsD
       {remoteConflict && <div role="alert" className="mt-4 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[var(--color-status-warning)]/35 bg-[var(--color-warning-hover)] px-3 py-2 text-xs text-[var(--color-text-secondary)]"><span>其他设备已更新主题，请先加载最新设置再继续编辑。</span><button type="button" className={secondaryFormButtonClassName} onClick={loadLatestSettings}>加载最新设置</button></div>}
     </div>
 
-      <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[var(--color-border)] px-4 py-3 sm:px-5"><Tooltip coexist content="将明暗模式恢复为跟随系统、色彩风格恢复为中性、内容字号恢复为标准，清除桌面和移动端的背景与面板效果，并恢复两端同步；当前只更新预览草稿，保存后才会生效。"><button type="button" className={secondaryFormButtonClassName} disabled={theme.loading} onClick={() => updateDraft(() => createDefaultThemeSettings())}>恢复默认</button></Tooltip><div className={formActionsClassName}><button type="button" className={secondaryFormButtonClassName} disabled={theme.saving} onClick={closeAndRollback}>取消</button><button type="button" className={primaryFormButtonClassName} disabled={theme.saving || uploading || theme.loading || remoteConflict} onClick={() => void save()}>{theme.saving ? '保存中…' : '保存主题'}</button></div></div>
+      <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[var(--color-border)] px-4 py-3 sm:px-5"><Tooltip coexist content="将明暗模式恢复为跟随系统、色彩风格恢复为中性、内容字号恢复为标准，清除桌面和移动端的背景与面板效果，并恢复两端同步；当前只更新预览草稿，保存后才会生效。"><button type="button" className={secondaryFormButtonClassName} disabled={theme.loading} onClick={() => updateDraft(() => createDefaultThemeSettings())}>恢复默认</button></Tooltip><div className={formActionsClassName}><button type="button" className={secondaryFormButtonClassName} disabled={theme.saving} onClick={closeAndRollback}>{embedded ? '放弃更改' : '取消'}</button><button type="button" className={primaryFormButtonClassName} disabled={theme.saving || uploading || theme.loading || remoteConflict} onClick={() => void save()}>{theme.saving ? '保存中…' : '保存主题'}</button></div></div>
   </>;
 
   return <>
     {embedded
       ? <div className="theme-surface flex h-full min-h-0 flex-col">{content}</div>
       : <Modal open={open && !minimized} onClose={closeAndRollback} labelledBy="theme-settings-title" contentClassName={contentClass} containerClassName={mobile ? 'items-end p-0' : ''}>{content}</Modal>}
-    <ThemePreviewBar open={open && minimized} mobile={mobile} saving={theme.saving} saveDisabled={theme.loading || remoteConflict} conflict={remoteConflict} onRestore={() => setPreviewMinimized(false)} onSave={() => void save()} onCancel={closeAndRollback} />
+    <ThemePreviewBar open={open && minimized} saving={theme.saving} saveDisabled={theme.loading || remoteConflict} conflict={remoteConflict} onRestore={() => setPreviewMinimized(false)} onSave={() => void save()} onCancel={closeAndRollback} />
   </>;
 });
 

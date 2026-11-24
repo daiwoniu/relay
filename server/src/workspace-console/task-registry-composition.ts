@@ -2,9 +2,9 @@ import { createHash } from 'node:crypto';
 import type { WorkspaceResponsibilitySnapshot, WorkbenchItem } from './responsibility-report-source.js';
 import type { TaskRegistryProjection } from './task-registry-reader.js';
 import { configuredFeishuClient } from '../integrations/feishu/connection.js';
-import { hydrateFactNames, needsFlowRoleDefinitions, projectResponsibility } from '../integrations/feishu/responsibility.js';
+import { createRoleDefinitionReader, hydrateFactNames, projectResponsibility } from '../integrations/feishu/responsibility.js';
 import { projectFeishuSnapshot } from './feishu-source.js';
-import type { FeishuProjectClient, FlowRoleDefinition, Row } from '../integrations/feishu/client.js';
+import type { FeishuProjectClient, Row } from '../integrations/feishu/client.js';
 import { taskRegistryResponsibilityRoles } from './task-registry-adapter.js';
 import { parseFeishuTarget } from './task-reference.js';
 import { enrichRegistryItems } from './task-registry-enrichment.js';
@@ -42,9 +42,11 @@ export class TaskRegistryComposition {
     const merge = (value: WorkspaceResponsibilitySnapshot) => ({ ...source, items: value.items, workbenchItems: value.workbenchItems, localAssociated: value.localAssociated, associationMeta: value.associationMeta, relationCoverage: value.relationCoverage });
     const cached = selectedTaskId ? this.detailCached : this.cached;
     if (cached?.key === key) return merge(cached.value);
+    // A stored report can be composed locally without waiting for an in-flight Feishu lookup.
+    if (source.servedFromCache || source.stale || source.error) return this.project(source, registry, client, selectedTaskId, false);
     const pending = this.pending.get(key); if (pending) return merge(await pending);
     if (this.pending.size >= 16) return isolated('unavailable', '工作台关联查询繁忙，请稍后重试');
-    const value = this.project(source, registry, client, selectedTaskId).then(result => {
+    const value = this.project(source, registry, client, selectedTaskId, true).then(result => {
       if (result.associationMeta?.state === 'complete') {
         if (selectedTaskId) this.detailCached = { key, value: result }; else this.cached = { key, value: result };
       }
@@ -52,7 +54,7 @@ export class TaskRegistryComposition {
     }).catch(() => isolated('unavailable', '台账关联补查失败，飞书原生数据仍可查看')).finally(() => { this.pending.delete(key); });
     this.pending.set(key, value); return merge(await value);
   }
-  private async project(source: WorkspaceResponsibilitySnapshot, registry: TaskRegistryProjection, client: FeishuProjectClient, selectedTaskId?: string): Promise<WorkspaceResponsibilitySnapshot> {
+  private async project(source: WorkspaceResponsibilitySnapshot, registry: TaskRegistryProjection, client: FeishuProjectClient, selectedTaskId: string | undefined, allowRemoteLookup: boolean): Promise<WorkspaceResponsibilitySnapshot> {
     const local = new Map<string, string[]>();
     for (const task of registry.tasks) for (const id of task.feishuWorkItemIds) {
       const tasks = local.get(id) ?? []; if (!tasks.includes(task.id)) tasks.push(task.id); local.set(id, tasks);
@@ -66,12 +68,13 @@ export class TaskRegistryComposition {
     const enrich = Object.values(this.options).some(Boolean);
     const candidates = !selectedTaskId && enrich ? [...new Set([...activeIds, ...parents.keys()])] : activeIds;
     const wanted = candidates.filter(id => !children.has(id) && (!parents.has(id) || enrich));
-    let partial = wanted.length > 1000, supplementFailed = false;
+    const awaitingRefresh = !allowRemoteLookup && wanted.length > 0;
+    let partial = awaitingRefresh || wanted.length > 1000, supplementFailed = false;
     const details = new Map<string, Row>();
     const supplementalFacts: ReturnType<typeof projectResponsibility>[] = [];
-    const roleDefinitions = new Map<string, FlowRoleDefinition[]>();
+    const readRoles = createRoleDefinitionReader(client);
     let catalogRows: Row[] = [], spaceRow: Row | null = null;
-    if (wanted.length) {
+    if (allowRemoteLookup && wanted.length) {
       try {
         const [catalog, space] = await Promise.all([client.catalog(), client.space()]);
         catalogRows=catalog;spaceRow=space;
@@ -89,10 +92,7 @@ export class TaskRegistryComposition {
             for (const [type, ids] of groups) for (const row of await client.details(type, ids)) {
               const id = String(row.id), detail = { ...row, work_item_type_key: type }; details.set(id, detail);
               if (!parents.has(id)) {
-                if (needsFlowRoleDefinitions(detail, client.config.userKey) && !roleDefinitions.has(type)) {
-                  roleDefinitions.set(type, await client.flowRoles(type).catch(() => []));
-                }
-                const definitions = roleDefinitions.get(type) ?? [];
+                const definitions = await readRoles(type, [detail]);
                 supplementalFacts.push(projectResponsibility(detail, [], client, catalog, space, definitions, taskRegistryResponsibilityRoles(type, definitions)));
               }
             }
@@ -117,7 +117,7 @@ export class TaskRegistryComposition {
         }
       }
     }
-    await hydrateFactNames(client, supplementalFacts);
+    if (supplementalFacts.length) await hydrateFactNames(client, supplementalFacts);
     for (const projected of projectFeishuSnapshot({ generatedAt: source.generatedAt, fetchedAt: source.fetchedAt, retrievalComplete: true, classificationComplete: true, relationCoverage: 'not_queried', facts: supplementalFacts }, source.sourceUserKey).workbenchItems) parents.set(projected.workItemId, { ...projected, participated: false });
     const childLocal = (id: string) => children.get(id)?.length === 1 && !parents.has(id) ? local.get(id) ?? [] : [];
     const workbenchItems = [...parents.values()].map(item => ({ ...item, ...enrichment.contexts.get(item.workItemId), localTaskIds: local.get(item.workItemId) ?? [],
@@ -130,10 +130,10 @@ export class TaskRegistryComposition {
         kind: parent ? 'work_item' as const : resolved ? 'subtask' as const : 'unresolved' as const, parentId: resolved?.parent.workItemId ?? null,
         ...(parent?.typeKey ? {typeKey:parent.typeKey} : {}), verified,
         title: parent?.title ?? resolved?.child.title ?? `飞书关联 ${workItemId}`, url: parent?.url ?? resolved?.parent.url ?? null,
-        error: verified ? null : supplementFailed ? '台账关联对象补查失败' : wanted.indexOf(workItemId) >= 1000 ? '本轮超过1000项补查上限，请打开具体交付查看' : '尚未核实为可访问的工作项或唯一子任务' };
+        error: verified ? null : awaitingRefresh && wanted.includes(workItemId) ? '等待下次飞书刷新核实' : supplementFailed ? '台账关联对象补查失败' : wanted.indexOf(workItemId) >= 1000 ? '本轮超过1000项补查上限，请打开具体交付查看' : '尚未核实为可访问的工作项或唯一子任务' };
     });
     return { ...source, items: source.items.map(item => ({ ...item, ...enrichment.contexts.get(item.workItemId), version: enrichment.contexts.get(item.workItemId)?.release?.version ?? item.version, localTaskIds: local.get(item.workItemId) ?? [] })),
       workbenchItems, localAssociated, relationCoverage: source.relationCoverage==='partial' ? 'partial' : [...enrichment.contexts.values()].some(context=>context.linkedStoryIds!==undefined) ? partial ? 'partial' : 'complete' : source.relationCoverage,
-      associationMeta: { state: partial ? 'partial' : 'complete', error: wanted.length > 1000 ? '关联补查仅处理前1000项，其余可打开具体交付查看' : supplementFailed || enrichment.partial ? '部分关联或业务发布信息未核实，可重试' : null, checkedAt: Date.now() } };
+      associationMeta: { state: partial ? 'partial' : 'complete', error: awaitingRefresh ? '部分台账关联将在下次飞书刷新时核实' : wanted.length > 1000 ? '关联补查仅处理前1000项，其余可打开具体交付查看' : supplementFailed || enrichment.partial ? '部分关联或业务发布信息未核实，可重试' : null, checkedAt: awaitingRefresh ? null : Date.now() } };
   }
 }

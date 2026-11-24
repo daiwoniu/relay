@@ -17,7 +17,8 @@ const concurrencySection = fs.readFileSync(new URL('../components/settings/Engin
 const serviceStyles = fs.readFileSync(new URL('../styles/service-status.css', import.meta.url), 'utf8');
 const globalStyles = fs.readFileSync(new URL('../styles/global-base.css', import.meta.url), 'utf8');
 const sidebar = fs.readFileSync(new URL('../components/layout/Sidebar.tsx', import.meta.url), 'utf8');
-const userMenu = fs.readFileSync(new URL('../components/layout/UserMenu.tsx', import.meta.url), 'utf8');
+const administration = fs.readFileSync(new URL('../components/layout/AdministrationCenter.tsx', import.meta.url), 'utf8');
+const selector = fs.readFileSync(new URL('../components/chat/EngineSelector.tsx', import.meta.url), 'utf8');
 test('引擎维护聚焦当前引擎状态且不重复说明 Relay 服务维护', () => {
   assert.doesNotMatch(source, /Relay 服务|Relay 前后端请使用服务维护|前端和后端维护保留/);
   assert.match(source, /presentation\.statusLabel/);
@@ -35,14 +36,12 @@ test('引擎并发归入各自维护面板且不再提供独立菜单入口', ()
   assert.match(concurrencySection, /运行诊断/);
   assert.doesNotMatch(sidebar, /EngineConcurrencyDialog|engineConcurrencyOpen|引擎并发/);
 });
-test('账号菜单使用单一引擎维护入口并展示聚合可用状态', () => {
-  assert.match(userMenu, />引擎维护</);
-  assert.match(userMenu, /onOpenEngineMaintenance\(\)/);
-  assert.match(userMenu, /engineSummary\.engines\.filter/);
-  assert.match(userMenu, /readiness === 'ready'/);
-  assert.doesNotMatch(userMenu, /user-menu__engine-row/);
-  assert.doesNotMatch(userMenu, /onRefreshEngine/);
-  assert.doesNotMatch(userMenu, /user-menu__refresh/);
+test('管理中心提供引擎维护，引擎选择器提供诊断并传递目标引擎', () => {
+  assert.match(administration, /label: '引擎维护', panel: 'engines'/);
+  assert.match(selector, />查看引擎状态</);
+  assert.match(sidebar, /setRequestedMaintenanceEngine\(\{ engineId \}\)[\s\S]*openAdministrationPanel\('engines', false\)/);
+  assert.match(sidebar, /openSidebarPanel\(destination\.id, destination\.open\)/);
+  assert.match(source, /if \(requestedEngine\) setEngineId\(requestedEngine.engineId\)/);
   assert.match(source, /EngineMaintenanceEnginePicker/);
   assert.doesNotMatch(source, /role="tablist"/);
   assert.match(source, /\.find\(\(item\) => item\.engineId === engineId\)/);
@@ -79,7 +78,7 @@ test('运行容量去除重复调度块并为移动端提供步进控件', () =>
 
 test('引擎维护标题区与服务维护保持紧凑密度', () => {
   assert.match(source, /SessionEngineBadge engine=\{engineId\}/);
-  assert.match(source, /title=\{`\$\{engine\?\.label \|\| engineId\} 维护`\}/);
+  assert.match(source, /title=\{`\$\{engine\?\.label \|\| engineId\} \$\{admin \? '维护' : '状态'\}`\}/);
   assert.match(source, /description=\{<span/);
   assert.match(source, /closeDisabled=\{interactionLocked\}/);
   assert.doesNotMatch(source, /engine-maintenance-header/);
@@ -114,7 +113,7 @@ test('引擎维护停滞时展示长时间无进展提示与继续等待、中�
 
 test('引擎维护临时错误只属于当前打开的引擎面板', () => {
   assert.match(source, /if \(!open\) return null/);
-  assert.match(source, /<EngineMaintenanceDialogContent key=\{engineId\} engineId=\{engineId\}/);
+  assert.match(source, /<EngineMaintenanceDialogContent mobile=\{mobile\} requestedEngine=\{requestedEngine\}/);
   assert.match(source, /useEngineMaintenance\(true, engineId\)/);
 });
 

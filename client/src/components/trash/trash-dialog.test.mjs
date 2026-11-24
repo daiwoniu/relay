@@ -7,10 +7,10 @@ const dialog = fs.readFileSync(new URL('TrashDialog.tsx', import.meta.url), 'utf
 const userMenu = fs.readFileSync(new URL('../layout/UserMenu.tsx', import.meta.url), 'utf8');
 const styles = fs.readFileSync(new URL('../../styles/authorization.css', import.meta.url), 'utf8');
 
-test('回收站入口紧跟我的分享且位于个人区分隔线之前', () => {
+test('回收站紧跟我的分享，位于管理员入口之前', () => {
   const shares = userMenu.indexOf('>我的分享</span>');
   const trash = userMenu.indexOf('>回收站</span>');
-  const management = userMenu.indexOf('aria-label="系统管理"');
+  const management = userMenu.indexOf('>管理中心</span>');
   assert.ok(shares >= 0 && trash > shares && management > trash);
 });
 

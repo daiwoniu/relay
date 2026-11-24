@@ -201,6 +201,7 @@ export interface CodexAdapterOptions {
 
 export class CodexAdapter implements EngineAdapter {
   readonly id = 'codex' as const;
+  readonly supportsFeishuIsolation = true;
   readonly descriptor = ENGINE_CATALOG.codex;
   readonly availability;
   readonly diagnostics = {
@@ -243,6 +244,7 @@ export class CodexAdapter implements EngineAdapter {
     const emit = createEngineEventEmitter({ engineId: this.id, emit: options.onEvent });
     const codexOptions: CodexConnectionOptions = {
       cwd: options.cwd,
+      executionScope: options.executionScope,
       threadId: options.externalSessionId,
       onThreadReady: async (id) => { externalSessionId = id; await options.onSessionReady(id); },
       onInputAccepted: options.onInputAccepted,

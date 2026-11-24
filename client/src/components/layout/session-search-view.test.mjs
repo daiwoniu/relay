@@ -5,7 +5,6 @@ import {
   buildHighlightedTextPartsFromRange,
   getFallbackTitleMatches,
   getSearchResultPresentation,
-  getVisibleSearchProjectIds,
   SIDEBAR_SEARCH_DEBOUNCE_MS,
 } from './session-search-view.ts';
 
@@ -29,13 +28,8 @@ test('消息摘要直接使用服务端返回的高亮范围', () => {
   ]);
 });
 
-test('侧栏搜索使用 250ms 防抖并只保留存在匹配会话的项目', () => {
+test('侧栏搜索使用 250ms 防抖', () => {
   assert.equal(SIDEBAR_SEARCH_DEBOUNCE_MS, 250);
-  assert.deepEqual([...getVisibleSearchProjectIds([
-    { session: { project_id: 'project-1' } },
-    { session: { project_id: 'project-2' } },
-    { session: { project_id: 'project-1' } },
-  ])], ['project-1', 'project-2']);
 });
 
 test('标题匹配保持单行，消息匹配显示计数和摘要', () => {

@@ -68,3 +68,25 @@ test('维护输出终态保留最后两行并返回防御性副本', () => {
   snapshot?.lines.push('篡改');
   assert.deepEqual(store.getSnapshot('op-1')?.lines, ['正在验证']);
 });
+
+test('环境修复失败时保留关键诊断，不让通用结束提示覆盖报错', () => {
+  const store = createMaintenanceOutputStore();
+  store.start('typecheck');
+  store.append('typecheck', 'stdout', 'src/upload.test.ts:19:47 - error TS6059: File is not under rootDir\n');
+  store.append('typecheck', 'stderr', '✗ 服务端验证失败：npm run typecheck\n建议：\n- 修复后重新执行 npm run setup\n初始化已终止。\n');
+  store.appendStage('typecheck', 'Relay 环境修复失败');
+  store.finish('typecheck', 'failed');
+  assert.deepEqual(store.getSnapshot('typecheck')?.lines, [
+    'Relay 环境修复失败',
+    'src/upload.test.ts:19:47 - error TS6059: File is not under rootDir',
+  ]);
+
+  store.start('network');
+  store.append('network', 'stderr', 'npm error code ENOTFOUND\nnpm error network request to registry failed\n');
+  store.appendStage('network', 'Relay 环境修复失败');
+  store.finish('network', 'failed');
+  assert.deepEqual(store.getSnapshot('network')?.lines, [
+    'Relay 环境修复失败',
+    'npm error network request to registry failed',
+  ]);
+});

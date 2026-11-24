@@ -9,7 +9,7 @@ const listControlsSource = await readFile(new URL('../ui/ListControls.tsx', impo
 
 test('侧栏搜索接入消息接口、250ms 防抖和失败时标题回退', () => {
   assert.match(sidebarSource, /SIDEBAR_SEARCH_DEBOUNCE_MS/);
-  assert.match(sidebarSource, /searchSessions\(normalizedQuery\)/);
+  assert.match(sidebarSource, /searchSessions\(normalizedQuery, \{ ownerUserId: sidebarOwnerId, signal: controller\.signal \}\)/);
   assert.match(sidebarSource, /searchStatus === 'error' \? fallbackTitleResults : searchResults/);
 });
 
@@ -18,7 +18,7 @@ test('搜索框支持清除按钮和 Escape，新对话会退出搜索', () => {
   assert.match(listControlsSource, /aria-label=\{clearLabel\}/);
   assert.match(listControlsSource, /event\.key === 'Escape'/);
   assert.match(sidebarSource, /const handleNewChat = \(\) => \{\s*clearSearch\(\)/);
-  assert.match(sidebarSource, /const handleProjectNewChat = \(projectId: string, projectSelectionLocked: boolean\) => \{[\s\S]*?clearSearch\(\)/);
+  assert.match(sidebarSource, /const handleProjectNewChat = \(projectId: string\) => \{[\s\S]*?clearSearch\(\)/);
   assert.doesNotMatch(sidebarSource, /const closeMobileSidebar = useCallback\(\(\) => \{[^}]*clearSearch/s);
 });
 
@@ -43,5 +43,7 @@ test('消息接口失败时明确降级为仅标题匹配', () => {
 });
 
 test('搜索期间自动展开匹配分组以确保结果可见', () => {
-  assert.match(sidebarSource, /expanded=\{searchMode \? true/);
+  assert.match(sidebarSource, /const isNavigationGroupExpanded = \(key: string\) => searchMode \|\| isSidebarGroupExpanded\(expandedGroups, key\)/);
+  assert.match(sidebarSource, /expanded=\{isNavigationGroupExpanded\('pinned'\)\}/);
+  assert.match(sidebarSource, /expanded=\{isNavigationGroupExpanded\('projects'\)\}/);
 });

@@ -1,5 +1,6 @@
 import type { FeishuConfig } from './config.js';
 import { feishuReadBatch, memoFeishuRequest, rememberFeishuItem } from './read-batch.js';
+import { definitionSchemas, type FeishuDefinitionCache } from './definition-cache.js';
 
 export type Row = Record<string, any>;
 export interface FlowRoleDefinition { id: string; name: string; isOwner: boolean }
@@ -11,6 +12,38 @@ export const rows = (value: unknown): Row[] => {
   if (!Array.isArray(value)) throw new Error('飞书响应缺少列表');
   return value.map(object);
 };
+function matchFeishuField(fields: Row[], selector: string): Row | undefined {
+  const matches = fields.filter(row => row.field_key === selector || row.field_name === selector);
+  if (matches.length > 1 || matches.length === 1 && typeof matches[0].field_key !== 'string') {
+    throw new Error('飞书字段定义无法唯一匹配');
+  }
+  return matches[0];
+}
+
+export function createFieldDefinitionReader(client: FeishuProjectClient, requiredSelector: (type: string) => string | undefined) {
+  const byType = new Map<string, Promise<Row[]>>();
+  const rechecked = new Set<string>();
+  const list = (type: string) => {
+    let loading = byType.get(type);
+    if (!loading) {
+      loading = client.metadata(type, requiredSelector(type));
+      byType.set(type, loading);
+    }
+    return loading;
+  };
+  const find = async (type: string, selector: string, itemFields?: Row[]) => {
+    const fields = await list(type);
+    const definition = matchFeishuField(fields, selector);
+    if (!definition || !itemFields || itemFields.some(row => row.field_key === definition.field_key)) return definition;
+    const key = JSON.stringify([type, selector]);
+    if (rechecked.has(key)) return matchFeishuField(await list(type), selector);
+    rechecked.add(key);
+    const refreshed = client.metadata(type, selector, itemFields).catch(() => fields);
+    byType.set(type, refreshed);
+    return matchFeishuField(await refreshed, selector);
+  };
+  return { list, find };
+}
 export const numericId = (value: unknown): string => {
   if (typeof value === 'number' && !Number.isSafeInteger(value)) throw new Error('飞书ID超出安全整数范围');
   const id = String(value ?? ''); if (!/^[1-9]\d{0,18}$/.test(id)) throw new Error('飞书ID无效'); return id;
@@ -35,20 +68,29 @@ export class FeishuProjectClient {
   private token: { value: string; until: number } | null = null;
   private tokenPending: Promise<string> | null = null;
   private readonly pending = new Map<string, Promise<Row>>();
-  private queue: Promise<unknown> = Promise.resolve();
+  private startQueue: Promise<void> = Promise.resolve();
+  private readonly inFlight = new Set<Promise<void>>();
   private nextAt = 0;
   constructor(readonly config: FeishuConfig, private readonly transport: typeof fetch = fetch,
-    private readonly now: () => number = Date.now, private readonly intervalMs = 500) {}
+    private readonly now: () => number = Date.now, private readonly intervalMs = 500,
+    private readonly definitions?: FeishuDefinitionCache) {}
 
   private async send(route: string, body?: Row, token?: string): Promise<Row> {
-    const prior = this.queue;
-    let release!: () => void;
-    this.queue = new Promise<void>(resolve => { release = resolve; });
+    const prior = this.startQueue;
+    let allowNextStart!: () => void;
+    this.startQueue = new Promise<void>(resolve => { allowNextStart = resolve; });
     await prior;
+    let finish!: () => void;
+    const completion = new Promise<void>(resolve => { finish = resolve; });
     try {
+      // Preserve request spacing while allowing slow responses to overlap.
+      if (this.inFlight.size >= 3) await Promise.race(this.inFlight);
       const delay = Math.max(0, this.nextAt - this.now());
       if (delay) await new Promise(resolve => setTimeout(resolve, delay));
       this.nextAt = this.now() + this.intervalMs;
+      this.inFlight.add(completion);
+    } finally { allowNextStart(); }
+    try {
       let response: Response;
       try {
         response = await this.transport(`https://project.feishu.cn/open_api/${route}`, {
@@ -69,7 +111,10 @@ export class FeishuProjectClient {
       try { result = object(JSON.parse(Buffer.concat(chunks).toString('utf8'))); } catch { throw new FeishuApiError('response'); }
       if (result.err_code != null && result.err_code !== 0) throw new FeishuApiError('response');
       return result;
-    } finally { release(); }
+    } finally {
+      this.inFlight.delete(completion);
+      finish();
+    }
   }
   private authenticate(): Promise<string> {
     if (this.token && this.token.until > this.now()) return Promise.resolve(this.token.value);
@@ -94,8 +139,18 @@ export class FeishuProjectClient {
     this.pending.set(key, request); return request;
   }
   private get prefix() { return segment(this.config.projectKey); }
-  async catalog(): Promise<Row[]> { return rows((await this.request(`${this.prefix}/work_item/all-types`)).data).filter(row => row.is_disable !== 1); }
-  async space(): Promise<Row> {
+  private readonly definitionsCanStart = () => this.pending.size === 0 && this.inFlight.size === 0;
+
+  catalog(): Promise<Row[]> {
+    const load = async () => rows((await this.request(`${this.prefix}/work_item/all-types`)).data).filter(row => row.is_disable !== 1);
+    return this.definitions?.read('catalog', definitionSchemas.catalog, load, this.definitionsCanStart) ?? load();
+  }
+  space(): Promise<Row> {
+    const load = () => this.loadSpace();
+    return this.definitions?.read('space', definitionSchemas.space, load, this.definitionsCanStart,
+      { key: this.config.projectKey, accepts: value => value.project_key === this.config.projectKey }) ?? load();
+  }
+  private async loadSpace(): Promise<Row> {
     const data = (await this.request('projects/detail', { project_keys: [this.config.projectKey], user_key: this.config.userKey })).data;
     // Project detail uses a project-keyed object; retain array support for older responses.
     if (!Array.isArray(data)) {
@@ -156,8 +211,26 @@ export class FeishuProjectClient {
   }
   async stateFlow(type: string, id: string): Promise<Row> { return object((await this.request(`${this.prefix}/work_item/${segment(type)}/${numericId(id)}/workflow/query`, { flow_type: 1 })).data); }
   async workflow(type: string, id: string): Promise<Row> { return object((await this.request(`${this.prefix}/work_item/${segment(type)}/${numericId(id)}/workflow/query`, { fields: [], flow_type: 0 })).data); }
-  async metadata(type: string): Promise<Row[]> { return rows((await this.request(`${this.prefix}/work_item/${segment(type)}/meta`)).data); }
-  async flowRoles(type: string): Promise<FlowRoleDefinition[]> {
+  metadata(type: string, requiredSelector?: string, itemFields?: Row[]): Promise<Row[]> {
+    const load = () => this.loadMetadata(type);
+    return this.definitions?.read(`fields:${type}`, definitionSchemas.fields, load, this.definitionsCanStart,
+      requiredSelector ? { key: requiredSelector, accepts: fields => {
+        try {
+          const match = matchFeishuField(fields, requiredSelector);
+          return !!match && (!itemFields || itemFields.some(field => field.field_key === match.field_key));
+        } catch { return false; }
+      } } : undefined) ?? load();
+  }
+  private async loadMetadata(type: string): Promise<Row[]> {
+    return rows((await this.request(`${this.prefix}/work_item/${segment(type)}/meta`)).data);
+  }
+  flowRoles(type: string, expectedIds: readonly string[] = []): Promise<FlowRoleDefinition[]> {
+    const load = () => this.loadFlowRoles(type);
+    return this.definitions?.read(`roles:${type}`, definitionSchemas.roles, load, this.definitionsCanStart,
+      expectedIds.length ? { key: JSON.stringify([...expectedIds].sort()), accepts: roles =>
+        expectedIds.every(id => roles.some(role => role.id === id)) } : undefined) ?? load();
+  }
+  private async loadFlowRoles(type: string): Promise<FlowRoleDefinition[]> {
     const list = rows((await this.request(`${this.prefix}/flow_roles/${segment(type)}`)).data);
     const seen = new Set<string>();
     return list.map(row => {
@@ -167,11 +240,43 @@ export class FeishuProjectClient {
       return { id: row.id, name: row.name.trim(), isOwner: row.is_owner };
     });
   }
+  warmDefinitions(types: Iterable<string>): void {
+    if (!this.definitions) return;
+    for (const type of types) {
+      this.definitions.warm(`fields:${type}`, definitionSchemas.fields, () => this.loadMetadata(type), this.definitionsCanStart);
+      this.definitions.warm(`roles:${type}`, definitionSchemas.roles, () => this.loadFlowRoles(type), this.definitionsCanStart);
+    }
+  }
   candidatesForType(type: string): Promise<Row[]> {
     return this.pages(`${this.prefix}/work_item/filter`, { work_item_type_keys: [segment(type)] }, row => this.verifyItem(row, type), 50, 100);
   }
   async users(keys: string[]): Promise<Map<string, string>> {
     if (!keys.length || keys.length > 50 || keys.some(key => !key || key.length > 256)) throw new Error('飞书用户查询范围无效');
+    const definitions = this.definitions;
+    if (!definitions) return this.loadUsers(keys);
+    const result = new Map<string, string>(), missing: string[] = [], due: string[] = [];
+    for (const key of new Set(keys)) {
+      const cached = definitions.get(`user:${key}`, definitionSchemas.name);
+      if (!cached) { missing.push(key); continue; }
+      result.set(key, cached.value);
+      if (definitions.isDue(`user:${key}`, definitionSchemas.name)) due.push(key);
+    }
+    const refresh = async (ids: string[]) => {
+      const names = await this.loadUsers(ids);
+      for (const [id, name] of names) definitions.remember(`user:${id}`, definitionSchemas.name, name);
+      return names;
+    };
+    if (due.length) definitions.defer(`users:${JSON.stringify(due.sort())}`, async () => {
+      const stillDue = due.filter(key => definitions.isDue(`user:${key}`, definitionSchemas.name));
+      if (stillDue.length) await refresh(stillDue);
+    }, this.definitionsCanStart);
+    if (missing.length) {
+      try { for (const [id, name] of await refresh(missing)) result.set(id, name); }
+      catch (error) { if (!result.size) throw error; }
+    }
+    return result;
+  }
+  private async loadUsers(keys: string[]): Promise<Map<string, string>> {
     const result = new Map<string, string>();
     for (const row of rows((await this.request('user/query', { user_keys: [...new Set(keys)] })).data)) {
       if (!keys.includes(row.user_key) || result.has(row.user_key)) throw new Error('飞书用户身份不匹配');

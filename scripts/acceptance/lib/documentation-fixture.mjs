@@ -103,8 +103,9 @@ export async function prepareDocumentationScene(scene) {
   } else if (scene === 'engine-maintenance') {
     document.querySelector('button[aria-label="关闭预览面板"]')?.click();
     (await until(() => document.querySelector('.user-menu__trigger'))).click();
-    const entry = await until(() => [...document.querySelectorAll('[role="menuitem"]')].find(el => el.textContent.includes('引擎维护')));
+    const entry = await until(() => [...document.querySelectorAll('[role="menuitem"]')].find(el => /管理中心|引擎维护/.test(el.textContent)));
     entry.click();
+    if (entry.textContent.includes('管理中心')) await clickText('.administration-center button', '引擎维护');
     await until(() => document.querySelector('[aria-label="引擎列表"] button'));
     for (const el of document.querySelectorAll('details')) if (el.textContent.includes('版本与安装详情') || el.textContent.includes('运行诊断')) el.open = true;
   } else {

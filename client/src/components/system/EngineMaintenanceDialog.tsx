@@ -83,7 +83,11 @@ function EngineVersionSection({ engine, admin, checking, disabled, onCheck, onAc
   </section>;
 }
 
-function EngineMaintenanceDialogContent({ engineId: initialEngineId, onClose }: { engineId: EngineMaintenanceStatusDto['engineId']; onClose(): void }) {
+type EngineRequest = { engineId: EngineMaintenanceStatusDto['engineId'] };
+
+function EngineMaintenanceDialogContent({ requestedEngine, mobile, onClose }: { requestedEngine: EngineRequest | null; mobile: boolean; onClose(): void }) {
+  const initialEngineId = requestedEngine?.engineId ?? 'codex';
+  const [handledRequest, setHandledRequest] = useState(requestedEngine);
   const { user } = useAuth();
   const [engineId, setEngineId] = useState(initialEngineId);
   const state = useEngineMaintenance(true, engineId);
@@ -98,6 +102,11 @@ function EngineMaintenanceDialogContent({ engineId: initialEngineId, onClose }: 
   // stalled 不依赖 tracking：前端轮询超时后操作仍在后台执行，提示条和中止入口必须保留。
   const stalled = state.operation?.status === 'processing' && state.operation.stalled === true;
   const interactionLocked = state.submitting || state.aborting || (state.tracking && !stalled);
+  useEffect(() => {
+    if (interactionLocked || requestedEngine === handledRequest) return;
+    setHandledRequest(requestedEngine);
+    if (requestedEngine) setEngineId(requestedEngine.engineId);
+  }, [handledRequest, interactionLocked, requestedEngine]);
   const admin = user?.role === 'admin';
   const minimizedDescription = state.operation?.status === 'completed'
     ? `已完成 · ${state.operation.message}`
@@ -109,7 +118,7 @@ function EngineMaintenanceDialogContent({ engineId: initialEngineId, onClose }: 
           : state.operationOutput?.lines.slice(-1)[0]?.trim() || state.operation.message}`
         : state.submitting ? '正在提交维护操作…' : undefined;
   return <>
-    <PanelShell open onClose={() => { if (!interactionLocked) onClose(); }} closeDisabled={interactionLocked} closeOnBackdrop={!interactionLocked} closeOnEscape={!interactionLocked && !state.pending} title={`${engine?.label || engineId} 维护`} description={<span className="flex items-center gap-2"><span>{engine ? `当前 ${formatEngineMaintenanceVersion(engine.installedVersion)}` : '正在读取引擎状态…'}</span>{presentation && <span role="status" className={`engine-maintenance-status ${presentation.statusTone}`}>● {presentation.statusLabel}</span>}</span>} minimizedDescription={minimizedDescription} minimizedDescriptionActive={state.submitting || (state.tracking && state.operation?.status !== 'completed' && state.operation?.status !== 'failed')} titleId="engine-maintenance-title" icon={<SessionEngineBadge engine={engineId} />} size="operations" headerActions={engine ? <button type="button" onClick={() => void state.checkLatest(engine.engineId)} disabled={state.checking === engine.engineId || interactionLocked} className="engine-maintenance-control hidden min-h-9 rounded-lg px-3 text-xs disabled:opacity-40 sm:block">{state.checking === engine.engineId ? '检查中…' : '检查更新'}</button> : undefined} bodyClassName={`engine-maintenance-scroll space-y-3 p-3 ${admin && presentation?.primaryAction ? 'has-primary' : ''}`} footer={admin && engine && presentation?.primaryAction ? <MaintenanceActionButton action={presentation.primaryAction} primary disabled={interactionLocked} onAction={(action) => state.request(engine, action)} className="w-full" /> : undefined} footerClassName="engine-maintenance-footer">
+    <PanelShell open mobile={mobile} onClose={() => { if (!interactionLocked) onClose(); }} closeDisabled={interactionLocked} closeOnBackdrop={!interactionLocked} closeOnEscape={!interactionLocked && !state.pending} title={`${engine?.label || engineId} ${admin ? '维护' : '状态'}`} description={<span className="flex items-center gap-2"><span>{engine ? `当前 ${formatEngineMaintenanceVersion(engine.installedVersion)}` : '正在读取引擎状态…'}</span>{presentation && <span role="status" className={`engine-maintenance-status ${presentation.statusTone}`}>● {presentation.statusLabel}</span>}</span>} minimizedDescription={minimizedDescription} minimizedDescriptionActive={state.submitting || (state.tracking && state.operation?.status !== 'completed' && state.operation?.status !== 'failed')} titleId="engine-maintenance-title" icon={<SessionEngineBadge engine={engineId} />} size="operations" headerActions={engine ? <button type="button" onClick={() => void state.checkLatest(engine.engineId)} disabled={state.checking === engine.engineId || interactionLocked} className="engine-maintenance-control hidden min-h-9 rounded-lg px-3 text-xs disabled:opacity-40 sm:block">{state.checking === engine.engineId ? '检查中…' : '检查更新'}</button> : undefined} bodyClassName={`engine-maintenance-scroll space-y-3 p-3 ${admin && presentation?.primaryAction ? 'has-primary' : ''}`} footer={admin && engine && presentation?.primaryAction ? <MaintenanceActionButton action={presentation.primaryAction} primary disabled={interactionLocked} onAction={(action) => state.request(engine, action)} className="w-full" /> : undefined} footerClassName="engine-maintenance-footer">
          {state.snapshot && <div className="flex flex-col gap-3 lg:flex-row"><EngineMaintenanceEnginePicker engines={state.snapshot.engines} selected={engineId} disabled={interactionLocked} onSelect={setEngineId} /><div className="min-w-0 flex-1 space-y-3">
          {state.tracking && state.operation && <MaintenanceProgress key={state.operation.operationId} title={`${engine?.label || engineId} · ${operationLabel[state.operation.action]}`} detail={state.operation.message} output={state.operationOutput} outputDisconnected={state.operationOutputDisconnected} />}
         {stalled && <div role="status" className="rounded-xl border border-[var(--color-notice-attention-border)] bg-[var(--color-notice-attention-bg)] px-3 py-2 text-xs">
@@ -131,8 +140,8 @@ function EngineMaintenanceDialogContent({ engineId: initialEngineId, onClose }: 
   </>;
 }
 
-export default function EngineMaintenanceDialog({ engineId, open, onClose }: { engineId: EngineMaintenanceStatusDto['engineId']; open: boolean; onClose(): void }) {
-  useFeatureView('maintenance',open,'user_menu');
+export default function EngineMaintenanceDialog({ requestedEngine, open, mobile, surface, onClose }: { requestedEngine: EngineRequest | null; open: boolean; mobile: boolean; surface: 'user_menu' | 'composer'; onClose(): void }) {
+  useFeatureView('maintenance',open,surface,'open_engine');
   if (!open) return null;
-  return <EngineMaintenanceDialogContent key={engineId} engineId={engineId} onClose={onClose} />;
+  return <EngineMaintenanceDialogContent mobile={mobile} requestedEngine={requestedEngine} onClose={onClose} />;
 }

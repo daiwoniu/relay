@@ -12,27 +12,31 @@ import type { AnalyticsFeatureProperties } from './registry.js';
 
 const requests=new AsyncLocalStorage<{context:Context;service:AnalyticsService}>();
 const services=new WeakMap<object,AnalyticsService>();
-export function recordTrustedResult(port:object,actor:{userId:string;role:'member'|'admin'},feature:AnalyticsFeatureProperties['feature'],action:string,key:string,operationId?:string,result:AnalyticsFeatureProperties['result']='success',attributes:Pick<AnalyticsFeatureProperties,'engine'|'durationMs'>={}){
+export function recordTrustedResult(port:object,actor:{userId:string;role:'member'|'admin'},feature:AnalyticsFeatureProperties['feature'],action:string,key:string,operationId?:string,result:AnalyticsFeatureProperties['result']='success',attributes:Pick<AnalyticsFeatureProperties,'engine'|'durationMs'|'reasonCode'>={},page:AnalyticsRecord['event']['page']='chat'){
   if(process.env.RELAY_ANALYTICS_EXTENDED_ENABLED==='0')return;
   try{
     const service=services.get(port);if(!service)return;
-    const event=AnalyticsEventSchema.parse({id:analyticsLoginId(`result:${actor.userId}:${key}:${feature}:${action}`),name:'operation_result',page:'chat',pageViewId:null,
+    const event=AnalyticsEventSchema.parse({id:analyticsLoginId(`result:${actor.userId}:${key}:${feature}:${action}`),name:'operation_result',page,pageViewId:null,
       referrerHost:null,device:'unknown',browser:'Other',os:'Other',properties:{feature,action,surface:'unknown',operationId:operationId??analyticsLoginId(`${actor.userId}:${key}`),result,...attributes}});
     service.enqueue([service.record(event,{...actor,visitorId:null},null)]);
   }catch{/* Private trusted fact projection only; never a business dependency. */}
 }
-function correlation(c:Context|undefined,fallback:string){const value=c?.req.header('x-relay-analytics-operation');return value&&/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(value)?value:analyticsLoginId(fallback);}
+export function requestAnalyticsOperationId(c:Context|undefined){
+  const value=c?.req.header('x-relay-analytics-operation');
+  return value&&/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(value)?value:undefined;
+}
+function correlation(c:Context|undefined,fallback:string){return requestAnalyticsOperationId(c)??analyticsLoginId(fallback);}
 export function analyticsRequest<T>(c:Context,service:AnalyticsService,run:()=>T){return requests.run({context:c,service},run);}
 /** Call only at an explicitly confirmed operation boundary, never in generic HTTP middleware. */
-export function recordCommittedOperation(feature:AnalyticsFeatureProperties['feature'],action:string,key:string,result:AnalyticsFeatureProperties['result']='success'){
+export function recordCommittedOperation(feature:AnalyticsFeatureProperties['feature'],action:string,key:string,result:AnalyticsFeatureProperties['result']='success',details:{page?:AnalyticsRecord['event']['page'];mode?:AnalyticsFeatureProperties['mode'];operationId?:string}={}){
   if(process.env.RELAY_ANALYTICS_EXTENDED_ENABLED==='0')return;
   try{
     const scope=requests.getStore();if(!scope)return;
     const {context:c,service}=scope,actor=c.get('relayActor') as {userId:string;role:'admin'|'member'}|undefined;
     if(!actor)return;
-    const operationId=correlation(c,`${actor.userId}:${key}`);
-    const event=AnalyticsEventSchema.parse({id:analyticsLoginId(`result:${actor.userId}:${key}:${feature}:${action}`),name:'operation_result',page:'chat',pageViewId:null,
-      referrerHost:null,device:'unknown',browser:'Other',os:'Other',properties:{feature,action,surface:'unknown',operationId,result}});
+    const operationId=details.operationId??correlation(c,`${actor.userId}:${key}`);
+    const event=AnalyticsEventSchema.parse({id:analyticsLoginId(`result:${actor.userId}:${key}:${feature}:${action}`),name:'operation_result',page:details.page??'chat',pageViewId:null,
+      referrerHost:null,device:'unknown',browser:'Other',os:'Other',properties:{feature,action,surface:'unknown',operationId,result,...(details.mode?{mode:details.mode}:{})}});
     service.enqueue([service.record(event,{...actor,visitorId:getAnalyticsVisitorId(c.req.header('cookie'))},getHttpClientIp(c),c)]);
   }catch{/* Analytics never changes the operation result. */}
 }

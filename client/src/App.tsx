@@ -1,12 +1,14 @@
 import { lazy, Suspense, useEffect, useState } from 'react';
-import { Routes, Route, useLocation } from 'react-router-dom';
+import { Routes, Route, useLocation, useRoutes, type RouteObject } from 'react-router-dom';
 import { useAuth } from './auth/AuthContext';
 import AuthLoading from './components/auth/AuthLoading';
 import { OverlayProvider } from './components/ui/OverlayProvider';
-import { isPublicSharePath } from './components/sharing/public-share-route';
 import InitializationScreen from './components/system/InitializationScreen';
 import ErrorBoundary from './components/ErrorBoundary';
 import PageTracker from './analytics/PageTracker';
+import type { Page } from './analytics/tracker';
+import { createPrivatePageRoutes, privatePageForPath, type PageElements } from './app-page-routing';
+import { appPageRoutes, publicPageForPath, trackedRoute } from '../../server/src/analytics/pages.ts';
 
 const Layout = lazy(() => import('./components/layout/Layout'));
 const ChatView = lazy(() => import('./components/chat/ChatView'));
@@ -17,8 +19,33 @@ const ToolsPage = lazy(() => import('./components/tools/ToolsPage'));
 const NewsAdminPage = lazy(() => import('./components/news/NewsAdminPage'));
 const PasswordChangeRequired = lazy(() => import('./components/auth/PasswordChangeRequired'));
 const WorkspaceConsolePage = lazy(() => import('./components/workspace-console/WorkspaceConsolePage'));
+const FeishuImAdminPage = lazy(() => import('./components/feishu-im/FeishuImAdminPage'));
 const PageHostingPage = lazy(() => import('./components/page-hosting/PageHostingPage'));
 const AnalyticsPage = lazy(() => import('./components/analytics/AnalyticsPage'));
+
+const pageElements = {
+  tools: <ToolsPage />,
+  news: <NewsPage />,
+  public_share: (
+    <Routes>
+      <Route path={`${appPageRoutes.public_share.path}/:token`} element={<PublicSharePage />} />
+      <Route path="*" element={<PublicSharePage invalid />} />
+    </Routes>
+  ),
+  news_admin: <NewsAdminPage />,
+  analytics_admin: <AnalyticsPage />,
+  feishu_bots: <FeishuImAdminPage />,
+  chat: <ChatView />,
+  page_hosting_admin: <PageHostingPage />,
+  task_workbench: <WorkspaceConsolePage />,
+} satisfies PageElements;
+
+const adminRoutes = createPrivatePageRoutes(pageElements, <Layout />, true);
+const memberRoutes = createPrivatePageRoutes(pageElements, <Layout />, false);
+
+function PrivatePages({ routes }: { routes: RouteObject[] }) {
+  return useRoutes(routes);
+}
 
 function ApplicationShellLoading() {
   return (
@@ -61,29 +88,32 @@ function RouteLoading() {
 
 function App() {
   const { status, user, initialError, retryInitialCheck } = useAuth();
-  const location = useLocation();
-  const isPublicShare = isPublicSharePath(location.pathname);
+  const { pathname, key } = useLocation();
+  const publicPage = publicPageForPath(pathname);
+  const privateRoutes = user?.role === 'admin' ? adminRoutes : memberRoutes;
+  let page: Page | null | undefined;
+  let content;
+  if (publicPage) {
+    if (status !== 'loading') page = trackedRoute(publicPage);
+    content = pageElements[publicPage];
+  } else if (status === 'loading' || status === 'error') {
+    content = <AuthLoading error={status === 'error' ? initialError : undefined} onRetry={status === 'error' ? retryInitialCheck : undefined} />;
+  } else if (status === 'guest') {
+    page = 'login';
+    content = <LoginPage />;
+  } else if (user?.mustChangePassword) {
+    page = 'password_change';
+    content = <PasswordChangeRequired />;
+  } else {
+    page = privatePageForPath(privateRoutes, pathname);
+    content = <PrivatePages routes={privateRoutes} />;
+  }
   return (
     <OverlayProvider>
-      <PageTracker />
+      <PageTracker page={page} locationKey={key} userId={user?.id ?? 'guest'} />
       <ErrorBoundary fallback={<InitializationScreen stage="page" error="页面加载失败" onRetry={() => window.location.reload()} retryLabel="刷新页面" />}>
         <Suspense fallback={<RouteLoading />}>
-          {location.pathname === '/tools' ? <ToolsPage /> : location.pathname === '/news' ? <NewsPage /> : isPublicShare ? (
-            <Routes>
-              <Route path="/share/:token" element={<PublicSharePage />} />
-              <Route path="*" element={<PublicSharePage invalid />} />
-            </Routes>
-          ) : status === 'loading' || status === 'error' ? <AuthLoading error={status === 'error' ? initialError : undefined} onRetry={status === 'error' ? retryInitialCheck : undefined} /> : status === 'guest' ? <LoginPage /> : user?.mustChangePassword ? <PasswordChangeRequired /> : (
-            <Routes>
-              {user?.role === 'admin' && <Route path="/admin/news" element={<NewsAdminPage />} />}
-              {user?.role === 'admin' && <Route path="/admin/analytics" element={<AnalyticsPage />} />}
-              <Route path="/" element={<Layout />}>
-                <Route index element={<ChatView />} />
-                {user?.role === 'admin' && <Route path="admin/page-hosting" element={<PageHostingPage />} />}
-                <Route path="admin/task-workbench" element={<WorkspaceConsolePage />} />
-              </Route>
-            </Routes>
-          )}
+          {content}
         </Suspense>
       </ErrorBoundary>
     </OverlayProvider>

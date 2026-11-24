@@ -19,7 +19,7 @@ import { trackedOpenFeishuItems, isPersonalProjectComplete, taskEntryConflict, w
 import { localTaskStatusLabel, localTaskLane as localTaskLaneForDisplay, taskEntryProgressAt, type TaskDisplayEntry } from './workspace-console-view-model';
 import { progressRecency, withDashboardProgress } from './workspace-task-progress';
 import { Fragment, lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { getWorkspaceConsoleDashboard, getWorkspaceConsoleResponsibility, getWorkspaceOperationRecords } from '../../api/workspace-console';
+import { getWorkspaceConsoleDashboard, getWorkspaceConsoleResponsibility, getWorkspaceOperationRecords, type ResponsibilityRefreshTrigger } from '../../api/workspace-console';
 import { useAuth } from '../../auth/AuthContext';
 import type { WorkspaceConsoleDashboardDto, WorkspaceConsoleResponsibilityDto, WorkspaceConsoleRunDto, WorkspaceOperationRecordsDto } from '../../generated/relay-contracts';
 import { useChatStore } from '../../stores/chat';
@@ -32,7 +32,7 @@ import {Drawer,Block,DetailDisclosure,DetailText} from './WorkspaceDetailUI';
 import WorkspaceSourceTimes from './WorkspaceSourceTimes';
 import WorkspaceHelpBadge from './WorkspaceHelpBadge';
 import {buildSummaryStatusIndex,summaryStatusOptions,filterLanesBySummary} from './workspace-summary-filter';
-import {readWorkspaceRefreshTimes,rememberWorkspaceRefreshTime,trackSuccessfulWorkspaceRefresh,type WorkspaceRefreshTimes} from './workspace-source-times';
+import {isSuccessfulDashboardRefresh,isSuccessfulResponsibilityRefresh,readWorkspaceRefreshTimes,rememberWorkspaceRefreshTime,trackSuccessfulWorkspaceRefresh,type WorkspaceRefreshTimes,type WorkspaceSourceRefreshActivity} from './workspace-source-times';
 import { stateFlowResponsibilityLabel } from './workspace-console-view-model';
 import WorkspaceCodexResourceCard from './WorkspaceCodexResourceCard';
 import { describeRun, describeRunCategory, describeRunMetrics, describeRunMode, describeRunResult, describeRunProgress, runMatchesFilter, type RunFilter, formatRunDuration } from './run-presentation';
@@ -68,7 +68,7 @@ const formatTime = (value: string | number | null | undefined) => value ? format
 const formatSummaryTime = (value: string | number | null | undefined) => value
   ? formatDateTime(value)
   : '未登记';
-const formatRefreshSeconds = (elapsedMs: number) => `${(Math.max(0, elapsedMs) / 1000).toFixed(1)} 秒`;
+const emptySourceActivity = (): WorkspaceSourceRefreshActivity => ({ pending: 0, startedAt: null, finishedAt: null, dismissed: false, succeeded: false });
 const responsibilityText = (value: ProjectItem['actionability']) => ({ current: '当前需我处理', state_responsibility: '负责流程流转', upcoming: '后续需我处理' })[value];
 const responsibilityExplanation = (value: ProjectItem['actionability']) => ({ current: '当前流程节点有你的待处理责任。', state_responsibility: '你在工作项的状态流转中承担责任，不代表当前节点需要你操作。', upcoming: '后续流程节点有你的待处理责任。' })[value];
 const taskLaneOrder: Array<{ key: TaskLane; title: string; note: string; titleTone: string; headerTone: string }> = [
@@ -81,14 +81,6 @@ function PersonalCompletionNotice({ item, tasks = [] }: { item: ProjectItem; tas
   const notice = personalIssueCompletionNotice(item, tasks);
   return notice ? <p className="mt-1 break-words text-xs text-amber-200">{notice}</p> : null;
 }
-
-const loadDashboard = (userId: string, force = false) => loadWorkspaceDashboard(userId, () => getWorkspaceConsoleDashboard(undefined, force), force);
-const loadResponsibility = (userId: string, force = false,
-  trigger: 'open' | 'auto' | 'retry' | 'manual' = 'open') => coalesceWorkspaceRequest(userId, 'responsibility', async () => {
-  const value = await getWorkspaceConsoleResponsibility(undefined, force, trigger);
-  if (!value.stale && !value.error) rememberResponsibility(userId, value, value.sourceMeta?.lastSuccessAt ?? value.fetchedAt);
-  return value;
-}, force);
 
 const taskKeysStorageKey = (userId: string) => `relay:workspace-console:task-keys:v3:${userId}`;
 const workspaceRefreshStorage=()=>{try{return window.sessionStorage;}catch{return null;}};
@@ -121,12 +113,19 @@ export default function WorkspaceConsolePage() {
   const [dashboardError, setDashboardError] = useState<string | null>(null);
   const [projectError, setProjectError] = useState<string | null>(null);
   const [projectNoticeDismissed, setProjectNoticeDismissed] = useState(false);
-  const [projectLoading, setProjectLoading] = useState(!initialCache.responsibilityFresh);
-  const [localLoading, setLocalLoading] = useState(!initialCache.dashboardFresh);
-  const [refreshTiming, setRefreshTiming] = useState<{
-    startedAt: number; observedAt: number; localMs: number | null; projectMs: number | null;
-    localRequested: boolean; projectRequested: boolean;
-  } | null>(null);
+  const [projectReading, setProjectReading] = useState(!initialCache.responsibilityFresh);
+  const [localReading, setLocalReading] = useState(!initialCache.dashboardFresh);
+  const refreshScope = useMemo(() => ({ local: emptySourceActivity(), project: emptySourceActivity() }), [userId]);
+  const currentRefreshScope = useRef(refreshScope);
+  currentRefreshScope.current = refreshScope;
+  const [refreshActivity, setRefreshActivity] = useState<{ scope: typeof refreshScope } & typeof refreshScope>();
+  const localActivity = refreshActivity?.scope === refreshScope ? refreshActivity.local : undefined;
+  const projectActivity = refreshActivity?.scope === refreshScope ? refreshActivity.project : undefined;
+  const localRefreshing = !!localActivity?.pending;
+  const projectRefreshing = !!projectActivity?.pending;
+  const sourcesRefreshing = localRefreshing || projectRefreshing;
+  const localLoading = localReading || localRefreshing;
+  const projectLoading = projectReading || projectRefreshing;
   const [observationSnapshots, setObservationSnapshots] = useState<Partial<Record<ObservationCard, WorkspaceConsoleDashboardDto>>>({});
   const [observationLoading, setObservationLoading] = useState<Partial<Record<ObservationCard, boolean>>>({});
   const [observationErrors, setObservationErrors] = useState<Partial<Record<ObservationCard, string>>>({});
@@ -134,23 +133,75 @@ export default function WorkspaceConsolePage() {
   const localRefresh = useMemo(() => createWorkspaceRefreshTracker(), [userId]);
   const projectRefresh = useMemo(() => createWorkspaceRefreshTracker(), [userId]);
   const rememberSourceRefresh=(source:keyof WorkspaceRefreshTimes,startedAt:number)=>{
-    if(currentUserId.current!==userId)return;
     const times=rememberWorkspaceRefreshTime(workspaceRefreshStorage(),userId,source,startedAt);
     setSourceRefreshTimes(current=>{
       const previous=current.userId===userId?current.times:initialRefreshTimes;
       return {userId,times:{local:Math.max(previous.local??0,times.local??0)||null,project:Math.max(previous.project??0,times.project??0)||null}};
     });
   };
-  const readDashboard = (force = false) => localRefresh.track(trackSuccessfulWorkspaceRefresh(()=>loadDashboard(userId, force),
-    value=>(force||value.sourceMeta?.state==='live')&&value.errors.length===0&&value.sourceMeta?.state!=='failed_snapshot'&&value.sourceMeta?.state!=='unavailable',at=>rememberSourceRefresh('local',at)));
-  const readResponsibility = (force = false, trigger: 'open' | 'auto' | 'retry' | 'manual' = 'open') => projectRefresh.track(trackSuccessfulWorkspaceRefresh(()=>loadResponsibility(userId, force, trigger),
-    value=>(force||value.sourceMeta?.state==='live')&&!value.stale&&!value.error&&value.sourceMeta?.state!=='failed_snapshot'&&value.sourceMeta?.state!=='unavailable',at=>rememberSourceRefresh('project',at)));
+  const publishRefreshActivity = () => {
+    if (currentRefreshScope.current === refreshScope) {
+      setRefreshActivity({ scope: refreshScope, local: { ...refreshScope.local }, project: { ...refreshScope.project } });
+    }
+  };
+  const dismissSourceRefresh = (source: keyof WorkspaceRefreshTimes) => {
+    refreshScope[source].dismissed = true;
+    publishRefreshActivity();
+  };
+  const withSourceRefresh = async <T,>(source: keyof WorkspaceRefreshTimes, force: boolean, request: () => Promise<T>): Promise<T> => {
+    if (!force) return request();
+    const activity = refreshScope[source];
+    if (activity.pending === 0) {
+      activity.startedAt = performance.now();
+      activity.finishedAt = null;
+      activity.dismissed = false;
+      activity.succeeded = false;
+    }
+    activity.pending += 1;
+    publishRefreshActivity();
+    try {
+      return await request();
+    } finally {
+      activity.pending -= 1;
+      if (activity.pending === 0) activity.finishedAt = performance.now();
+      publishRefreshActivity();
+    }
+  };
+  const fetchSource = <T,>(source: keyof WorkspaceRefreshTimes, force: boolean,
+    request: () => Promise<T>, successful: (value: T, force: boolean) => boolean) => {
+    const startedAt = performance.now();
+    return trackSuccessfulWorkspaceRefresh(request, (value) => successful(value, force), (at) => {
+      if (currentRefreshScope.current !== refreshScope) return;
+      rememberSourceRefresh(source, at);
+      const activity = refreshScope[source];
+      if (force) activity.succeeded = true;
+      if (!force && !activity.pending && (activity.startedAt === null || activity.startedAt <= startedAt)) {
+        activity.startedAt = startedAt;
+        activity.finishedAt = performance.now();
+        activity.dismissed = false;
+        activity.succeeded = true;
+        publishRefreshActivity();
+      }
+    });
+  };
+  const readDashboard = (force = false) => withSourceRefresh('local', force, () => localRefresh.track(
+    loadWorkspaceDashboard(userId, () => fetchSource('local', force, () => getWorkspaceConsoleDashboard(undefined, force),
+      isSuccessfulDashboardRefresh), force)));
+  const fetchResponsibility = (force: boolean, trigger: ResponsibilityRefreshTrigger, taskId?: string) => fetchSource('project', force,
+    () => getWorkspaceConsoleResponsibility(undefined, force, trigger, taskId), isSuccessfulResponsibilityRefresh);
+  const readResponsibility = (force = false, trigger: ResponsibilityRefreshTrigger = 'open') => withSourceRefresh('project', force,
+    () => projectRefresh.track(coalesceWorkspaceRequest(userId, 'responsibility', async () => {
+      const value = await fetchResponsibility(force, trigger);
+      if (!value.stale && !value.error) rememberResponsibility(userId, value, value.sourceMeta?.lastSuccessAt ?? value.fetchedAt);
+      return value;
+    }, force)));
+  const readDetailDashboard = () => readDashboard(true);
+  const readDetailResponsibility = (force: boolean, taskId?: string) => taskId
+    ? withSourceRefresh('project', force, () => fetchResponsibility(force, 'detail', taskId))
+    : readResponsibility(force, 'detail');
   const currentUserId = useRef(userId);
   currentUserId.current = userId;
-  const projectLoadingRef = useRef(projectLoading);
-  projectLoadingRef.current = projectLoading;
-  const localLoadingRef = useRef(localLoading);
-  localLoadingRef.current = localLoading;
+  const localReadingRef = useRef(false);
   const observationInFlight = useRef(new Set<ObservationCard>());
   const [desktopLayout, setDesktopLayout] = useState(() => typeof window !== 'undefined' && window.matchMedia('(min-width: 1024px)').matches);
   const [wide, setWide] = useState(false);
@@ -165,7 +216,9 @@ export default function WorkspaceConsolePage() {
   const { now, today, day, greeting, rotateGreeting } = useChinaDayGreeting();
   const dayHeader = buildWorkbenchDayHeader(today, day, now.getHours());
   const themePicker = useRef<HTMLDetailsElement>(null);
-  const refreshPicker = useRef<HTMLDetailsElement>(null);
+  const refreshPicker = useRef<HTMLDivElement>(null);
+  const refreshTrigger = useRef<HTMLButtonElement>(null);
+  const [refreshMenuOpen, setRefreshMenuOpen] = useState(false);
   const [associationFilter, setAssociationFilter] = useState<TaskAssociationFilter>('all');
   const [laneStatusFilters, setLaneStatusFilters] = useState<Record<TaskLane, string>>({ unstarted: '', doing: '', completed: '' });
   const [search, setSearch] = useState('');const commitSearch=useSearchCommit('workbench','workbench');
@@ -201,14 +254,18 @@ export default function WorkspaceConsolePage() {
   useLayoutEffect(() => { setSidebarOpen(false); }, [setSidebarOpen]);
   useEffect(() => {
     const closePickers = (event: PointerEvent) => {
-      for (const picker of [refreshPicker.current, themePicker.current]) {
-        if (event.target instanceof Node && !picker?.contains(event.target)) picker?.removeAttribute('open');
-      }
+      if (!(event.target instanceof Node)) return;
+      if (!refreshPicker.current?.contains(event.target)) setRefreshMenuOpen(false);
+      if (!themePicker.current?.contains(event.target)) themePicker.current?.removeAttribute('open');
     };
     const onEscape = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
-      for (const picker of [refreshPicker.current, themePicker.current]) {
-        if (!picker?.open) continue;
+      if (refreshMenuOpen) {
+        setRefreshMenuOpen(false);
+        if (refreshPicker.current?.contains(document.activeElement)) refreshTrigger.current?.focus();
+      }
+      const picker = themePicker.current;
+      if (picker?.open) {
         picker.removeAttribute('open');
         if (picker.contains(document.activeElement)) picker.querySelector('summary')?.focus();
       }
@@ -219,10 +276,10 @@ export default function WorkspaceConsolePage() {
       document.removeEventListener('pointerdown', closePickers);
       document.removeEventListener('keydown', onEscape);
     };
-  }, []);
+  }, [refreshMenuOpen]);
   useEffect(() => {
-    if (localLoading || projectLoading) refreshPicker.current?.removeAttribute('open');
-  }, [localLoading, projectLoading]);
+    if (sourcesRefreshing) setRefreshMenuOpen(false);
+  }, [sourcesRefreshing]);
   useEffect(() => {
     const page = workbenchRef.current;
     if (!page) return;
@@ -285,38 +342,30 @@ export default function WorkspaceConsolePage() {
     setDashboardError(null);
     setProjectError(null);
     setProjectNoticeDismissed(false);
-    const startedAt = performance.now();
-    setRefreshTiming(null);
-    setLocalLoading(true);
-    setProjectLoading(true);
+    localReadingRef.current = true;
+    setLocalReading(true);
+    setProjectReading(true);
     void readDashboard()
-      .then(async (value) => {
+      .then((value) => {
         if (!active) return;
         setDashboard(value); setDashboardError(null);
         if (shouldAutoRefreshSnapshot(value.sourceMeta, Date.now(), CACHE_TTL_MS)) {
-          const refreshed = await readDashboard(true);
-          if (active) setDashboard(refreshed);
+          void refreshSource('local', 'auto');
         }
       })
       .catch((error) => { if (active) setDashboardError(error instanceof Error ? error.message : String(error)); })
-      .finally(() => { if (active) setLocalLoading(false); });
+      .finally(() => { if (active) { localReadingRef.current = false; setLocalReading(false); } });
     void readResponsibility()
-      .then(async (value) => {
+      .then((value) => {
         if (!active) return;
         setResponsibility(value);
         setProjectError(null);
-        if (value.servedFromCache === false && !value.stale) {
-          const finishedAt = performance.now();
-          setRefreshTiming({ startedAt, observedAt: finishedAt, localMs: null,
-            projectMs: finishedAt - startedAt, localRequested: false, projectRequested: true });
-        }
         if (shouldAutoRefreshSnapshot(value.sourceMeta, Date.now(), RESPONSIBILITY_CACHE_TTL_MS, value.servedFromCache)) {
-          const refreshed = await readResponsibility(true, 'auto');
-          if (active) setResponsibility(refreshed);
+          void refreshSource('project', 'auto');
         }
       })
       .catch((error) => { if (active) setProjectError(error instanceof Error ? error.message : String(error)); })
-      .finally(() => { if (active) setProjectLoading(false); });
+      .finally(() => { if (active) setProjectReading(false); });
     return () => { active = false; };
   }, [userId]);
 
@@ -327,11 +376,12 @@ export default function WorkspaceConsolePage() {
   useEffect(() => {
     let active=true,timer:ReturnType<typeof setTimeout>|undefined;
     const refreshCurrentAssociations=()=>{
-      if(document.visibilityState!=='visible'||localLoadingRef.current)return;
+      if(document.visibilityState!=='visible'||localReadingRef.current||refreshScope.local.pending)return;
       if(timer)clearTimeout(timer);
       timer=setTimeout(()=>{
-        void readDashboard().then(value=>{if(active&&!localLoadingRef.current)setDashboard(current=>mergeWorkspaceSessionAssociations(current,value));})
-          .catch(error=>{if(active)setDashboardError(error instanceof Error?error.message:String(error));});
+        if(document.visibilityState!=='visible'||localReadingRef.current||refreshScope.local.pending)return;
+        void readDashboard().then(value=>{if(active&&!refreshScope.local.pending)setDashboard(current=>mergeWorkspaceSessionAssociations(current,value));})
+          .catch(error=>{if(active&&!refreshScope.local.pending)setDashboardError(error instanceof Error?error.message:String(error));});
       },150);
     };
     refreshCurrentAssociations();
@@ -340,23 +390,21 @@ export default function WorkspaceConsolePage() {
     return()=>{active=false;if(timer)clearTimeout(timer);window.removeEventListener('focus',refreshCurrentAssociations);document.removeEventListener('visibilitychange',refreshCurrentAssociations);};
   },[userId,relaySessions]);
 
-  const refreshSource = (source: 'local' | 'project', trigger: 'auto' | 'retry' = 'retry') => {
-    const loading = source === 'local' ? localLoadingRef : projectLoadingRef;
-    if (loading.current) return;
-    loading.current = true;
-    setRefreshTiming(null);
-    if (source === 'local') {
-      setLocalLoading(true);
-      void readDashboard(true)
-        .then((value) => { if (currentUserId.current === userId) { setDashboard(value); setDashboardError(null); } })
-        .catch((error) => { if (currentUserId.current === userId) setDashboardError(error instanceof Error ? error.message : String(error)); })
-        .finally(() => { if (currentUserId.current === userId) { loading.current = false; setLocalLoading(false); } });
-    } else {
-      setProjectLoading(true);
-      void readResponsibility(true, trigger)
-        .then((value) => { if (currentUserId.current === userId) { setResponsibility(value); setProjectError(null); } })
-        .catch((error) => { if (currentUserId.current === userId) setProjectError(error instanceof Error ? error.message : String(error)); })
-        .finally(() => { if (currentUserId.current === userId) { loading.current = false; setProjectLoading(false); } });
+  const refreshSource = async (source: keyof WorkspaceRefreshTimes, trigger: 'auto' | 'retry' | 'manual' = 'retry') => {
+    if (currentRefreshScope.current !== refreshScope || refreshScope[source].pending) return;
+    try {
+      if (source === 'local') {
+        const value = await readDashboard(true);
+        if (currentRefreshScope.current === refreshScope) { setDashboard(value); setDashboardError(null); }
+      } else {
+        const value = await readResponsibility(true, trigger);
+        if (currentRefreshScope.current === refreshScope) { setResponsibility(value); setProjectError(null); }
+      }
+    } catch (error) {
+      if (currentRefreshScope.current === refreshScope) {
+        const setError = source === 'local' ? setDashboardError : setProjectError;
+        setError(error instanceof Error ? error.message : String(error));
+      }
     }
   };
   useEffect(() => {
@@ -364,31 +412,21 @@ export default function WorkspaceConsolePage() {
       if (document.visibilityState !== 'visible') return;
       const local = localRefresh.reason(dashboard?.sourceMeta, CACHE_TTL_MS);
       const project = projectRefresh.reason(responsibility?.sourceMeta, RESPONSIBILITY_CACHE_TTL_MS);
-      if (local) refreshSource('local', local);
-      if (project) refreshSource('project', project);
+      if (local) void refreshSource('local', local);
+      if (project) void refreshSource('project', project);
     };
     const interval = window.setInterval(refreshDue, 30_000);
     document.addEventListener('visibilitychange', refreshDue);
     return () => { window.clearInterval(interval); document.removeEventListener('visibilitychange', refreshDue); };
   }, [userId, dashboard?.sourceMeta, responsibility?.sourceMeta]);
 
-  useEffect(() => {
-    if (!refreshTiming || (!localLoading && !projectLoading)) return;
-    const interval = window.setInterval(() => setRefreshTiming((current) => current
-      ? { ...current, observedAt: performance.now() } : null), 1_000);
-    return () => window.clearInterval(interval);
-  }, [refreshTiming?.startedAt, localLoading, projectLoading]);
-
   const refresh = (scope: 'all' | 'local' | 'project') => {
-    refreshPicker.current?.removeAttribute('open');
-    if (localLoadingRef.current || projectLoadingRef.current) return;
+    setRefreshMenuOpen(false);
+    if (refreshScope.local.pending || refreshScope.project.pending) return;
     const localRequested = scope !== 'project';
     const projectRequested = scope !== 'local';
     setHighlightedTasks({userId,keys:new Set()});
     if (projectRequested) setProjectNoticeDismissed(false);
-    const startedAt = performance.now();
-    setRefreshTiming({ startedAt, observedAt: startedAt, localMs: null, projectMs: null,
-      localRequested, projectRequested });
     if (localRequested) {
       observationGeneration.current += 1;
       observationInFlight.current.clear();
@@ -400,34 +438,8 @@ export default function WorkspaceConsolePage() {
       forceOperationRefresh.current = true;
       setOperationRefreshVersion((version) => version + 1);
     }
-    if (localRequested) {
-      localLoadingRef.current = true;
-      setLocalLoading(true);
-      void readDashboard(true)
-      .then((value) => { if (currentUserId.current === userId) { setDashboard(value); setDashboardError(null); } })
-      .catch((error) => { if (currentUserId.current === userId) setDashboardError(error instanceof Error ? error.message : String(error)); })
-      .finally(() => {
-        if (currentUserId.current !== userId) return;
-        setRefreshTiming((current) => current?.startedAt === startedAt
-          ? { ...current, localMs: performance.now() - startedAt } : current);
-        localLoadingRef.current = false;
-        setLocalLoading(false);
-      });
-    }
-    if (projectRequested) {
-      projectLoadingRef.current = true;
-      setProjectLoading(true);
-      void readResponsibility(true, 'manual')
-      .then((value) => { if (currentUserId.current === userId) { setResponsibility(value); setProjectError(null); } })
-      .catch((error) => { if (currentUserId.current === userId) setProjectError(error instanceof Error ? error.message : String(error)); })
-      .finally(() => {
-        if (currentUserId.current !== userId) return;
-        setRefreshTiming((current) => current?.startedAt === startedAt
-          ? { ...current, projectMs: performance.now() - startedAt } : current);
-        projectLoadingRef.current = false;
-        setProjectLoading(false);
-      });
-    }
+    if (localRequested) void refreshSource('local', 'manual');
+    if (projectRequested) void refreshSource('project', 'manual');
   };
 
   const refreshObservation = async (card: ObservationCard) => {
@@ -462,13 +474,9 @@ export default function WorkspaceConsolePage() {
   const hasLocalData = dashboard?.sourceAvailable.registry === true;
   const hasProjectData = !!responsibility;
   const localRefreshPartial = !localRefreshFailed && (dashboard?.errors.length ?? 0) > 0;
-  const refreshBannerTone = (refreshTiming?.localRequested && localLoading) || (refreshTiming?.projectRequested && projectLoading && refreshTiming.projectMs === null)
-    ? 'border-cyan-300/30 bg-cyan-300/[0.12]'
-    : (refreshTiming?.localRequested && localRefreshFailed) || (refreshTiming?.projectRequested && projectRefreshFailed)
-      ? 'border-rose-300/40 bg-rose-400/[0.18]'
-      : refreshTiming?.localRequested && localRefreshPartial
-        ? 'border-amber-300/40 bg-amber-400/[0.18]'
-        : 'border-emerald-300/40 bg-emerald-400/[0.18]';
+  const associationMeta = responsibility?.associationMeta;
+  const showAssociationNotice = associationMeta?.state === 'unbound' || associationMeta?.state === 'unavailable'
+    || (associationMeta?.state === 'partial' && associationMeta.checkedAt !== null);
   const comparisonReady = snapshotReady;
   const allEntries = useMemo(() => buildTaskEntries(model, 'all'), [model]);
   const allMatters = useMemo(() => unifyTaskEntries(allEntries, responsibility), [allEntries, responsibility]);
@@ -680,11 +688,9 @@ export default function WorkspaceConsolePage() {
     if (selectedDashboard) setDetailSnapshot({ selection, taskId, dashboard: selectedDashboard, responsibility:source?detailResponsibility:responsibility });
     if(selectedDashboard?.tasks.find(task=>task.id===taskId)?.feishuWorkItemIds.length){
       const generation=detailRefreshGeneration.current;
-      setRefreshingDetail(true);
-      void getWorkspaceConsoleResponsibility(undefined,false,'detail',taskId).then(value=>{
+      void readDetailResponsibility(false, taskId).then(value=>{
         if(generation===detailRefreshGeneration.current)setDetailSnapshot({selection,taskId,dashboard:selectedDashboard,responsibility:value});
-      }).catch(cause=>{if(generation===detailRefreshGeneration.current)setDetailRefreshError(cause instanceof Error?cause.message:String(cause));})
-        .finally(()=>{if(generation===detailRefreshGeneration.current)setRefreshingDetail(false);});
+      }).catch(cause=>{if(generation===detailRefreshGeneration.current)setDetailRefreshError(cause instanceof Error?cause.message:String(cause));});
     }
   };
   const openProject = (workItemId: string) => openDetail({ kind: 'project', id: workItemId });
@@ -697,8 +703,8 @@ export default function WorkspaceConsolePage() {
     setRefreshingDetail(true);
     setDetailRefreshError(null);
     try {
-      const snapshot = await loadWorkbenchDetailSnapshot(selection, () => getWorkspaceConsoleDashboard(undefined, true),
-        (force) => getWorkspaceConsoleResponsibility(undefined, force, 'detail',selection.kind==='local'?selection.id:undefined), detailResponsibility);
+      const snapshot = await loadWorkbenchDetailSnapshot(selection, readDetailDashboard,
+        (force) => readDetailResponsibility(force, selection.kind === 'local' ? selection.id : undefined), detailResponsibility);
       if (detailRefreshGeneration.current === generation) {setDetailSnapshot(snapshot);forceOperationRefresh.current=true;setOperationRefreshVersion(version=>version+1);}
     } catch (cause) {
       if (detailRefreshGeneration.current === generation) setDetailRefreshError(cause instanceof Error ? cause.message : String(cause));
@@ -712,7 +718,7 @@ export default function WorkspaceConsolePage() {
     setRefreshingDetail(true);
     setDetailRefreshError(null);
     try {
-      const snapshot = await loadTaskDetailSnapshot(taskId, () => getWorkspaceConsoleDashboard(undefined, true));
+      const snapshot = await loadTaskDetailSnapshot(taskId, readDetailDashboard);
       if (detailRefreshGeneration.current === generation) setDetailSnapshot({ selection, ...snapshot, responsibility: currentResponsibility });
     } catch (cause) {
       if (detailRefreshGeneration.current === generation) setDetailRefreshError(cause instanceof Error ? cause.message : String(cause));
@@ -767,18 +773,21 @@ export default function WorkspaceConsolePage() {
           <div className="workspace-workbench__header-toolbar">
               <div className="workspace-workbench__header-actions">
               <button type="button" onClick={() => setSidebarOpen(!sidebarOpen)} aria-pressed={sidebarOpen} className="rounded-lg border border-white/15 px-3 py-1.5 text-xs hover:bg-white/10">{sidebarOpen ? '隐藏左侧面板' : '展开左侧面板'}</button>
-              <details ref={refreshPicker} className="workspace-workbench__theme-picker relative" onToggle={(event) => { if (event.currentTarget.open) themePicker.current?.removeAttribute('open'); }}>
-                <summary aria-disabled={localLoading || projectLoading} onClick={(event) => { if (localLoading || projectLoading) event.preventDefault(); }} className="workspace-workbench__theme-trigger workspace-workbench__refresh-trigger cursor-pointer rounded-lg border px-3 py-1.5 text-xs aria-disabled:cursor-wait aria-disabled:opacity-50"><span>{localLoading || projectLoading ? '同步中…' : '刷新任务'}</span><svg className="workspace-workbench__theme-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false"><path d="m6 9 6 6 6-6" /></svg></summary>
-                <div className="workspace-workbench__theme-menu absolute left-0 top-full z-30 mt-2 w-40 rounded-xl border p-1.5 shadow-xl" role="group" aria-label="任务刷新范围">
-                  <button type="button" onClick={() => refresh('all')} disabled={localLoading || projectLoading} className="workspace-workbench__theme-option block w-full rounded-lg px-2 py-2 text-left text-xs disabled:opacity-50">全部刷新</button>
-                  <button type="button" onClick={() => refresh('local')} disabled={localLoading || projectLoading} className="workspace-workbench__theme-option block w-full rounded-lg px-2 py-2 text-left text-xs disabled:opacity-50">刷新本地</button>
-                  <button type="button" onClick={() => refresh('project')} disabled={localLoading || projectLoading} className="workspace-workbench__theme-option block w-full rounded-lg px-2 py-2 text-left text-xs disabled:opacity-50">刷新飞书</button>
-                </div>
-              </details>
+              <div ref={refreshPicker} className="workspace-workbench__theme-picker relative">
+                <button ref={refreshTrigger} type="button" disabled={sourcesRefreshing} aria-expanded={refreshMenuOpen && !sourcesRefreshing} onClick={() => {
+                  themePicker.current?.removeAttribute('open');
+                  setRefreshMenuOpen((open) => !open);
+                }} className="workspace-workbench__theme-trigger workspace-workbench__refresh-trigger cursor-pointer rounded-lg border px-3 py-1.5 text-xs disabled:cursor-wait disabled:opacity-50"><span>{sourcesRefreshing ? '同步中…' : '刷新任务'}</span><svg className="workspace-workbench__theme-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false"><path d="m6 9 6 6 6-6" /></svg></button>
+                {refreshMenuOpen && !sourcesRefreshing && <div className="workspace-workbench__theme-menu absolute left-0 top-full z-30 mt-2 w-40 rounded-xl border p-1.5 shadow-xl" role="group" aria-label="任务刷新范围">
+                  <button type="button" onClick={() => refresh('all')} className="workspace-workbench__theme-option block w-full rounded-lg px-2 py-2 text-left text-xs">全部刷新</button>
+                  <button type="button" onClick={() => refresh('local')} className="workspace-workbench__theme-option block w-full rounded-lg px-2 py-2 text-left text-xs">刷新本地</button>
+                  <button type="button" onClick={() => refresh('project')} className="workspace-workbench__theme-option block w-full rounded-lg px-2 py-2 text-left text-xs">刷新飞书</button>
+                </div>}
+              </div>
               </div>
             <div className="workspace-workbench__header-display">
               <button type="button" onClick={() => setWide((value) => !value)} aria-pressed={wide} className="hidden rounded-lg border border-white/15 px-3 py-1.5 text-xs hover:bg-white/10 lg:inline-flex">{wide ? '标准宽度' : '宽屏显示'}</button>
-              <details ref={themePicker} className="workspace-workbench__theme-picker relative" onToggle={(event) => { if (event.currentTarget.open) refreshPicker.current?.removeAttribute('open'); }}>
+              <details ref={themePicker} className="workspace-workbench__theme-picker relative" onToggle={(event) => { if (event.currentTarget.open) setRefreshMenuOpen(false); }}>
                 <summary className="workspace-workbench__theme-trigger cursor-pointer rounded-lg border px-3 py-1.5 text-xs"><span>主题：{WORKBENCH_THEME_OPTIONS.find((option) => option.id === workbenchTheme)?.label}</span><svg className="workspace-workbench__theme-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false"><path d="m6 9 6 6 6-6" /></svg></summary>
                 <div className="workspace-workbench__theme-menu absolute right-0 top-full z-30 mt-2 w-64 rounded-xl border p-1.5 shadow-xl" role="group" aria-label="任务工作台主题">
                   {WORKBENCH_THEME_OPTIONS.map((option) => <button key={option.id} type="button" onClick={() => chooseWorkbenchTheme(option.id)} aria-pressed={workbenchTheme === option.id} className="workspace-workbench__theme-option flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-xs" data-theme-choice={option.id}><span className="workspace-workbench__theme-preview shrink-0" aria-hidden="true"><span className="workspace-workbench__theme-preview-card"><i /><i /><b /></span></span><span><strong className="block font-medium">{option.label}</strong><small className="block">{option.note}</small></span></button>)}
@@ -793,19 +802,20 @@ export default function WorkspaceConsolePage() {
                   </div>
               </div>
           </div>
-          <WorkspaceSourceTimes dashboard={dashboard} responsibility={responsibility} localFailed={localRefreshFailed && !localLoading} projectFailed={projectRefreshFailed && !projectLoading} localRequestFailed={!!dashboardError} projectRequestFailed={!!projectError} localRefreshAt={(sourceRefreshTimes.userId===userId?sourceRefreshTimes.times:initialRefreshTimes).local} projectRefreshAt={(sourceRefreshTimes.userId===userId?sourceRefreshTimes.times:initialRefreshTimes).project} />
-          {refreshTiming && (localLoading || projectLoading || ((!refreshTiming.localRequested || !localRefreshFailed) && (!refreshTiming.projectRequested || !projectRefreshFailed))) && <div className={`workspace-workbench__refresh-banner mt-2 flex w-fit max-w-full items-start gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs ${refreshBannerTone}`}>
-            <p role="status" className="min-w-0 break-words">{refreshTiming.localRequested && <>本地台账：{localLoading ? '同步中' : localRefreshFailed ? '失败' : localRefreshPartial ? '部分失败' : '已更新'} · {localLoading ? '已耗时' : '耗时'} {formatRefreshSeconds(refreshTiming.localMs ?? refreshTiming.observedAt - refreshTiming.startedAt)} · </>}任务报表：{refreshTiming.projectRequested
-              ? <>{projectLoading && refreshTiming.projectMs === null ? '同步中' : projectRefreshFailed ? '失败' : '已更新'} · {projectLoading && refreshTiming.projectMs === null ? '已耗时' : '耗时'} {formatRefreshSeconds(refreshTiming.projectMs ?? refreshTiming.observedAt - refreshTiming.startedAt)}</>
-              : '未刷新'}</p>
-            <Tooltip content="关闭刷新提示" asChild><button type="button" onClick={() => setRefreshTiming(null)} aria-label="关闭刷新提示" className="shrink-0 rounded px-0.5 text-base leading-4 text-slate-400 hover:bg-white/10 hover:text-slate-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-300">×</button></Tooltip>
-          </div>}
+          <WorkspaceSourceTimes dashboard={dashboard} responsibility={responsibility}
+            localActivity={localActivity} projectActivity={projectActivity} localPartial={localRefreshPartial}
+            onDismissRefresh={dismissSourceRefresh}
+            localFailed={localRefreshFailed && (!localReading || !!dashboardError)}
+            projectFailed={projectRefreshFailed && (!projectReading || !!projectError)}
+            localRequestFailed={!!dashboardError} projectRequestFailed={!!projectError}
+            localRefreshAt={(sourceRefreshTimes.userId === userId ? sourceRefreshTimes.times : initialRefreshTimes).local}
+            projectRefreshAt={(sourceRefreshTimes.userId === userId ? sourceRefreshTimes.times : initialRefreshTimes).project} />
         </div>
       </header>
 
       {(dashboardError || dashboard?.sourceMeta?.state === 'failed_snapshot') && <p role="alert" className="rounded-xl border border-rose-400/30 bg-rose-950/30 p-3 text-sm">{dashboard?.sourceMeta?.lastSuccessAt ? `台账更新失败，显示 ${formatSummaryTime(dashboard.sourceMeta.lastSuccessAt)} 的上次成功数据。` : dashboard ? `台账更新失败，显示上次成功数据。` : '本地台账暂不可用。'} <FailureNotice error={dashboardError || (dashboard?.sourceMeta?.state === 'failed_snapshot' ? dashboard.sourceMeta.error : undefined)} /> <button type="button" onClick={() => refreshSource('local')} className="underline underline-offset-2">重试</button></p>}
       {dashboard?.sourceMeta?.state !== 'failed_snapshot' && dashboard?.errors.map((error) => <p key={error} role="status" className="rounded-xl border border-amber-400/25 bg-amber-950/25 p-3 text-sm"><FailureNotice error={error} /></p>)}
-      {responsibility?.associationMeta && responsibility.associationMeta.state !== 'complete' && <p role="status" className="text-sm text-amber-300">{responsibility.associationMeta.state === 'unbound' ? '本地台账未绑定飞书连接，分别展示两侧数据。' : responsibility.associationMeta.error || '部分台账关联尚未核实。'}</p>}
+      {showAssociationNotice && <p role="status" className="text-sm text-amber-300">{associationMeta.state === 'unbound' ? '本地台账未绑定飞书连接，分别展示两侧数据。' : associationMeta.error || '部分台账关联尚未核实。'}</p>}
       {!projectNoticeDismissed && (projectError || responsibility?.sourceMeta?.state === 'failed_snapshot' || responsibility?.stale) && <div className="mt-2 flex w-fit max-w-full items-start gap-1.5 rounded-lg border border-amber-400/25 bg-amber-950/25 px-2.5 py-1.5 text-sm">
         <p role="status" className="min-w-0 break-words">{snapshotNotice('飞书', responsibility?.sourceMeta) ?? (responsibility ? `任务报表本次未完成更新，显示 ${formatSummaryTime(responsibility.fetchedAt)} 的上次成功数据。` : '任务报表暂不可用。')} {(projectError || responsibility?.sourceMeta?.state === 'failed_snapshot') && <FailureNotice error={projectError || (responsibility?.sourceMeta?.state === 'failed_snapshot' ? responsibility.sourceMeta.error : undefined)} />} <button type="button" onClick={() => refreshSource('project')} className="underline underline-offset-2">重试</button></p>
         <Tooltip content="关闭任务报表提示" asChild><button type="button" onClick={() => setProjectNoticeDismissed(true)} aria-label="关闭任务报表提示" className="shrink-0 rounded px-0.5 text-base leading-4 text-slate-400 hover:bg-white/10 hover:text-slate-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-300">×</button></Tooltip>

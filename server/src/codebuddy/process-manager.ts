@@ -12,6 +12,10 @@ export const CODEBUDDY_SESSION_ARGS = [
 export const CODEBUDDY_MODEL_DISCOVERY_ARGS = [
   ...CODEBUDDY_SESSION_ARGS, '--tools', '', '--no-session-persistence',
 ] as const;
+const CODEBUDDY_FEISHU_ARGS = [
+  ...CODEBUDDY_MODEL_DISCOVERY_ARGS, '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}',
+  '--setting-sources', '', '--settings', '{"disableAllHooks":true}',
+] as const;
 
 export interface ManagedCodeBuddyTransport extends JsonRpcTransport {
   closeAndWait(force?: boolean): Promise<void>;
@@ -50,6 +54,11 @@ export function resolveCodeBuddyLaunch(
     .find((candidate) => exists(candidate));
   if (!entrypoint) throw new Error('CODEBUDDY_CLI_NOT_INSTALLED');
   return { command: options.execPath ?? process.execPath, args: [entrypoint, ...argumentsList] };
+}
+
+export function createFeishuCodeBuddyTransport(cwd: string): ManagedCodeBuddyTransport {
+  const launch = resolveCodeBuddyLaunch(CODEBUDDY_FEISHU_ARGS);
+  return new StdioAcpTransport({ ...launch, cwd });
 }
 
 export class CodeBuddyProcessLimitError extends Error {

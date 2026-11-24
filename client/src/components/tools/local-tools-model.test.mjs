@@ -12,6 +12,7 @@ test('timestamp conversion keeps epoch, negative dates and explicit units distin
 
 test('date conversion requires an explicit zone and rejects invalid calendar days', () => {
   assert.equal(parseZonedDateTime('1970-01-01T08:00:00+08:00'), 0);
+  assert.equal(parseZonedDateTime('1970-01-01 08:00 +08:00'), 0);
   assert.equal(parseZonedDateTime('1970-01-01T00:00:00Z'), 0);
   assert.equal(parseZonedDateTime('2024-02-29T12:00:00-05:00'), Date.UTC(2024, 1, 29, 17));
   assert.equal(parseZonedDateTime('2024-07-01T12:00:00-04:00'), Date.UTC(2024, 6, 1, 16));

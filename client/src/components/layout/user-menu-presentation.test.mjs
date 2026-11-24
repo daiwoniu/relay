@@ -5,28 +5,27 @@ import { readStyleSource } from '../../styles/style-source.test-helper.mjs';
 
 const component = fs.readFileSync(new URL('./UserMenu.tsx', import.meta.url), 'utf8');
 const sidebar = fs.readFileSync(new URL('./Sidebar.tsx', import.meta.url), 'utf8');
+const administration = fs.readFileSync(new URL('./AdministrationCenter.tsx', import.meta.url), 'utf8');
 const css = readStyleSource();
 
-test('用户菜单按账号、个人、管理、系统管理与会话形成稳定层级', () => {
-  assert.match(component, /进入设置中心/);
-  assert.match(component, /aria-label="个人"/);
-  assert.match(component, /aria-label="管理"/);
-  assert.match(component, />账号管理</);
-  assert.doesNotMatch(component, />AI 情报|>任务工作台|>资讯管理|>用户资源/);
-  assert.match(component, /\(showServiceMaintenance \|\| user !== null\) && <div className="user-menu__section" aria-label="系统管理">/);
-  assert.match(component, /aria-label="会话"/);
-  assert.match(component, /showServiceMaintenance && <button/);
-  assert.match(component, /engineSummary\.engines\.filter\(\(engine\) => engine\.readiness === 'ready'\)/);
+test('头像菜单区分个人操作与管理员入口', () => {
+  assert.match(component, />设置中心</);
+  assert.match(component, />我的分享</);
+  assert.match(component, />回收站</);
+  assert.match(component, /user\?\.role === 'admin'[\s\S]*全部账号/);
+  assert.match(component, /user\?\.role === 'admin'[\s\S]*管理中心/);
+  assert.doesNotMatch(component, />飞书管理|>引擎维护|>Relay 维护|>任务工作台/);
   assert.match(component, /Relay v\{__RELAY_VERSION__\}/);
 });
 
 test('Sidebar 通过独立用户菜单组件连接既有操作', () => {
   assert.match(sidebar, /<UserMenu/);
-  assert.match(sidebar, /onOpenSettings=\{\(\) => \{ restoreMinimizedPanel\('account-settings-title'\); setAccountSettingsOpen\(true\); \}\}/);
-  assert.match(sidebar, /<SidebarWorkbench[^\n]*onOpenUserResources=\{\(\) => \{ restoreMinimizedPanel\('user-resource-dialog-title'\); setUserResourceDialogOpen\(true\); \}\}/);
-  assert.match(sidebar, /onOpenAccountManagement=\{\(\) => \{ restoreMinimizedPanel\('account-management-title'\); setAccountManagementOpen\(true\); \}\}/);
-  assert.match(sidebar, /onOpenServiceMaintenance=\{\(\) => \{ restoreMinimizedPanel\('service-maintenance-title'\); setServiceMaintenanceOpen\(true\); \}\}/);
-  assert.match(sidebar, /onOpenEngineMaintenance=\{openEngineMaintenance\}/);
+  assert.match(sidebar, /onOpenSettings=\{\(\) => openSidebarPanel\('account-settings-title', setAccountSettingsOpen\)\}/);
+  assert.match(sidebar, /<SidebarWorkbench[^\n]*onOpenUserResources=\{\(\) => openSidebarPanel\('user-resource-dialog-title', setUserResourceDialogOpen\)\}/);
+  assert.match(sidebar, /onOpenAdministration=\{\(\) => setAdministrationOpen\(true\)\}/);
+  assert.match(sidebar, /user\?\.role === 'admin' && <>\s*<AdministrationCenter/);
+  assert.match(sidebar, /openSidebarPanel\(destination\.id, destination\.open\)/);
+  assert.match(administration, /平台管理[\s\S]*运行与维护/);
 });
 
 test('菜单项在桌面与移动端具有明确焦点和触控尺寸', () => {
@@ -44,8 +43,15 @@ test('移动端用户菜单使用贴底面板并保持退出入口可达', () =>
   assert.match(css, /\.user-menu__section--session\s*\{[\s\S]*flex: none/);
 });
 
-test('管理入口保留账号管理图标', () => {
-  const icon = fs.readFileSync(new URL('../icons/UserMenuIcon.tsx', import.meta.url), 'utf8');
-  assert.match(component, /import MenuGlyph from '..\/icons\/UserMenuIcon'/);
-  assert.match(icon, /if \(type === 'accounts'\)[\s\S]*circle cx="13\.3" cy="12\.7" r="2\.1"/);
+test('管理中心使用一致的目的地图标并标注新标签页', () => {
+  assert.match(administration, /MenuDestinationIcon external=\{external\}/);
+  assert.match(administration, /target="_blank" rel="noopener noreferrer"/);
+  assert.match(administration, /（新标签页打开）/);
+  assert.match(administration, /minimizable=\{false\}/);
+});
+
+test('管理中心各操作统一左对齐，首组去掉重复分隔并允许移动贴底面板随内容收高', () => {
+  assert.match(css, /\.administration-center \.user-menu__item\s*\{\s*text-align: left/);
+  assert.match(css, /\.administration-center \.user-menu__section:first-child\s*\{[^}]*border-top: 0/);
+  assert.match(administration, /mobileFitContent/);
 });

@@ -1,5 +1,5 @@
 import FailureNotice from '../ui/FailureNotice';
-import type { ComponentProps, ReactNode } from 'react';
+import { useCallback, useRef, useState, type ComponentProps, type ReactNode } from 'react';
 import type { SessionDeletionImpactDto } from '../../generated/relay-contracts';
 import type { Session } from '../../stores/chat';
 import AuthorizationReminderLayer from '../authorization/AuthorizationReminderLayer';
@@ -139,8 +139,7 @@ export function ChatViewHeaderRegion({ setActiveSession, respondToInteraction, h
 interface MessageRegionProps {
   chatInitializationState: ChatContentState;
   hasMessages: boolean;
-  isAdmin: boolean;
-  recentSession: Session | null;
+  recentSessions: readonly Session[];
   onOpenRecentSession: (id: string) => void;
   messageListKey: string | null;
   messageListProps: ComponentProps<typeof MessageList>;
@@ -148,7 +147,7 @@ interface MessageRegionProps {
   onRetry: () => void;
 }
 
-export function ChatViewMessageRegion({ chatInitializationState, hasMessages, isAdmin, recentSession, onOpenRecentSession, messageListKey, messageListProps, messageError, onRetry }: MessageRegionProps) {
+export function ChatViewMessageRegion({ chatInitializationState, hasMessages, recentSessions, onOpenRecentSession, messageListKey, messageListProps, messageError, onRetry }: MessageRegionProps) {
   return (
     <ErrorBoundary>
       {chatInitializationState === 'ready' && hasMessages ? (
@@ -158,7 +157,7 @@ export function ChatViewMessageRegion({ chatInitializationState, hasMessages, is
       ) : chatInitializationState === 'message_error' ? (
         <MessageRegionState state="message_error" error={messageError} onRetry={onRetry} />
       ) : (
-        <EmptyState isAdmin={isAdmin} recentSession={recentSession} onOpenRecentSession={onOpenRecentSession} />
+        <EmptyState recentSessions={recentSessions} onOpenRecentSession={onOpenRecentSession} />
       )}
     </ErrorBoundary>
   );
@@ -172,15 +171,28 @@ interface ComposerRegionProps {
 }
 
 export function ChatViewComposerRegion({ shareSelectionMode, shareSelectionProps, keepComposerBehindSearchKeyboard, chatInputProps }: ComposerRegionProps) {
+  const composerRef = useRef<HTMLDivElement>(null);
+  const [compactHeight, setCompactHeight] = useState(0);
+  const { expanded, onExpandedChange } = chatInputProps;
+  const handleExpandedChange = useCallback((nextExpanded: boolean) => {
+    if (nextExpanded) setCompactHeight(composerRef.current?.offsetHeight ?? 0);
+    onExpandedChange(nextExpanded);
+  }, [onExpandedChange]);
+
   if (shareSelectionMode) return <ShareSelectionBar {...shareSelectionProps} />;
 
   return (
-    <div
-      data-search-keyboard-composer={keepComposerBehindSearchKeyboard ? 'behind' : 'visible'}
-      className={keepComposerBehindSearchKeyboard ? 'pointer-events-none absolute inset-x-0 top-full' : 'shrink-0'}
-    >
-      <ChatInput {...chatInputProps} />
-    </div>
+    <>
+      {/* Keep the message list viewport stable while the composer overlays it. */}
+      {expanded && <div aria-hidden="true" className="shrink-0" style={{ height: compactHeight }} />}
+      <div
+        ref={composerRef}
+        data-search-keyboard-composer={keepComposerBehindSearchKeyboard ? 'behind' : 'visible'}
+        className={keepComposerBehindSearchKeyboard ? 'pointer-events-none absolute inset-x-0 top-full' : expanded ? 'absolute inset-0' : 'shrink-0'}
+      >
+        <ChatInput {...chatInputProps} onExpandedChange={handleExpandedChange} />
+      </div>
+    </>
   );
 }
 

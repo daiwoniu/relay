@@ -21,7 +21,7 @@ import SessionDetailsContent from '../layout/SessionDetailsContent';
 import { getDisplayedSessionStatus } from '../layout/session-status';
 import { getSidebarAccountInteractionPolicy } from '../layout/sidebar-account-interactions';
 import { getChatInitializationState } from './chat-initialization-state';
-import { selectRecentSession } from './empty-state-shortcuts';
+import { selectRecentSessions } from './empty-state-shortcuts';
 import { useSessionSearchStore } from '../../stores/session-search';
 import { loadSearchHistoryUntilCurrentTarget, type SearchHistoryTarget } from './session-search-history-loader';
 import { moveSearchMatchIndex } from './session-search-navigation';
@@ -118,6 +118,7 @@ export default function ChatView() {
   const [mobileDetailsOpen, setMobileDetailsOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth < 1024);
   const [wideLayout, setWideLayout] = useState(false);
+  const [composerExpanded, setComposerExpanded] = useState(false);
   const [shareDraft, setShareDraft] = useState<ShareDraft | null>(null);
   const [shareUnavailableOpen, setShareUnavailableOpen] = useState(false);
   const trashProjectRecovery = useTrashProjectRecovery();
@@ -1109,6 +1110,8 @@ export default function ChatView() {
     />
   ) : null;
 
+  const showExpandedComposer = composerExpanded && !managementBrowseEmpty && !shareSelectionMode && !keepComposerBehindSearchKeyboard;
+
   return (
     <div className="flex flex-col h-full min-h-0 relative overflow-hidden">
       <ChatViewHeaderRegion
@@ -1172,11 +1175,12 @@ export default function ChatView() {
         onReconnect={reconnect}
       />
 
+      <div className="relative flex min-h-0 flex-1 flex-col">
+      <div className={`flex min-h-0 flex-1 flex-col ${showExpandedComposer ? 'invisible' : ''}`} inert={showExpandedComposer}>
       {managementBrowseEmpty ? <div role="status" className="flex flex-1 items-center justify-center px-6 py-10 text-center"><div><div className="text-sm font-medium text-[var(--color-text)]">请选择一个会话</div><div className="mt-1 text-xs text-[var(--color-text-secondary)]">请从左侧选择会话查看或协助处理；用户资源视图不创建新会话。</div></div></div> : <ChatViewMessageRegion
         chatInitializationState={chatInitializationState}
         hasMessages={hasMessages}
-        isAdmin={user?.role === 'admin'}
-        recentSession={selectRecentSession(sessions, activeSessionId, user?.role === 'admin' ? user.id : undefined)}
+        recentSessions={selectRecentSessions(sessions, activeSessionId, user?.role === 'admin' ? user.id : undefined)}
         onOpenRecentSession={setActiveSession}
         messageListKey={activeSessionId}
         messageError={activeSessionId ? messageLoadBySession[activeSessionId]?.error : null}
@@ -1251,6 +1255,7 @@ export default function ChatView() {
         onCancel={(messageId) => { try { cancelFollowup(activeSessionId, messageId); } catch (error) { setError(error instanceof Error ? error.message : '取消失败'); } }}
         onResume={() => { try { resumeFollowups(activeSessionId); } catch (error) { setError(error instanceof Error ? error.message : '继续失败'); } }}
       />}
+      </div>
       {!managementBrowseEmpty && <ChatViewComposerRegion
         shareSelectionMode={shareSelectionMode}
         shareSelectionProps={{
@@ -1291,11 +1296,14 @@ export default function ChatView() {
           engineStatusNotice,
           tokenUsageAvailable: Boolean(currentSession && currentCapabilities?.tokenUsage),
           wideLayout,
+          expanded: showExpandedComposer,
+          onExpandedChange: setComposerExpanded,
           suggestedReply,
           focusRequest: composerFocusRequest,
           registerComposerFocusHandler,
         }}
       />}
+      </div>
 
       <ChatViewDialogs
         shareDraft={shareDraft}

@@ -65,7 +65,11 @@ export default function EngineSelector({ value, statuses, locked, mobile = false
         label={locked ? '引擎详情' : '选择 AI 引擎'}
         className={mobile ? '' : 'w-[min(21rem,calc(100vw-1.5rem))]'}
       >
-        <PopoverSection title={locked ? '引擎详情' : '选择 AI 引擎'} description={locked ? '固定使用所选引擎，无法更改' : '开始会话后将固定使用所选引擎，无法更改'} bodyClassName="max-h-[min(22rem,55vh)] overflow-y-auto p-2">
+        <PopoverSection title={locked ? '引擎详情' : '选择 AI 引擎'} description={locked ? '固定使用所选引擎，无法更改' : '开始会话后将固定使用所选引擎，无法更改'} bodyClassName="max-h-[min(22rem,55vh)] overflow-y-auto p-2"
+          footer={<button type="button" className="popover-action-row min-h-11" onClick={() => {
+            close();
+            window.dispatchEvent(new CustomEvent('relay:open-engine-maintenance'));
+          }}>查看引擎状态</button>}>
         <div role="listbox" aria-label="AI 引擎列表" className="space-y-1">
           {statuses.length === 0 ? (
             <div className="px-2 py-6 text-center text-xs text-[var(--color-text-tertiary)]">正在检查可用引擎…</div>

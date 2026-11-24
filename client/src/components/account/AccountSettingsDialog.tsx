@@ -1,8 +1,8 @@
+import UserMenuIcon from '../icons/UserMenuIcon';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useFeatureView,featureAction } from '../../analytics/features';
 import { tracker } from '../../analytics/tracker';
 import { changePassword, changeUsername, removeAvatar, setDefaultEngine, setDefaultModel, setDefaultProject, updateProfile, uploadAvatar } from '../../api/auth';
-import type { EngineId } from '../../generated/relay-contracts';
 import { useAuth } from '../../auth/AuthContext';
 import { calculateAvatarCrop, validateNewPassword } from './avatar-editor';
 import UserAvatar from './UserAvatar';
@@ -15,9 +15,7 @@ import NotificationSettingsDialog from '../settings/NotificationSettingsDialog';
 import PreviewSettings from '../settings/PreviewSettings';
 import ConfirmDialog from '../ui/ConfirmDialog';
 import { FormField, FormFeedback, formControlClassName, primaryFormButtonClassName, secondaryFormButtonClassName } from '../ui/FormControls';
-import SessionEngineBadge from '../chat/SessionEngineBadge';
-import { ENGINE_PRESENTATION_LIST } from '../../engine/catalog';
-import { useEngineStatuses } from '../chat/use-engine-statuses';
+import DefaultEnginePicker from '../chat/DefaultEnginePicker';
 import { useEngineModelsStore } from '../../stores/engine-models';
 import AccountModelSettings from './AccountModelSettings';
 import { filterSelectableProjects } from '../layout/session-project';
@@ -37,12 +35,12 @@ function canvasToBlob(canvas: HTMLCanvasElement): Promise<Blob> {
 
 type AccountSectionId = 'profile' | 'security' | 'project' | 'appearance' | 'notifications' | 'preview';
 
-const ACCOUNT_SECTIONS: Array<{ id: AccountSectionId; label: string; description: string; adminOnly?: boolean }> = [
+const ACCOUNT_SECTIONS: Array<{ id: AccountSectionId; label: string; description: string }> = [
   { id: 'profile', label: '个人资料', description: '头像、昵称与账号身份' },
   { id: 'security', label: '登录与安全', description: '登录名与密码' },
-  { id: 'project', label: '新对话', description: '默认设置' },
+  { id: 'project', label: '新对话默认值', description: '默认项目、引擎与模型' },
   { id: 'appearance', label: '外观', description: '主题、背景与面板效果' },
-  { id: 'notifications', label: '通知', description: '系统通知与提示音' },
+  { id: 'notifications', label: '通知与提示音', description: '系统通知、音量与试听' },
   { id: 'preview', label: '文件预览', description: '预览容量与图片清晰度，仅对本人账号生效' },
 ];
 
@@ -53,28 +51,11 @@ function SectionIcon({ section }: { section: AccountSectionId }) {
     : section === 'security'
       ? <><rect x="5" y="10" width="14" height="10" rx="2" /><path d="M8 10V7a4 4 0 0 1 8 0v3M12 14v2" /></>
       : section === 'project'
-        ? <><path d="M4 7.5h6l1.7 2H20v8.5a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2Z" /><path d="M4 8V6a2 2 0 0 1 2-2h4l1.5 2H18a2 2 0 0 1 2 2v1.5" /></>
+        ? <path d="M5 5h14a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-8l-5 3v-3H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2Zm2 5h10m-10 3h7" />
       : section === 'appearance'
             ? <><path d="M12 3.5a8.5 8.5 0 1 0 8.5 8.5c0-1-1-1.6-1.8-1l-1 .7a2 2 0 0 1-2.8-2.7l.7-1.1c.6-.9 0-1.9-1-2.1A9 9 0 0 0 12 3.5Z"/><circle cx="8" cy="8" r=".8" fill="currentColor" stroke="none"/><circle cx="6.5" cy="12" r=".8" fill="currentColor" stroke="none"/></>
             : <><path d="M12 4.5a4 4 0 0 0-4 4v2c0 1-.4 2-1 2.8L5.5 15h13L17 13.3a4.5 4.5 0 0 1-1-2.8v-2a4 4 0 0 0-4-4Z"/><path d="M10 18h4"/></>;
   return <svg aria-hidden="true" viewBox="0 0 24 24" className="h-[18px] w-[18px]" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">{path}</svg>;
-}
-
-function DefaultEnginePicker({ value, pending, onChange }: { value: EngineId; pending: boolean; onChange: (engine: EngineId) => void }) {
-  const { engineStatuses, engineStatusState } = useEngineStatuses();
-  return <div role="radiogroup" aria-label="默认引擎" className="default-engine-grid">
-    {ENGINE_PRESENTATION_LIST.map(({ id, label, vendor }) => {
-      const selected = value === id;
-      const status = engineStatuses.find((candidate) => candidate.id === id);
-      const statusLabel = engineStatusState === 'loading' ? '检测中…'
-        : engineStatusState === 'error' ? '状态未知'
-          : status?.available ? '可用' : status?.message || '不可用';
-      return <button key={id} type="button" role="radio" aria-checked={selected} data-selected={selected} disabled={pending} onClick={() => onChange(id)} className="default-engine-option">
-        <SessionEngineBadge engine={id} size="panel" />
-        <span className="default-engine-copy"><span className="default-engine-title">{label}</span><span className="default-engine-status">{vendor} · {statusLabel}</span></span>
-      </button>;
-    })}
-  </div>;
 }
 
 export default function AccountSettingsDialog({ open, onClose, mobile }: { open: boolean; onClose: () => void; mobile: boolean }) {
@@ -82,6 +63,13 @@ export default function AccountSettingsDialog({ open, onClose, mobile }: { open:
   const { user, updateUser, finishPasswordChange } = useAuth();
   const projects = useChatStore((state) => state.projects);
   const [activeSection, setActiveSection] = useState<AccountSectionId>('profile');
+  const [mobileDetail, setMobileDetail] = useState(false);
+  const settingsBodyRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const body = settingsBodyRef.current;
+    if (body) body.scrollTop = 0;
+  }, [activeSection, mobileDetail]);
+  const [themeEditorRevision, setThemeEditorRevision] = useState(0);
   const wasOpenRef = useRef(false);
   const [displayName, setDisplayName] = useState('');
   const [profilePending, setProfilePending] = useState(false);
@@ -116,10 +104,13 @@ export default function AccountSettingsDialog({ open, onClose, mobile }: { open:
   const [themeDirty, setThemeDirty] = useState(false);
   const [themeMinimized, setThemeMinimized] = useState(false);
   const [themeBusy, setThemeBusy] = useState(false);
-  const [pendingSettingsAction, setPendingSettingsAction] = useState<'close' | AccountSectionId | null>(null);
+  const [pendingSettingsAction, setPendingSettingsAction] = useState<'close' | 'categories' | AccountSectionId | null>(null);
 
   useEffect(() => {
-    if (open && !wasOpenRef.current) setActiveSection('profile');
+    if (open && !wasOpenRef.current) {
+      setActiveSection('profile');
+      setMobileDetail(false);
+    }
     wasOpenRef.current = open;
   }, [open]);
 
@@ -228,9 +219,20 @@ export default function AccountSettingsDialog({ open, onClose, mobile }: { open:
     finally { setDefaultPending(false); }
   };
 
-  const availableSections = ACCOUNT_SECTIONS;
-  const selectedSection = availableSections.find((section) => section.id === activeSection) ?? availableSections[0];
+  const selectedSection = ACCOUNT_SECTIONS.find(section => section.id === activeSection) ?? ACCOUNT_SECTIONS[0];
+  const mobileCategories = mobile && !mobileDetail && !themeDirty && !themeMinimized;
+  const editingTheme = !mobileCategories && selectedSection.id === 'appearance';
+  const nestedScroll = !mobileCategories && (editingTheme || selectedSection.id === 'notifications');
 
+  const finishThemeEditing = () => {
+    setThemeDirty(false);
+    setThemeMinimized(false);
+    setThemeEditorRevision(current => current + 1);
+  };
+  const showCategoryList = () => {
+    setMobileDetail(false);
+    requestAnimationFrame(() => document.getElementById(`settings-category-${activeSection}`)?.focus());
+  };
   const closeSettingsNow = () => {
     setPendingSettingsAction(null);
     setThemeDirty(false);
@@ -238,55 +240,52 @@ export default function AccountSettingsDialog({ open, onClose, mobile }: { open:
     onClose();
   };
 
-  const requestSettingsClose = () => {
-    if (selectedSection.id === 'appearance' && themeBusy) return;
-    if (selectedSection.id === 'appearance' && themeDirty) {
-      setPendingSettingsAction('close');
-      return;
+  type SettingsDestination = NonNullable<typeof pendingSettingsAction>;
+  const navigateSettings = (destination: SettingsDestination) => {
+    if (destination === 'close') closeSettingsNow();
+    else if (destination === 'categories') showCategoryList();
+    else {
+      setActiveSection(destination);
+      setMobileDetail(true);
+      tracker.action({feature:'settings',action:'section',surface:'settings',section:destination});
+      requestAnimationFrame(() => document.getElementById(mobile ? 'account-settings-panel' : `settings-nav-${destination}`)?.focus());
     }
-    closeSettingsNow();
   };
 
-  const requestSectionChange = (sectionId: AccountSectionId) => {
-    if (sectionId === selectedSection.id) return false;
-    if (selectedSection.id === 'appearance' && themeBusy) return false;
-    if (selectedSection.id === 'appearance' && themeDirty) {
-      setPendingSettingsAction(sectionId);
+  const requestSettingsNavigation = (destination: SettingsDestination) => {
+    if (editingTheme && themeBusy) return false;
+    if (editingTheme && themeDirty) {
+      setPendingSettingsAction(destination);
       return false;
     }
-    setActiveSection(sectionId);
-    tracker.action({feature:'settings',action:'section',surface:'settings',section:sectionId});
+    navigateSettings(destination);
     return true;
   };
 
+  const requestSectionChange = (sectionId: AccountSectionId) => {
+    if (sectionId === selectedSection.id && !mobileCategories) return false;
+    return requestSettingsNavigation(sectionId);
+  };
+
   const discardThemeAndContinue = () => {
-    const action = pendingSettingsAction;
+    if (!pendingSettingsAction) return;
     themeSettingsRef.current?.discardChanges();
     tracker.action({feature:'settings',action:'discard',surface:'settings'});
     setPendingSettingsAction(null);
-    if (action === 'close') closeSettingsNow();
-    else if (action) {
-      setActiveSection(action);
-      requestAnimationFrame(() => document.getElementById(`settings-nav-${action}`)?.focus());
-    }
+    navigateSettings(pendingSettingsAction);
   };
 
-  const navigationItems = availableSections.map((section) => ({ ...section, icon: <SectionIcon section={section.id} /> }));
-  const sectionNavigation = <SettingsNavigation items={navigationItems} activeId={selectedSection.id} onChange={requestSectionChange} mobile={mobile} label="账号设置分类" panelId="account-settings-panel" />;
+  const navigationItems = ACCOUNT_SECTIONS.map((section) => ({ ...section, icon: <SectionIcon section={section.id} /> }));
+  const sectionNavigation = <SettingsNavigation items={navigationItems} activeId={selectedSection.id} onChange={requestSectionChange} label="账号设置分类" panelId="account-settings-panel" />;
 
   return <>
-    <PanelShell analyticsFeature="settings" open={open} onClose={requestSettingsClose} closeDisabled={selectedSection.id === 'appearance' && themeBusy} closeOnEscape={!themeMinimized} suspended={themeMinimized} minimizable={selectedSection.id !== 'appearance'} title="设置中心" icon={<UserAvatar user={user} size="sm" />} description={mobile ? selectedSection.description : '管理个人资料、账号安全、外观与通知'} titleId="account-settings-title" size="settings" mobile={mobile}
-      headerActions={selectedSection.id === 'appearance' ? <IconActionButton label="最小化主题预览" variant="neutral" className="h-9 w-9 rounded-xl" disabled={themeBusy} onClick={() => themeSettingsRef.current?.minimize()}><svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 11.5h10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg></IconActionButton> : undefined}
-      navigation={mobile ? <div className="shrink-0 border-b border-[var(--color-border)] bg-[var(--color-bg-secondary)]/55">{sectionNavigation}</div> : undefined}
-      sidebar={!mobile ? <>
-          <div className="mx-3 mt-3 flex items-center gap-3 rounded-xl border border-[var(--color-border-light)] bg-[var(--color-surface)] p-3">
-            <UserAvatar user={user} size="lg" />
-            <div className="min-w-0 flex-1"><div className="truncate text-sm font-semibold text-[var(--color-text)]">{user.displayName}</div><div className="mt-0.5 truncate text-[11px] text-[var(--color-text-tertiary)]">@{user.username}</div><span className="mt-1.5 inline-flex rounded-full bg-[var(--color-bg-secondary)] px-2 py-0.5 text-[10px] font-medium text-[var(--color-text-secondary)]">{user.role === 'admin' ? '管理员' : '成员'}</span></div>
-          </div>
-          <div className="min-h-0 flex-1">{sectionNavigation}</div>
-          <p className="px-5 pb-4 text-[10px] leading-4 text-[var(--color-text-tertiary)]">设置会同步到当前账号的其他设备</p>
-        </> : undefined}
-      bodyId="account-settings-panel" bodyRole="tabpanel" bodyLabelledBy={`settings-nav-${selectedSection.id}`} bodyTabIndex={0} bodyClassName={`focus:outline-none ${(selectedSection.id === 'appearance' || selectedSection.id === 'notifications') ? 'panel-shell__body--nested-scroll' : ''} ${mobile ? 'p-4 pb-[calc(1.25rem+env(safe-area-inset-bottom))]' : 'p-6'}`}>
+    <PanelShell analyticsFeature="settings" open={open} onClose={() => requestSettingsNavigation('close')} closeDisabled={editingTheme && themeBusy} closeOnEscape={!themeMinimized} suspended={themeMinimized} minimizable={!editingTheme} title={mobile && !mobileCategories ? selectedSection.label : '设置中心'} minimizedTitle="设置中心" icon={<UserMenuIcon type="settings" />} titleId="account-settings-title" size="settings" mobile={mobile} mobileFitContent={!nestedScroll}
+      onNavigateBack={mobile && !mobileCategories ? () => requestSettingsNavigation('categories') : undefined}
+      backLabel="返回设置分类"
+      headerActions={editingTheme ? <IconActionButton label="预览主题" variant="neutral" className="h-9 w-9 rounded-xl" disabled={themeBusy} onClick={() => themeSettingsRef.current?.minimize()}><svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.4" aria-hidden="true"><path d="M2 9s2.6-4.5 7-4.5S16 9 16 9s-2.6 4.5-7 4.5S2 9 2 9Z" /><circle cx="9" cy="9" r="1.75" /></svg></IconActionButton> : undefined}
+      sidebar={!mobile ? sectionNavigation : undefined}
+      bodyRef={settingsBodyRef} bodyId="account-settings-panel" bodyRole={mobile ? undefined : 'tabpanel'} bodyLabelledBy={mobile ? 'account-settings-title' : `settings-nav-${selectedSection.id}`} bodyTabIndex={mobile ? -1 : 0} bodyClassName={`focus:outline-none ${nestedScroll ? 'panel-shell__body--nested-scroll' : ''} ${mobile ? 'p-4 pb-[max(1rem,env(safe-area-inset-bottom))]' : 'p-6'}`}>
+      {mobileCategories ? <SettingsNavigation items={navigationItems} activeId={selectedSection.id} onChange={requestSectionChange} presentation="list" /> :
           <div className={`mx-auto flex h-full min-h-0 flex-col ${selectedSection.id === 'appearance' || selectedSection.id === 'notifications' ? 'max-w-none' : 'max-w-2xl'}`}>
             {!mobile && <div className="mb-5 flex-none"><h3 className="text-lg font-semibold tracking-tight text-[var(--color-text)]">{selectedSection.label}</h3><p className="mt-1 text-xs text-[var(--color-text-secondary)]">{selectedSection.description}</p></div>}
 
@@ -365,9 +364,9 @@ export default function AccountSettingsDialog({ open, onClose, mobile }: { open:
         </section>}
 
         {selectedSection.id === 'preview' && open && <PreviewSettings />}
-        {selectedSection.id === 'appearance' && <div className="embedded-settings-content min-h-0 flex-1"><ThemeSettingsDialog ref={themeSettingsRef} open={open} onClose={closeSettingsNow} mobile={mobile} embedded onDirtyChange={setThemeDirty} onMinimizedChange={setThemeMinimized} onBusyChange={setThemeBusy} /></div>}
+        {selectedSection.id === 'appearance' && <div className="embedded-settings-content min-h-0 flex-1"><ThemeSettingsDialog key={themeEditorRevision} ref={themeSettingsRef} open={open} onClose={finishThemeEditing} mobile={mobile} embedded onDirtyChange={setThemeDirty} onMinimizedChange={setThemeMinimized} onBusyChange={setThemeBusy} /></div>}
         {selectedSection.id === 'notifications' && <div className="embedded-settings-content min-h-0 flex-1"><NotificationSettingsDialog open={open} onClose={closeSettingsNow} mobile={mobile} embedded /></div>}
-          </div>
+          </div>}
     </PanelShell>
     <ConfirmDialog open={pendingSettingsAction !== null} tone="warning" title="放弃未保存的外观设置？" description="当前主题预览和未保存的背景图片将被丢弃。" cancelLabel="继续编辑" confirmLabel="放弃更改" onCancel={() => {featureAction('settings','cancel','settings');setPendingSettingsAction(null);}} onConfirm={discardThemeAndContinue} />
   </>;

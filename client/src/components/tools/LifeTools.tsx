@@ -31,14 +31,14 @@ function UnitTool() {
     catch (reason) { error = errorText(reason); }
   }
   return <div className="space-y-4">
-    <label className="block space-y-2 text-sm"><span>换算类型</span><select className={toolInput} value={group} onChange={(event) => {
+    <label className="block space-y-2 text-sm"><span>要换算什么</span><select className={toolInput} value={group} onChange={(event) => {
       const next = event.target.value as UnitGroupId; setGroup(next); setFrom(UNIT_GROUPS[next].units[0].id); setTo(UNIT_GROUPS[next].units[1].id);
     }}>{Object.entries(UNIT_GROUPS).map(([id, item]) => <option key={id} value={id}>{item.label}</option>)}</select></label>
-    <label className="block space-y-2 text-sm"><span>数值</span><input className={toolInput} value={value} inputMode={group === 'temperature' ? 'text' : 'decimal'} onChange={(event) => setValue(event.target.value)}  enterKeyHint="done" /></label>
+    <label className="block space-y-2 text-sm"><span>要换算的数字</span><input className={toolInput} value={value} inputMode={group === 'temperature' ? 'text' : 'decimal'} onChange={(event) => setValue(event.target.value)} enterKeyHint="done" /></label>
     <div className="grid items-end gap-3 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]">
-      <label className="space-y-2 text-sm"><span>原单位</span><select className={toolInput} value={from} onChange={(event) => {tracker.action({feature:'tools',action:'configure',surface:'tools',toolId:'units'});setFrom(event.target.value);}}>{units.map((unit) => <option key={unit.id} value={unit.id}>{unit.label}</option>)}</select></label>
+      <label className="space-y-2 text-sm"><span>原来是什么单位</span><select className={toolInput} value={from} onChange={(event) => {tracker.action({feature:'tools',action:'configure',surface:'tools',toolId:'units'});setFrom(event.target.value);}}>{units.map((unit) => <option key={unit.id} value={unit.id}>{unit.label}</option>)}</select></label>
       <button type="button" className={toolButton} onClick={() => { setFrom(to); setTo(from); }}>交换 ⇄</button>
-      <label className="space-y-2 text-sm"><span>目标单位</span><select className={toolInput} value={to} onChange={(event) => {tracker.action({feature:'tools',action:'configure',surface:'tools',toolId:'units'});setTo(event.target.value);}}>{units.map((unit) => <option key={unit.id} value={unit.id}>{unit.label}</option>)}</select></label>
+      <label className="space-y-2 text-sm"><span>换成什么单位</span><select className={toolInput} value={to} onChange={(event) => {tracker.action({feature:'tools',action:'configure',surface:'tools',toolId:'units'});setTo(event.target.value);}}>{units.map((unit) => <option key={unit.id} value={unit.id}>{unit.label}</option>)}</select></label>
     </div><ToolError message={error} />
     {result && <><p role="status" className="break-all rounded-xl bg-[var(--color-bg)] p-5 text-2xl font-semibold tabular-nums">{result}</p><CopyButton text={result} /></>}
   </div>;
@@ -63,11 +63,11 @@ function DateTool() {
     } catch (reason) { setResult(''); setError(errorText(reason));trackToolAction('dates','calculate','invalid_input'); }
   }
   return <div className="space-y-4">
-    <div role="group" aria-label="日期计算方式" className="flex flex-wrap gap-2">{([['difference', '间隔 / 倒数日'], ['shift', '前后日期'], ['age', '周岁']] as const).map(([id, label]) => <button key={id} type="button" aria-pressed={mode === id} className={`${toolButton} ${mode === id ? 'bg-[var(--color-bg-tertiary)]' : ''}`} onClick={() => { setMode(id); clear(); }}>{label}</button>)}</div>
+    <div role="group" aria-label="日期计算方式" className="flex flex-wrap gap-2">{([['difference', '算相隔几天'], ['shift', '算几天前后'], ['age', '算周岁']] as const).map(([id, label]) => <button key={id} type="button" aria-pressed={mode === id} className={`${toolButton} ${mode === id ? 'bg-[var(--color-bg-tertiary)]' : ''}`} onClick={() => { setMode(id); clear(); }}>{label}</button>)}</div>
     <div className="grid gap-4 sm:grid-cols-2"><label className="min-w-0 space-y-2 text-sm"><span>{mode === 'age' ? '出生日期' : '起始日期'}</span><input type="date" min="0001-01-01" max="9999-12-31" className={toolInput} value={start} onChange={(event) => { setStart(event.target.value); clear(); }} /></label>
       {mode === 'shift' ? <label className="space-y-2 text-sm"><span>加减天数（负数表示之前）</span><input className={toolInput} value={days} onChange={(event) => { setDays(event.target.value); clear(); }} placeholder="例如 30 或 -7"  enterKeyHint="done" /></label>
         : <label className="min-w-0 space-y-2 text-sm"><span>{mode === 'age' ? '计算日期' : '目标日期'}</span><input type="date" min="0001-01-01" max="9999-12-31" className={toolInput} value={end} onChange={(event) => { setEnd(event.target.value); clear(); }} /></label>}
-    </div><p className="text-xs text-[var(--color-text-secondary)]">{mode === 'age' ? '周岁按生日计算；2 月 29 日出生者在非闰年按 3 月 1 日满周岁。' : '按自然日计算，不包含起始日。'}</p>
+    </div><p className="text-xs text-[var(--color-text-secondary)]">{mode === 'age' ? '过了生日才加一岁。2 月 29 日出生的人，平年按 3 月 1 日算。' : '按日历上的整天算。例如周一到周三相隔 2 天。'}</p>
     <button type="button" className={toolButton} onClick={calculate}>计算</button><ToolError message={error} />
     {result && <><p role="status" className="rounded-xl bg-[var(--color-bg)] p-5 text-lg leading-8">{result}</p><CopyButton text={result} /></>}
   </div>;
@@ -96,7 +96,7 @@ function ShoppingTool() {
     } catch (reason) { setResult(''); setError(errorText(reason));trackToolAction('shopping','calculate','invalid_input'); }
   }
   return <div className="space-y-4">
-    <div role="group" aria-label="购物计算方式" className="flex flex-wrap gap-2">{([['compare', '比较单价'], ['discount', '折扣 / 减券'], ['threshold', '单次满减']] as const).map(([id, label]) => <button key={id} type="button" aria-pressed={mode === id} className={`${toolButton} ${mode === id ? 'bg-[var(--color-bg-tertiary)]' : ''}`} onClick={() => { setMode(id); setResult(''); setError(''); }}>{label}</button>)}</div>
+    <div role="group" aria-label="购物计算方式" className="flex flex-wrap gap-2">{([['compare', '比哪个划算'], ['discount', '算打折和用券'], ['threshold', '算满减凑单']] as const).map(([id, label]) => <button key={id} type="button" aria-pressed={mode === id} className={`${toolButton} ${mode === id ? 'bg-[var(--color-bg-tertiary)]' : ''}`} onClick={() => { setMode(id); setResult(''); setError(''); }}>{label}</button>)}</div>
     {mode === 'compare' ? <><p className="text-xs leading-5 text-[var(--color-text-secondary)]">两件商品的数量或净含量请使用相同单位，例如都填克、毫升或件数。</p><div className="grid gap-4 sm:grid-cols-2">{field('a', '商品 A 价格（元）')}{field('qa', '商品 A 数量 / 净含量')}{field('b', '商品 B 价格（元）')}{field('qb', '商品 B 数量 / 净含量')}</div></>
       : mode === 'discount' ? <div className="grid gap-4 sm:grid-cols-3">{field('price', '原价（元）')}{field('fold', '折扣（折）', '8.5 表示八五折')}{field('coupon', '折后再减券（元）')}</div>
         : <div className="grid gap-4 sm:grid-cols-3">{field('current', '当前商品金额（元）')}{field('threshold', '满多少元')}{field('reduction', '减多少元')}</div>}
@@ -120,7 +120,7 @@ function RandomTool() {
   const text = result?.map((group, i) => `${mode === 'groups' ? `第 ${i + 1} 组：\n` : ''}${group.join('\n')}`).join('\n\n') ?? '';
   return <div className="space-y-4">
     <div role="group" aria-label="随机方式" className="flex gap-2">{([['draw', '抽取选项'], ['groups', '随机分组']] as const).map(([id, label]) => <button key={id} type="button" aria-pressed={mode === id} className={`${toolButton} ${mode === id ? 'bg-[var(--color-bg-tertiary)]' : ''}`} onClick={() => { setMode(id); setCount(id === 'groups' ? '2' : '1'); setResult(null); setError(''); }}>{label}</button>)}</div>
-    <label className="block space-y-2 text-sm"><span>候选项或名字（每行一项，自动去重）</span><textarea className={`${toolInput} min-h-40`} maxLength={50000} value={input} onChange={(event) => { setInput(event.target.value); setResult(null); setError(''); }}  enterKeyHint="done" /></label>
+    <label className="block space-y-2 text-sm"><span>写下名字或选项（一行一个，重复只算一次）</span><textarea className={`${toolInput} min-h-40`} maxLength={50000} value={input} onChange={(event) => { setInput(event.target.value); setResult(null); setError(''); }} enterKeyHint="done" /></label>
     <label className="block space-y-2 text-sm"><span>{mode === 'draw' ? '抽取几个（不重复）' : '分成几组（人数尽量均匀）'}</span><input className={toolInput} inputMode="numeric" value={count} onChange={(event) => { setCount(event.target.value); setResult(null); setError(''); }}  enterKeyHint="done" /></label>
     <button type="button" className={toolButton} onClick={run}>{result ? '重新随机一次' : mode === 'draw' ? '帮我选' : '开始分组'}</button><ToolError message={error} />
     {result && <><div role="status" className="grid max-h-96 gap-3 overflow-y-auto sm:grid-cols-2">{result.map((group, i) => <div key={i} className="rounded-xl bg-[var(--color-bg)] p-5">{mode === 'groups' && <h3 className="mb-2 text-sm font-semibold">第 {i + 1} 组 · {group.length} 人 / 项</h3>}<ul className="space-y-2 text-lg">{group.map((item) => <li key={item} className="break-all">{item}</li>)}</ul></div>)}</div><CopyButton text={text} /></>}

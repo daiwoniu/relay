@@ -15,6 +15,35 @@ function fixture(extra={}){
 }
 const local=(extra={})=>({feature:'file_preview',action:'load',surface:'preview_content',operationId:randomUUID(),result:'success',...extra});
 
+test('显式跳过页面浏览量时仍发送已积压的访问，后续页面正常计数',async()=>{
+  const {tracker:t,sent}=fixture();
+  t.page('chat','a','user');
+  t.page(null,'b','user');
+  await t.flush();
+  t.page('feishu_bots','c','user');
+  t.page('feishu_bots','c','user');
+  await t.flush();
+  assert.deepEqual(sent.flatMap(batch=>batch.body.events).map(({name,page})=>[name,page]),[
+    ['page_view','chat'],['page_view','feishu_bots'],
+  ]);
+});
+
+test('飞书页签和筛选沿用同一页面访问，离开后返回重新计数',async()=>{
+  const {tracker:t,sent}=fixture();
+  t.page('feishu_bots','a','admin');
+  t.page('feishu_bots','b','admin');
+  assert.equal(t.action({feature:'feishu_admin',action:'section',surface:'admin'}),true);
+  t.page('chat','c','admin');
+  t.page('feishu_bots','b','admin');
+  await t.flush();
+  const events=sent.flatMap(batch=>batch.body.events);
+  assert.deepEqual(events.map(({name,page})=>[name,page]),[
+    ['page_view','feishu_bots'],['feature_action','feishu_bots'],['page_view','chat'],['page_view','feishu_bots'],
+  ]);
+  assert.equal(events[1].pageViewId,events[0].pageViewId);
+  assert.notEqual(events[3].pageViewId,events[0].pageViewId);
+});
+
 test('功能挂载等待页面就绪，StrictMode不双计，卸载关闭沿用原上下文且取消监听',async()=>{
   const {tracker:t,sent}=fixture();t.reset();
   const observer=createFeatureViewObserver(t);

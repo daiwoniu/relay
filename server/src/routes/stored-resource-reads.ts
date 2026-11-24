@@ -10,12 +10,14 @@ import type { CoreStoragePort, StorageRejectionCode } from '../storage/contracts
 const uuid = z.string().uuid();
 const scope = z.enum(['mine','all']).optional();
 const listing = z.object({ limit: z.coerce.number().int().min(1).max(500).default(50),
-  offset: z.coerce.number().int().nonnegative().max(100_000).default(0), projectId: uuid.optional(), scope }).strict();
+  offset: z.coerce.number().int().nonnegative().max(100_000).optional(), afterId: z.string().max(256).optional(),
+  projectId: uuid.optional(), scope }).strict().refine((v) => v.offset === undefined || v.afterId === undefined);
 const messagePage = z.object({ limit: z.coerce.number().int().min(1).max(100).default(30),
   knownRevision: z.coerce.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
   beforeCreatedAt: z.coerce.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(), beforeId: z.string().min(1).max(256).optional(),
 }).strict().refine((v) => (v.beforeCreatedAt === undefined) === (v.beforeId === undefined));
-const search = z.object({ q: z.string().trim().min(1).max(100), limit: z.coerce.number().int().min(1).max(100).default(50), scope }).strict();
+const search = z.object({ q: z.string().trim().min(1).max(100), limit: z.coerce.number().int().min(1).max(100).default(50),
+  scope, ownerUserId: z.string().min(1).max(256).optional() }).strict();
 const messageSearch = z.object({ q: z.string().trim().min(1).max(100), limit: z.coerce.number().int().min(1).max(500).default(500),
   includeProcess: z.enum(['0','1']).optional(), includeOperations: z.enum(['0','1']).optional() }).strict();
 const messageList = z.object({ limit: z.coerce.number().int().min(0).max(500).default(30),
@@ -58,16 +60,21 @@ export function createStoredResourceReadsRouter(options: {
   });
   router.get('/sessions', async (c) => {
     const parsed = listing.safeParse(c.req.query()); if (!parsed.success) return failure(c, 'INVALID_ARGUMENT');
-    try { await options.refreshSessionArchiveState(); } catch { console.warn('[Resources] 归档状态刷新暂不可用'); }
     const v = parsed.data;
+    if (!v.afterId) {
+      try { await options.refreshSessionArchiveState(); } catch { console.warn('[Resources] 归档状态刷新暂不可用'); }
+    }
     return c.json(await options.port.listSessionsOffset({ principal: c.get('relayStoragePrincipal')!,
-      scope: v.scope ?? (c.get('relayActor').role === 'admin' ? 'all' : 'mine'), projectId: v.projectId ?? null, limit: v.limit, offset: v.offset }));
+      scope: v.scope ?? (c.get('relayActor').role === 'admin' ? 'all' : 'mine'), projectId: v.projectId ?? null,
+      limit: v.limit, offset: v.offset ?? 0, ...(v.afterId === undefined ? {} : { afterId: v.afterId }) }));
   });
   // Keep the reserved search URL before the generic details route. Its exact middleware matches /sessions/:id.
   router.get('/sessions/search', async (c) => {
     const parsed = search.safeParse(c.req.query()); if (!parsed.success) return failure(c, 'INVALID_ARGUMENT');
-    return c.json(await options.port.searchSessions({ principal: c.get('relayStoragePrincipal')!, query: parsed.data.q, limit: parsed.data.limit,
-      scope: parsed.data.scope ?? (c.get('relayActor').role === 'admin' ? 'all' : 'mine') }));
+    const v = parsed.data;
+    return c.json(await options.port.searchSessions({ principal: c.get('relayStoragePrincipal')!, query: v.q, limit: v.limit,
+      scope: v.scope ?? (c.get('relayActor').role === 'admin' ? 'all' : 'mine'),
+      ...(v.ownerUserId === undefined ? {} : { ownerUserId: v.ownerUserId }) }));
   });
   router.get('/sessions/:id/search-matches', async (c) => {
     const id = uuid.safeParse(c.req.param('id')), parsed = messageSearch.safeParse(c.req.query());

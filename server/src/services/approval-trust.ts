@@ -59,7 +59,7 @@ function manualEffective(
   };
 }
 
-function expiresAtFor(duration: ApprovalTrustDuration, now: number): number | null {
+export function expiresAtFor(duration: ApprovalTrustDuration, now: number): number | null {
   if (duration === 'permanent') return null;
   if (duration === 'one_hour') return now + 60 * 60_000;
   if (duration === 'eight_hours') return now + 8 * 60 * 60_000;

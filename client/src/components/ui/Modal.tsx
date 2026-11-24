@@ -1,6 +1,7 @@
-import { useEffect, useId, useRef, type ReactNode } from 'react';
+import { useEffect, useId, useRef, type CSSProperties, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { useOverlay } from './OverlayProvider';
+import { shouldRestoreOverlayFocus } from './focus-restoration';
 
 interface ModalProps {
   open: boolean;
@@ -8,6 +9,7 @@ interface ModalProps {
   children: ReactNode;
   contentClassName?: string;
   containerClassName?: string;
+  containerStyle?: CSSProperties;
   closeOnBackdrop?: boolean;
   closeOnEscape?: boolean;
   role?: 'dialog' | 'alertdialog';
@@ -22,6 +24,7 @@ export default function Modal({
   children,
   contentClassName = '',
   containerClassName = '',
+  containerStyle,
   closeOnBackdrop = true,
   closeOnEscape = true,
   role = 'dialog',
@@ -29,6 +32,7 @@ export default function Modal({
   describedBy,
   suspended = false,
 }: ModalProps) {
+  const containerRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const onCloseRef = useRef(onClose);
   const closeOnEscapeRef = useRef(closeOnEscape);
@@ -51,7 +55,7 @@ export default function Modal({
     return () => {
       const restoreTarget = restoreFocusRef.current;
       restoreFocusRef.current = null;
-      if (restoreTarget?.isConnected) restoreTarget.focus();
+      if (restoreTarget?.isConnected && shouldRestoreOverlayFocus(document.activeElement, document.body)) restoreTarget.focus();
     };
   }, [open]);
 
@@ -68,6 +72,8 @@ export default function Modal({
       (preferred ?? firstFocusable ?? content)?.focus();
     });
     const handleKeyDown = (event: KeyboardEvent) => {
+      const visibleDialogs = document.querySelectorAll('[data-modal-root]:not([hidden])');
+      if (visibleDialogs[visibleDialogs.length - 1] !== containerRef.current) return;
       if (event.key === 'Escape' && closeOnEscapeRef.current) onCloseRef.current();
       if (event.key !== 'Tab') return;
       const focusable = [...(contentRef.current?.querySelectorAll<HTMLElement>('button:not(:disabled), [href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])') ?? [])];
@@ -100,7 +106,11 @@ export default function Modal({
 
   return createPortal(
     <div
+      ref={containerRef}
       data-overlay-root
+      data-modal-root
+      hidden={suspended}
+      style={containerStyle}
       className={suspended ? 'hidden' : `fixed inset-0 z-[1200] flex items-center justify-center bg-[var(--color-backdrop)] p-4 ${containerClassName}`}
       onClick={(event) => {
         if (closeOnBackdrop && event.target === event.currentTarget) onClose();

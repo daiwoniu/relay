@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { filterSelectableProjects, resolveDefaultProjectId, resolveSessionProjectId, hideEmptyProjectsInAllScope, readShowAllProjectsPreference, storeShowAllProjectsPreference } from './session-project.ts';
+import { filterSelectableProjects, resolveDefaultProjectId, resolveSessionProjectId, readShowAllProjectsPreference, storeShowAllProjectsPreference } from './session-project.ts';
 
 const projects = [
   { id: 'default-project', is_system: 1 },
@@ -55,21 +55,6 @@ function createMemoryStorage(initial = new Map()) {
     setItem: (key, value) => initial.set(key, value),
   };
 }
-
-test('全部用户视图隐藏没有会话的项目，默认项目回退按完整列表解析', () => {
-  const scoped = [
-    { id: 'p-system', is_system: 1 },
-    { id: 'p-empty' },
-    { id: 'p-active' },
-  ];
-  const sessions = [
-    { id: 's1', project_id: 'p-active' },
-    { id: 's2', project_id: null },
-  ];
-  // s2 无归属回退到 p-system，所以 p-system 有会话；p-empty 被隐藏
-  assert.deepEqual(hideEmptyProjectsInAllScope(scoped, sessions).map((p) => p.id), ['p-system', 'p-active']);
-  assert.deepEqual(hideEmptyProjectsInAllScope(scoped, [{ id: 's1', project_id: 'p-active' }]).map((p) => p.id), ['p-active']);
-});
 
 test('显示全部项目偏好默认关闭并按 localStorage 持久化', () => {
   assert.equal(readShowAllProjectsPreference(null), false);

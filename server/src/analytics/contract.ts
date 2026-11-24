@@ -1,9 +1,10 @@
 import { z } from 'zod';
 import { validateAnalyticsRegistration } from './registry.js';
 import { AnalyticsFeaturePropertiesSchema, AnalyticsToolIdSchema } from './feature-schema.js';
+import { analyticsPageIds } from './pages.js';
 
 export const ANALYTICS_DAY = 86_400_000;
-export const AnalyticsPageSchema = z.enum(['login','password_change','tools','news','public_share','chat','task_workbench','news_admin','page_hosting_admin','analytics_admin','hosting','unknown']);
+export const AnalyticsPageSchema = z.enum(analyticsPageIds);
 export const AnalyticsToolSchema = AnalyticsToolIdSchema;
 export const AnalyticsActionSchema = z.enum(['format','minify','validate','copy','export_png','export_svg','compare','start','complete','cancel','calculate','randomize']);
 export const AnalyticsResultSchema = z.enum(['success','invalid_input','error','cancelled','rejected','throttled']);

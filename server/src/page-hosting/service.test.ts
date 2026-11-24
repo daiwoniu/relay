@@ -29,12 +29,18 @@ test('Native metadata rejects duplicate or changed short addresses and accepts l
     const changed=await save({...site,publicId:'different1',contentToken:randomUUID()},site.contentToken);
     assert.ok(changed.state==='rejected');assert.equal(changed.code,'CONFLICT');
     assert.equal((await t.port.readHostedSites({siteId:site.publicId!}))[0].contentToken,site.contentToken);
-    const {publicId:_,...legacy}=site;legacy.id=randomUUID();legacy.contentToken=randomUUID();
+    const {publicId:_,source:__,...legacy}=site;legacy.id=randomUUID();legacy.contentToken=randomUUID();
     assert.equal((await save(legacy,null)).state,'committed');
+    assert.equal((await t.service.list(admin)).find(item=>item.id===legacy.id)?.source,undefined);
     await fs.mkdir(path.join(t.root,'sites',legacy.id));await fs.writeFile(path.join(t.root,'sites',legacy.id,'index.html'),'<h1>legacy</h1>');
     assert.equal((await t.service.read(legacy.id,'index.html'))!.bytes.toString(),'<h1>legacy</h1>');
     const replacement=await t.service.upload(admin,'index.html',stream('<h1>updated legacy</h1>'),23);
+    const markerPath=path.join(t.root,'staging',replacement.uploadId,'meta.json');
+    const {source:stagedSource,...legacyMarker}=JSON.parse(await fs.readFile(markerPath,'utf8'));
+    assert.ok(stagedSource);
+    await fs.writeFile(markerPath,JSON.stringify(legacyMarker));
     const updated=await t.service.publish(admin,{uploadId:replacement.uploadId,name:'Legacy updated',entry:'index.html',siteId:legacy.id,expectedToken:legacy.contentToken});
+    assert.equal(updated.source,undefined);
     assert.equal(updated.id,legacy.id);assert.match(updated.publicId!,/^[a-z0-9]{10}$/);assert.notEqual(updated.publicId,site.publicId);
     for(const address of [updated.id,updated.publicId!])assert.equal((await t.service.read(address,'index.html'))!.bytes.toString(),'<h1>updated legacy</h1>');
   }finally{await t.close();}
@@ -71,6 +77,8 @@ test('upload, preview, publish, replace, disable, rename and delete use Native m
     assert.equal((await t.service.read(first.uploadId,'index.html',first.previewToken))!.bytes.toString(),'<h1>first</h1>');
     assert.equal(await t.service.read(first.uploadId,'index.html','a'.repeat(64)),null);
     const site=await t.service.publish(admin,{uploadId:first.uploadId,name:'First',entry:'index.html'});
+    assert.deepEqual(site.source,{kind:'upload',filename:'hello.html'});
+    assert.deepEqual((await t.service.list(admin))[0].source,site.source);
     assert.match(site.publicId!,/^[a-z0-9]{10}$/);
     assert.deepEqual(await fs.readdir(path.join(t.root,'sites',site.id)),['index.html']);
     assert.equal((await t.port.readHostedSites({siteId:site.id}))[0].name,'First');
@@ -89,11 +97,13 @@ test('upload, preview, publish, replace, disable, rename and delete use Native m
     assert.equal((await publicApp.request(`/p/${site.id}/%2e%2e%2fsecret.txt`)).status,404);
     const next=await t.service.upload(admin,'new.html',stream('<h1>second</h1>'),15);
     const updated=await t.service.publish(admin,{uploadId:next.uploadId,name:'Updated',entry:'index.html',siteId:site.id,expectedToken:site.contentToken});
+    assert.deepEqual(updated.source,{kind:'upload',filename:'new.html'});
     assert.equal(updated.id,site.id);assert.equal((await t.service.read(site.id,'index.html'))!.bytes.toString(),'<h1>second</h1>');
     assert.equal(updated.publicId,site.publicId);assert.equal((await t.service.read(site.publicId!,'index.html'))!.bytes.toString(),'<h1>second</h1>');
     assert.deepEqual(await fs.readdir(path.join(t.root,'staging')),[]);
     await assert.rejects(t.service.patch(admin,site.id,site.contentToken,{name:'Stale'}),/站点已变化/);
     const disabled=await t.service.patch(admin,site.id,updated.contentToken,{enabled:false,name:'Renamed'});
+    assert.deepEqual(disabled.source,updated.source);
     assert.equal(await t.service.read(site.id,'index.html'),null);
     assert.equal(await t.service.read(site.publicId!,'index.html'),null);
     const enabled=await t.service.patch(admin,site.id,disabled.contentToken,{enabled:true});
@@ -111,6 +121,7 @@ test('ZIP flattens wrapper, rewrites root and local references, retains remote U
     const bytes=await zip.generateAsync({type:'nodebuffer'}),stage=await t.service.upload(admin,'site.zip',stream(bytes),bytes.length);
     assert.equal(stage.suggestedEntry,'index.html');assert.equal(stage.fileCount,6);assert.ok(stage.rewritten>=5);
     const site=await t.service.publish(admin,{uploadId:stage.uploadId,name:'ZIP',entry:'index.html'});
+    assert.deepEqual(site.source,{kind:'upload',filename:'site.zip'});
     assert.match((await t.service.read(site.id,'index.html'))!.bytes.toString(),/href="\.\/css\/main.css"/);
     assert.match((await t.service.read(site.id,'index.html'))!.bytes.toString(),/https:\/\/cdn.example.com\/a.png/);
     assert.match((await t.service.read(site.id,'pages/about.html'))!.bytes.toString(),/\.\.\/images\/logo.png/);
@@ -160,8 +171,15 @@ test('local HTML, ZIP and directory import copy independent snapshots without br
     const source=path.join(t.f.directory,'source');await fs.mkdir(source);await fs.writeFile(path.join(source,'index.html'),'<h1>local</h1>');await fs.mkdir(path.join(source,'assets'));await fs.writeFile(path.join(source,'assets','style.css'),'h1{color:red}');
     const directory=await t.service.importLocal(admin,source);assert.equal(directory.fileCount,2);
     const site=await t.service.publish(admin,{uploadId:directory.uploadId,name:'Local',entry:'index.html'});
+    assert.deepEqual(site.source,{kind:'local',path:await fs.realpath(source)});
+    assert.equal((await t.port.readHostedSites({siteId:site.id}))[0].source,undefined);
+    assert.equal((await t.port.readHostedSites({principal:{kind:'system',purpose:'recovery'}}))[0].source,undefined);
     await fs.writeFile(path.join(source,'index.html'),'changed');assert.equal((await t.service.read(site.id,'index.html'))!.bytes.toString(),'<h1>local</h1>');
-    const single=await t.service.importLocal(admin,path.join(source,'index.html'));assert.equal(single.fileCount,1);await t.service.cancel(admin,single.uploadId);
+    const filename=path.join(source,'index.html');
+    const single=await t.service.importLocal(admin,filename);assert.equal(single.fileCount,1);
+    const updated=await t.service.publish(admin,{uploadId:single.uploadId,name:site.name,entry:'index.html',siteId:site.id,expectedToken:site.contentToken});
+    assert.deepEqual(updated.source,{kind:'local',path:await fs.realpath(filename)});
+    assert.deepEqual((await t.service.list(admin))[0].source,updated.source);
     const zip=new JSZip();zip.file('index.html','from zip');const zipfile=path.join(t.f.directory,'local.zip');await fs.writeFile(zipfile,await zip.generateAsync({type:'nodebuffer'}));
     const zipped=await t.service.importLocal(admin,zipfile);assert.equal(zipped.fileCount,1);await t.service.cancel(admin,zipped.uploadId);
     const nested=path.join(t.f.directory,'nested');await fs.mkdir(path.join(nested,'pages'),{recursive:true});await fs.writeFile(path.join(nested,'pages','index.html'),'nested homepage');
@@ -189,14 +207,16 @@ test('reject traversal, links, duplicate paths, decompression expansion and unsu
 
 test('failed Native commit restores old content and leaves the new upload retryable',async()=>{
   const t=await setup();try{
-    const stage=await t.service.upload(admin,'index.html',stream('old'),3),old=await t.service.publish(admin,{uploadId:stage.uploadId,name:'Old',entry:'index.html'});
-    const next=await t.service.upload(admin,'index.html',stream('new'),3);
+    const stage=await t.service.upload(admin,'old.html',stream('old'),3),old=await t.service.publish(admin,{uploadId:stage.uploadId,name:'Old',entry:'index.html'});
+    const next=await t.service.upload(admin,'new.html',stream('new'),3);
     const original=t.port.execute.bind(t.port);let fail=true;
     t.port.execute=(async request=>fail&&request.command.name==='hosting.save'?{state:'rejected',operationId:request.operationId,code:'CONFLICT'}:original(request)) as typeof t.port.execute;
     await assert.rejects(t.service.publish(admin,{uploadId:next.uploadId,name:'New',entry:'index.html',siteId:old.id,expectedToken:old.contentToken}),{code:'CONFLICT'});
+    assert.deepEqual((await t.service.list(admin))[0].source,{kind:'upload',filename:'old.html'});
     assert.equal((await t.service.read(old.id,'index.html'))!.bytes.toString(),'old');
     assert.equal((await t.service.read(next.uploadId,'index.html',next.previewToken))!.bytes.toString(),'new');
     fail=false;await t.service.publish(admin,{uploadId:next.uploadId,name:'New',entry:'index.html',siteId:old.id,expectedToken:old.contentToken});
+    assert.deepEqual((await t.service.list(admin))[0].source,{kind:'upload',filename:'new.html'});
     assert.equal((await t.service.read(old.id,'index.html'))!.bytes.toString(),'new');
   }finally{await t.close();}
 });

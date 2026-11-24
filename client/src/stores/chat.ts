@@ -41,6 +41,12 @@ import { useSessionOperationErrorStore } from './session-operation-errors.ts';
 
 export type Project = ProjectDto;
 export type Session = SessionDto;
+
+function mergeSessionListItem(current: Session, incoming: Session): Session {
+  return current.updated_at > incoming.updated_at
+    ? mergeSessionByPreferencesRevision(incoming, current)
+    : mergeSessionByPreferencesRevision(current, incoming);
+}
 export type SessionStatus = RelaySessionStatus;
 export type HtmlPreviewMode = 'source' | 'visualization';
 export type SidebarAccountScope = 'mine' | 'all';
@@ -353,24 +359,25 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   navigationLoadState: createRegionLoadState(),
   sessionSummaryLoadById: {},
   messageLoadBySession: {},
-  setSessions: (sessions) => set((state) => ({
-    sessions: sessions.map((session) => {
-      const current = state.sessions.find((candidate) => candidate.id === session.id);
-      return current ? mergeSessionByPreferencesRevision(current, session) : session;
-    }),
-  })),
+  setSessions: (sessions) => set((state) => {
+    const currentById = new Map(state.sessions.map((session) => [session.id, session]));
+    return { sessions: sessions.map((session) => {
+      const current = currentById.get(session.id);
+      return current ? mergeSessionListItem(current, session) : session;
+    }) };
+  }),
   mergeReconnectSessionSnapshot: (sessions, expectedStatuses) => set((state) => {
     const currentById = new Map(state.sessions.map((session) => [session.id, session]));
-    const merged = sessions.map((session) => {
+    const merged = sessions.flatMap((session) => {
       const current = currentById.get(session.id);
-      if (!current) return session;
+      const existedAtRequest = Object.prototype.hasOwnProperty.call(expectedStatuses, session.id);
+      if (!current) return existedAtRequest ? [] : [session];
       currentById.delete(session.id);
-      const statusWasUnchanged = Object.prototype.hasOwnProperty.call(expectedStatuses, session.id)
-        && current.status === expectedStatuses[session.id];
-      return mergeSessionByPreferencesRevision(current, {
+      const statusWasUnchanged = existedAtRequest && current.status === expectedStatuses[session.id];
+      return [mergeSessionListItem(current, {
         ...session,
         status: statusWasUnchanged ? session.status : current.status,
-      });
+      })];
     });
     return { sessions: [...merged, ...currentById.values()] };
   }),

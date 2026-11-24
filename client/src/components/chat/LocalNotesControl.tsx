@@ -9,6 +9,7 @@ import {
 } from '../../stores/local-notes';
 import { copyToClipboard } from '../../utils/clipboard';
 import IconActionButton from '../ui/IconActionButton';
+import ExpandCornersIcon from '../ui/ExpandCornersIcon';
 import Popover from '../ui/Popover';
 import { getLocalNoteEditorSize, getLocalNoteInitialEditorHeight, getLocalNotesPanelWidth } from './local-notes-layout';
 
@@ -49,12 +50,14 @@ export default function LocalNotesControl({ isMobile, onInsert }: Props) {
   } = useLocalNotes();
   const [anchorRect, setAnchorRect] = useState<DOMRect | null>(null);
   const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
+  const [editorExpanded, setEditorExpanded] = useState(false);
   const [editingViewHeight, setEditingViewHeight] = useState<number | null>(null);
-  const [focusNoteId, setFocusNoteId] = useState<string | null>(null);
   const [copyFeedback, setCopyFeedback] = useState<{ id: string; ok: boolean } | null>(null);
   const [deletedNote, setDeletedNote] = useState<DeletedLocalNote | null>(null);
-  const noteRefs = useRef(new Map<string, HTMLTextAreaElement>());
-  const initialEditorHeightsRef = useRef(new Map<string, number>());
+  const editorRef = useRef<HTMLTextAreaElement>(null);
+  const initialEditorHeightRef = useRef<number | undefined>(undefined);
+  const notesBodyRef = useRef<HTMLDivElement>(null);
+  const compactScrollTopRef = useRef<number | null>(null);
   const feedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const undoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const open = anchorRect !== null;
@@ -68,54 +71,64 @@ export default function LocalNotesControl({ isMobile, onInsert }: Props) {
   }, []);
 
   useLayoutEffect(() => {
-    if (!focusNoteId) return;
-    const textarea = noteRefs.current.get(focusNoteId);
+    const textarea = editorRef.current;
     if (!textarea) return;
-    resizeTextarea(textarea, initialEditorHeightsRef.current.get(focusNoteId));
-    textarea.focus();
-    textarea.setSelectionRange(textarea.value.length, textarea.value.length);
-    setFocusNoteId(null);
-  }, [focusNoteId, notes]);
+    if (editorExpanded) {
+      textarea.style.height = '';
+      textarea.style.overflowY = '';
+    } else {
+      resizeTextarea(textarea, initialEditorHeightRef.current);
+    }
+  }, [editorExpanded, editingNoteId, notes]);
 
   useLayoutEffect(() => {
-    noteRefs.current.forEach((textarea, id) => {
-      resizeTextarea(textarea, initialEditorHeightsRef.current.get(id));
-    });
-  }, [notes]);
+    const textarea = editorRef.current;
+    if (!editingNoteId || !textarea) return;
+    textarea.focus();
+    textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+  }, [editingNoteId]);
+
+  useLayoutEffect(() => {
+    const body = notesBodyRef.current;
+    if (editorExpanded || !body || compactScrollTopRef.current === null) return;
+    body.scrollTop = compactScrollTopRef.current;
+    compactScrollTopRef.current = null;
+  }, [editorExpanded]);
+
+  const resetEditor = useCallback(() => {
+    setEditingNoteId(null);
+    setEditorExpanded(false);
+    setEditingViewHeight(null);
+    initialEditorHeightRef.current = undefined;
+  }, []);
 
   const closePanel = useCallback(() => {
     removeEmptyNotes();
     setAnchorRect(null);
-    setEditingNoteId(null);
-    setEditingViewHeight(null);
-    setFocusNoteId(null);
-    initialEditorHeightsRef.current.clear();
-  }, [removeEmptyNotes]);
+    compactScrollTopRef.current = null;
+    resetEditor();
+  }, [removeEmptyNotes, resetEditor]);
+
+  const openEditor = (id: string, viewHeight: number) => {
+    const editorHeight = getLocalNoteInitialEditorHeight(viewHeight);
+    initialEditorHeightRef.current = editorHeight;
+    setEditingNoteId(id);
+    setEditingViewHeight(editorHeight);
+  };
 
   const handleCreate = () => {
     const note = createNote();
     featureAction('notes',note?'create':'limit_reached','composer');
-    if (note) {
-      initialEditorHeightsRef.current.set(note.id, 24);
-      setEditingNoteId(note.id);
-      setEditingViewHeight(24);
-      setFocusNoteId(note.id);
-    }
+    if (note) openEditor(note.id, 24);
   };
 
   const handleStartEditing = (id: string, viewHeight: number) => {featureAction('notes','activate','composer');
-    const editorHeight = getLocalNoteInitialEditorHeight(viewHeight);
-    initialEditorHeightsRef.current.set(id, editorHeight);
-    setEditingNoteId(id);
-    setEditingViewHeight(editorHeight);
-    setFocusNoteId(id);
+    openEditor(id, viewHeight);
   };
 
-  const handleEditorBlur = (id: string, content: string) => {
-    if(editingNoteId===id)featureAction('notes','edit_commit','composer');
-    setEditingNoteId((current) => current === id ? null : current);
-    setEditingViewHeight(null);
-    initialEditorHeightsRef.current.delete(id);
+  const handleEditorBlur = (content: string) => {
+    featureAction('notes','edit_commit','composer');
+    resetEditor();
     if (!content.trim()) removeEmptyNotes();
   };
 
@@ -135,6 +148,7 @@ export default function LocalNotesControl({ isMobile, onInsert }: Props) {
   const handleDelete = (id: string) => {
     const deleted = removeNote(id);
     if(deleted)featureAction('notes','delete','composer');
+    if (id === editingNoteId) resetEditor();
     setDeletedNote(deleted);
     if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
     undoTimerRef.current = setTimeout(() => setDeletedNote(null), 5000);
@@ -164,8 +178,8 @@ export default function LocalNotesControl({ isMobile, onInsert }: Props) {
         aria-expanded={open}
         onMouseDown={(event) => event.stopPropagation()}
         onClick={(event) => {
-          const nextRect = event.currentTarget.getBoundingClientRect();
-          setAnchorRect((current) => current ? null : nextRect);
+          if (open) closePanel();
+          else setAnchorRect(event.currentTarget.getBoundingClientRect());
         }}
       >
         <NoteIcon />
@@ -185,17 +199,17 @@ export default function LocalNotesControl({ isMobile, onInsert }: Props) {
         mobile={isMobile}
         mobilePresentation="sheet"
         label="临时便签"
-        className={isMobile ? '' : 'max-w-[calc(100vw-24px)]'}
-        desktopStyle={{ width: panelWidth }}
+        className={isMobile ? 'flex flex-col' : 'max-w-[calc(100vw-24px)]'}
+        desktopStyle={{ width: editorExpanded ? '48rem' : panelWidth }}
       >
-        <div className="flex max-h-[min(70vh,32rem)] flex-col text-[var(--color-text)]">
+        <div className={`flex min-h-0 flex-col text-[var(--color-text)] ${editorExpanded ? 'h-[min(78dvh,42rem)]' : 'max-h-[min(70vh,32rem)]'}`}>
           <div className="flex shrink-0 items-center justify-between gap-3 border-b border-[var(--color-border)] px-3 py-2.5">
             <div className="min-w-0">
               <div className="text-sm font-semibold">临时便签</div>
               <div className="mt-0.5 text-[11px] text-[var(--color-text-tertiary)]">全局共享 · 自动保存在当前浏览器</div>
             </div>
             <div className="flex shrink-0 items-center gap-1">
-              <IconActionButton
+              {!editorExpanded && <IconActionButton
                 label={atLimit ? '已达到 10 条上限' : '新建便签'}
                 variant="neutral"
                 tooltipPlacement="top"
@@ -205,7 +219,7 @@ export default function LocalNotesControl({ isMobile, onInsert }: Props) {
                 <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
                   <path d="M8 3v10M3 8h10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
                 </svg>
-              </IconActionButton>
+              </IconActionButton>}
               <IconActionButton label="关闭便签" variant="neutral" tooltip={false} onClick={closePanel}>
                 <svg width="14" height="14" viewBox="0 0 12 12" fill="none" aria-hidden="true">
                   <path d="M3 3l6 6M9 3l-6 6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
@@ -220,7 +234,7 @@ export default function LocalNotesControl({ isMobile, onInsert }: Props) {
             </div>
           )}
 
-          <div className="min-h-0 flex-1 overflow-y-auto p-3">
+          <div ref={notesBodyRef} className="min-h-0 flex-1 overflow-y-auto p-3">
             {notes.length === 0 ? (
               <button
                 type="button"
@@ -232,35 +246,36 @@ export default function LocalNotesControl({ isMobile, onInsert }: Props) {
                 <span className="mt-0.5 text-xs text-[var(--color-text-tertiary)]">点击创建，输入时自动保存</span>
               </button>
             ) : (
-              <div className="space-y-2.5">
+              <div className={editorExpanded ? 'h-full' : 'space-y-2.5'}>
                 {notes.map((note) => {
                   const isBlank = !note.content.trim();
                   const isEditing = editingNoteId === note.id;
+                  if (editorExpanded && !isEditing) return null;
                   return (
-                    <div key={note.id} className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-2.5 transition-colors focus-within:border-[var(--color-text-tertiary)]">
-                      <div style={isEditing && editingViewHeight ? { minHeight: editingViewHeight } : undefined}>
+                    <div key={note.id} className={`rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-2.5 transition-colors focus-within:border-[var(--color-text-tertiary)] ${editorExpanded ? 'flex h-full min-h-32 flex-col' : ''}`}>
+                      <div
+                        data-note-editor
+                        className={`relative min-h-6 pr-8 ${editorExpanded ? 'flex-1' : ''}`}
+                        style={isEditing && !editorExpanded && editingViewHeight ? { minHeight: editingViewHeight } : undefined}
+                        onBlur={(event) => {
+                          if (isEditing && !editorExpanded && !event.currentTarget.contains(event.relatedTarget)) {
+                            handleEditorBlur(note.content);
+                          }
+                        }}
+                      >
                         {isEditing ? (
                           <textarea
-                            ref={(element) => {
-                              if (element) {
-                                noteRefs.current.set(note.id, element);
-                                resizeTextarea(element, initialEditorHeightsRef.current.get(note.id));
-                              } else {
-                                noteRefs.current.delete(note.id);
-                              }
-                            }}
+                            ref={editorRef}
                             value={note.content}
                             onChange={(event) => {
-                              initialEditorHeightsRef.current.delete(note.id);
+                              initialEditorHeightRef.current = undefined;
                               updateNote(note.id, event.target.value);
-                              resizeTextarea(event.currentTarget);
                             }}
-                            onBlur={() => handleEditorBlur(note.id, note.content)}
                             enterKeyHint="enter"
                             maxLength={LOCAL_NOTE_MAX_LENGTH}
                             rows={1}
                             placeholder="输入临时记录或稍后要发给 AI 的想法……"
-                            className="block w-full resize-none bg-transparent text-sm leading-6 text-[var(--color-text)] outline-none placeholder:text-[var(--color-text-tertiary)]"
+                            className={`block w-full resize-none bg-transparent text-sm leading-6 text-[var(--color-text)] outline-none placeholder:text-[var(--color-text-tertiary)] ${editorExpanded ? 'h-full' : ''}`}
                           />
                         ) : (
                           <button
@@ -271,6 +286,26 @@ export default function LocalNotesControl({ isMobile, onInsert }: Props) {
                             {isBlank ? '点击输入临时记录……' : note.content}
                           </button>
                         )}
+                        <div className="absolute right-0 top-0">
+                          <IconActionButton
+                            label={editorExpanded ? '还原便签输入框' : '放大便签输入框'}
+                            variant="neutral"
+                            className="h-6 w-6"
+                            aria-expanded={editorExpanded}
+                            onPointerDown={(event) => { if (isEditing) event.preventDefault(); }}
+                            onClick={(event) => {
+                              if (!editorExpanded) compactScrollTopRef.current = notesBodyRef.current?.scrollTop ?? null;
+                              if (isEditing) editorRef.current?.focus();
+                              else {
+                                const editorBounds = event.currentTarget.closest('[data-note-editor]')?.getBoundingClientRect();
+                                handleStartEditing(note.id, editorBounds?.height ?? 24);
+                              }
+                              setEditorExpanded(!editorExpanded);
+                            }}
+                          >
+                            <ExpandCornersIcon expanded={editorExpanded} variant="diagonal" />
+                          </IconActionButton>
+                        </div>
                       </div>
                       <div className="mt-2 flex items-center justify-between gap-2 border-t border-[var(--color-border-light)] pt-2">
                         <div className="min-w-0 text-[10px] text-[var(--color-text-tertiary)]">

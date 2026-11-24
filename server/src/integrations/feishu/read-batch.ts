@@ -5,9 +5,12 @@ type Batch = { requests: Map<string, Promise<Row>>; items: Map<string, Row>; byt
 const batches = new AsyncLocalStorage<Map<object, Batch>>();
 const maxBytes = 16 * 1024 * 1024;
 
-/** Reuse successful reads only inside one HTTP read. A manual refresh starts fresh. */
+/** Share provider reads across workbench phases inside one HTTP read. */
 export function withFeishuReadBatch<T>(read: () => Promise<T>): Promise<T> {
   return batches.getStore() ? read() : batches.run(new Map(), read);
+}
+export function outsideFeishuReadBatch<T>(run: () => T): T {
+  return batches.exit(run);
 }
 export function feishuReadBatch(owner: object): Batch | undefined {
   const current = batches.getStore();

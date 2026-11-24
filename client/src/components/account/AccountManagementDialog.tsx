@@ -159,7 +159,7 @@ export default function AccountManagementDialog({ open, onClose, mobile }: { ope
   return <PanelShell
     open={open}
     onClose={closeDialog}
-    title="账号管理"
+    title="Relay 账号管理"
     icon={<UserMenuIcon type="accounts" />}
     description="创建和维护 Relay 登录账号"
     titleId="account-management-title"

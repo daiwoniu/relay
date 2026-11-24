@@ -37,6 +37,7 @@ export function getFrontendFingerprintFiles(root) {
     path.join(root, 'scripts', 'lib', 'client-environment.d.mts'),
     path.join(root, 'scripts', 'lib', 'analytics-source.mjs'),
     path.join(root, 'scripts', 'lib', 'analytics-source.d.mts'),
+    ...['pages.ts', 'registry.ts'].map((file) => path.join(root, 'server', 'src', 'analytics', file)),
     ...['relay-config.mjs', 'relay-config.d.mts', 'kv-config.mjs', 'kv-config.d.mts'].map((file) => path.join(root, 'scripts', 'lib', file)),
     path.join(root, 'config', 'relay.conf'),
     path.join(root, 'config', 'relay.local.conf'),

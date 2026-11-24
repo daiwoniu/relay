@@ -158,6 +158,17 @@ test('WebSocket 重连快照保留未返回会话并拒绝覆盖请求后的本�
   assert.equal(state.sessions.find((session) => session.id === 'old')?.status, 'processing');
 });
 
+test('分页快照不会覆盖较新的标题和置顶，重连不会恢复期间已移除的会话', () => {
+  const old = { id: 'old', title: '旧标题', updated_at: 1, pinned: 0, status: 'idle' };
+  const recent = { ...old, title: '刚置顶', updated_at: 2, pinned: 1 };
+  const removed = { ...old, id: 'removed' };
+  useChatStore.setState({ sessions: [recent] });
+  useChatStore.getState().setSessions([old]);
+  assert.deepEqual(useChatStore.getState().sessions, [recent]);
+  useChatStore.getState().mergeReconnectSessionSnapshot([old, removed], { old: 'idle', removed: 'idle' });
+  assert.deepEqual(useChatStore.getState().sessions, [recent]);
+});
+
 test('WebSocket revision 控制同步但不覆盖权威消息计数，跳号标记 dirty', () => {
   useChatStore.setState({
     sessions: [{ id: sessionId, title: '测试会话', created_at: 1, updated_at: 1, pinned: 0, pinned_at: null, project_id: null, engine: 'codex', codex_archived: false, status: 'processing', message_count: 2, assistant_message_count: 1 }],

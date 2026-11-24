@@ -135,7 +135,12 @@ export default function PageHostingPage({onClose,mobile=false,importRequest}:{on
       {rulesError!==null&&<div className="hosting-summary" role="alert"><FailureNotice error={rulesError} description="AI 生成规则复制失败" suggestion="请允许浏览器访问剪贴板，并再次点击「复制 AI 生成规则」。" /></div>}
       {message&&<p role="status" className="hosting-summary">{message}</p>}{error!==null&&<div className="hosting-summary"><FailureNotice error={error} /><button type="button" onClick={()=>setReload(value=>value+1)}>刷新列表</button></div>}
       {loading&&!sites.length?<p role="status">正在加载托管页面…</p>:!sites.length?<div className="hosting-empty"><h2>还没有托管页面</h2><p className="hosting-muted">支持单个 HTML、ZIP 包，或直接复制服务器上的静态目录。</p><button className="hosting-primary" type="button" onClick={()=>setUpload({site:null})}>添加第一个页面</button></div>:<ul className="hosting-sites">{sites.map(site=><li key={site.id} className="hosting-site">
-        <div className="hosting-site-info"><h2>{site.name}<span className={site.enabled?'hosting-status':'hosting-status is-disabled'}>{site.enabled?'已发布':'已停用'}</span></h2><p className="hosting-muted">{site.entry} · {formatHostingSize(site.totalBytes)} · {site.fileCount} 个文件</p><p className="hosting-muted">更新于 {formatDateTime(site.updatedAt, { seconds: true })}</p></div>
+        <div className="hosting-site-info">
+          <h2>{site.name}<span className={site.enabled?'hosting-status':'hosting-status is-disabled'}>{site.enabled?'已发布':'已停用'}</span></h2>
+          <p className="hosting-muted">{site.entry} · {formatHostingSize(site.totalBytes)} · {site.fileCount} 个文件</p>
+          {site.source && <p className="hosting-muted whitespace-pre-wrap">{site.source.kind === 'local' ? <>本地路径 · <bdi>{site.source.path}</bdi></> : <>上传文件 · <bdi>{site.source.filename}</bdi></>}</p>}
+          <p className="hosting-muted">更新于 {formatDateTime(site.updatedAt, { seconds: true })}</p>
+        </div>
         <div className="hosting-actions"><a className="hosting-button" href={api.hostedUrl(site.publicId??site.id)} target="_blank" rel="noopener noreferrer" onClick={()=>{const report=localAction('hosting','open_external','admin');report(true);}}>打开</a><button type="button" onClick={()=>void copy(site)}>复制链接</button><button type="button" disabled={busy} aria-haspopup="menu" aria-expanded={more?.site.id===site.id} aria-label={`${site.name}的更多操作`} onClick={event=>setMore(more?.site.id===site.id?null:{site,anchor:event.currentTarget})}>更多</button></div>
       </li>)}</ul>}
     </div>

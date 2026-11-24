@@ -31,7 +31,7 @@ test('项目拖拽：不再用 touch-action none 阻断侧栏纵向滚动', asyn
 
 test('项目拖拽：拖拽生命周期不再折叠和重建项目会话树', () => {
   assert.doesNotMatch(sidebarSource, /projectDragActive/);
-  assert.match(sidebarSource, /expanded=\{searchMode \? true : isSidebarGroupExpanded\(expandedGroups, `p-\$\{project\.id\}`\)\}/);
+  assert.match(sidebarSource, /expanded=\{isNavigationGroupExpanded\(groupKey\)\}/);
 });
 
 test('项目拖拽：与会话统一使用单一拖拽源，不再叠加项目专属 DragOverlay', async () => {

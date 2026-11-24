@@ -32,8 +32,21 @@ interface ListMessagesOptions {
   details?: 'full' | 'summary';
 }
 
-export function listSessions(signal?: AbortSignal, timeoutMs = 8_000): Promise<SessionDto[]> {
-  return requestJson('/api/sessions', { signal, timeoutMs });
+export async function listSessions(signal?: AbortSignal, timeoutMs = 8_000): Promise<SessionDto[]> {
+  const limit = 100;
+  const sessions: SessionDto[] = [];
+  let afterId = '';
+  for (;;) {
+    signal?.throwIfAborted();
+    const query = new URLSearchParams({ limit: String(limit), afterId });
+    const page = await requestJson<SessionDto[]>(`/api/sessions?${query}`, { signal, timeoutMs });
+    sessions.push(...page);
+    if (page.length < limit) break;
+    const lastId = page[page.length - 1].id;
+    if (lastId <= afterId) throw new Error('会话列表分页未前进');
+    afterId = lastId;
+  }
+  return sessions.sort((a, b) => b.updated_at - a.updated_at || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0));
 }
 
 export function getSession(
@@ -50,8 +63,10 @@ export function getSessionDeletionImpact(sessionId: string): Promise<SessionDele
   return requestJson(`/api/sessions/${encodeURIComponent(sessionId)}/deletion-impact`);
 }
 
-export function searchSessions(query: string, limit = 50): Promise<SessionSearchResponseDto> {
-  return requestJson(`/api/sessions/search?q=${encodeURIComponent(query)}&limit=${limit}`);
+export function searchSessions(query: string, { ownerUserId, signal }: { ownerUserId?: string | null; signal?: AbortSignal } = {}): Promise<SessionSearchResponseDto> {
+  const params = new URLSearchParams({ q: query });
+  if (ownerUserId) params.set('ownerUserId', ownerUserId);
+  return requestJson(`/api/sessions/search?${params}`, { signal });
 }
 
 export function searchSessionMessages(

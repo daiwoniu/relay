@@ -50,6 +50,9 @@ export interface InteractionResponseJob {
 /** Private engine preparation projection; paths and engine metadata never go to browser DTOs. */
 export interface StoredClaimedTurn {
   sourceDigest:string;claimedAt:number;
+  feishuHandoff?:string;
+  feishuSenderDisplayName?:string;
+  feishuPrivatePeerDisplayName?:string;
   message:{id:string;sessionId:string;attemptId:string;content:string;metadata:string|null};
   session:{ownerUserId:string;projectId:string;projectPath:string;engineSessionId:string|null;engineMetadata:string|null;
     contextCompactionCount:number;preferencesRevision:number;modelId:string|null;reasoningEffort:string|null;serviceTier:string|null};
@@ -138,7 +141,8 @@ export interface CoreCommandInputs {
     sessionId: string; attemptId: string; messageId: string; engineId: EngineId; resourceKey: string;
     content: string; metadata: JsonObject | null; expectedPreferencesRevision: number;
     clientIntentDigest?:string;
-    origin: { kind: 'direct' } | { kind: 'followup'; followupId: string };
+    origin: { kind: 'direct' } | { kind: 'followup'; followupId: string }
+      | { kind: 'feishu'; botId: string; tenantKey: string; sequence: number };
     draft?: { projectId: string; title: string; titleManuallySet: boolean };
     workspaceTaskLink?: { taskId: string; workspacePath: string; workspaceId?:string; connectionScope?:string; targetRef?:string };
     bind?: { modelId: string | null; reasoningEffort: string | null; serviceTier: string | null };
@@ -196,7 +200,7 @@ export interface CoreCommandInputs {
   };
   'turn.setHostContext': {
     sessionId: string; engineId: EngineId; externalSessionId: string; compactionCount: number;
-    delivered: boolean;
+    delivered: boolean; privatePeerIncluded?: true;
   };
   'turn.recordCompaction': {sessionId:string;externalSessionId:string;externalTurnId:string};
   'turn.projectInteractions':{sessionId:string;pendingCount:number};
@@ -389,6 +393,9 @@ export interface StorageResponseEnvelope<K extends CoreCommandName> {
 /** This core interface is not wired to production; other domain ports are added in their own batches. */
 export interface CoreStoragePort extends AnalyticsStoragePort {
   readHostedSites(input:{principal:Extract<StoragePrincipal,{kind:'user'}>|{kind:'system';purpose:'recovery'}}|{siteId:string}):Promise<import('../page-hosting/contract.js').HostedSite[]>;
+  acceptFeishuInbound(input:import('./native-feishu-im.js').FeishuAccept):Promise<import('./native-feishu-im.js').FeishuAcceptResult>;
+  runFeishuWork(input:import('./native-feishu-im.js').FeishuWork):Promise<import('./native-feishu-im.js').FeishuWorkResult>;
+  runFeishuAdmin(input:{principal:Extract<StoragePrincipal,{kind:'user'}>;request:import('./native-feishu-im.js').FeishuAdminRequest}):Promise<ReturnType<typeof import('./native-feishu-im.js').runFeishuAdmin>>;
   readCreditResetJob(request:{principal:Extract<StoragePrincipal,{kind:'user'}>;jobId:string}):Promise<CreditResetJob|null>;
   readMaintenanceState(request:{principal:{kind:'system';purpose:'maintenance'}}):Promise<{activeTasks:number;queuedTasks:number;pendingFollowups:number;byEngine:Record<import('../contracts/index.js').EngineId,number>;projectRoots:string[];fence:{fenceId:string;engineId:EngineId|null}|null}>;
   readResourceEvent(input:{principal:Extract<StoragePrincipal,{kind:'user'}>;resource:{kind:'project'|'session';id:string};scope:'mine'|'all'}):Promise<Extract<import('../contracts/index.js').FrontendEvent,{type:'project_updated'|'project_deleted'|'session_updated'|'session_deleted'}>|null>;
@@ -434,7 +441,8 @@ export interface CoreStoragePort extends AnalyticsStoragePort {
   readRepairCandidates(request: { principal: Extract<StoragePrincipal, { kind: 'user' }>; cursor: string | null }): Promise<{ candidates: RepairCandidate[]; nextCursor: string | null }>;
   checkSessionEffectFence(request: { principal: Extract<StoragePrincipal, { kind: 'user' }>; sessionId: string; externalOperationId: string }): Promise<boolean>;
   checkSessionEffectDispatch(request: { principal: Extract<StoragePrincipal, { kind: 'user' }>; sessionId: string; externalOperationId: string }): Promise<boolean>;
-  searchSessions(request: { principal: Extract<StoragePrincipal, { kind: 'user' }>; query: string; limit: number; scope: 'mine' | 'all' }): Promise<SessionSearchResponseDto>;
+  searchSessions(request: { principal: Extract<StoragePrincipal, { kind: 'user' }>; query: string; limit: number;
+    scope: 'mine' | 'all'; ownerUserId?: string }): Promise<SessionSearchResponseDto>;
   searchSessionMessages(request: { principal: Extract<StoragePrincipal, { kind: 'user' }>; sessionId: string; query: string; limit: number;
     includeProcess: boolean; includeOperations: boolean }): Promise<SessionMessageMatchesResponseDto>;
   readMessagesOffset(request: { principal: Extract<StoragePrincipal, { kind: 'user' }>; sessionId: string; limit: number; offset: number; includeDetails: boolean }): Promise<MessageDto[]>;
@@ -458,7 +466,7 @@ export interface CoreStoragePort extends AnalyticsStoragePort {
     copies: Array<{ sourceMessageId: string; targetMessageId: string; attachmentIds: string[] }>; next: number | null;
   }>;
   listSessionsOffset(request: { principal: Extract<StoragePrincipal, { kind: 'user' }>; scope: 'mine' | 'all'; projectId: string | null;
-    limit: number; offset: number }): Promise<SessionDto[]>;
+    limit: number; offset: number; afterId?: string }): Promise<SessionDto[]>;
   readMessagePage(request: { principal: Extract<StoragePrincipal, { kind: 'user' }>; sessionId: string; limit: number;
     before: { createdAt: number; id: string } | null; knownRevision: number | null }): Promise<MessagePageResultDto>;
   readMessageDetails(request: { principal: Extract<StoragePrincipal, { kind: 'user' }>; sessionId: string; messageId: string }): Promise<MessageDetailsDto>;

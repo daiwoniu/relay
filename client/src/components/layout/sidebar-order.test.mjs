@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
-  applySidebarOrder,
   getDefaultSidebarItems,
   moveSidebarItems,
   resolveSidebarItems,
@@ -26,13 +25,11 @@ test('侧栏排序客户端：自定义顺序过滤失效项并把新成员置�
   assert.deepEqual(keys(resolved), ['project:new', 'project:a', 'project:b']);
 });
 
-test('侧栏排序客户端：置顶项目与独立会话可以混排并投影回实体', () => {
+test('侧栏排序客户端：置顶项目与独立会话可以混排', () => {
   const projects = [project('p', { pinned: 1, pinned_at: 2 }), project('normal')];
   const sessions = [session('s', 'normal', { pinned: 1, pinned_at: 3 })];
   const order = getDefaultSidebarItems('pinned', projects, sessions);
   assert.deepEqual(keys(order), ['session:s', 'project:p']);
-  assert.deepEqual(applySidebarOrder(projects, order, 'project').map((item) => item.id), ['p']);
-  assert.deepEqual(applySidebarOrder(sessions, order, 'session').map((item) => item.id), ['s']);
 });
 
 test('侧栏排序客户端：乐观移动支持目标之前和末尾', () => {

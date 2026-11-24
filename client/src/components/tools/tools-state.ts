@@ -1,4 +1,6 @@
-export const TOOL_IDS = ['news', 'calendar', 'weather', 'greeting', 'timestamp', 'json', 'qr', 'diff', 'pomodoro', 'units', 'dates', 'shopping', 'random'] as const;
+import { ANALYTICS_TOOL_IDS } from '../../../../server/src/analytics/registry.ts';
+
+export const TOOL_IDS = ANALYTICS_TOOL_IDS;
 export type ToolId = typeof TOOL_IDS[number];
 export const LOCAL_TOOL_IDS = ['timestamp', 'json', 'qr', 'diff', 'pomodoro', 'units', 'dates', 'shopping', 'random'] as const;
 export type LocalToolId = typeof LOCAL_TOOL_IDS[number];

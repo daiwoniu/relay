@@ -47,6 +47,9 @@ parentPort!.on('message', (request: { protocolVersion: number; requestId: string
         case 'readRuntimeAsyncQuestion':value=store.readRuntimeAsyncQuestion(request.input);break;
         case 'checkWorkspaceFirstSend':value=store.checkWorkspaceFirstSend(request.input);break;
         case 'readHostedSites':value=store.readHostedSites(request.input);break;
+        case 'acceptFeishuInbound':value=store.acceptFeishuInbound(request.input);break;
+        case 'runFeishuWork':value=store.runFeishuWork(request.input);break;
+        case 'runFeishuAdmin':value=store.runFeishuAdmin(request.input);break;
         case 'readSidebar':value=store.readSidebar(request.input);break;
         case 'readConcurrency':value=store.readConcurrency(request.input);break;
         case 'readStartupWorkPage':value=store.readStartupWorkPage(request.input);break;
