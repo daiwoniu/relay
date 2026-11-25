@@ -9,7 +9,6 @@ export default function PreviewState({
   error,
   tone = 'empty',
   action,
-  hidden = false,
   compact = false,
 }: {
   title: string;
@@ -17,12 +16,11 @@ export default function PreviewState({
   error?: unknown;
   tone?: PreviewStateTone;
   action?: ReactNode;
-  hidden?: boolean;
   compact?: boolean;
 }) {
   return (
     <div
-      className={`workspace-preview-state is-${tone}${compact ? ' is-compact' : ''}${hidden ? ' hidden' : ''}`}
+      className={`workspace-preview-state is-${tone}${compact ? ' is-compact' : ''}`}
       role={tone === 'loading' ? 'status' : undefined}
     >
       <span className="workspace-preview-state__icon" aria-hidden="true">

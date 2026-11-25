@@ -2,7 +2,7 @@ import Tooltip from '../ui/Tooltip';
 import { useState, type ReactNode } from 'react';
 import Modal from '../ui/Modal';
 import IconActionButton from '../ui/IconActionButton';
-import MinimizedPanelBar from '../ui/MinimizedPanelBar';
+import MinimizedPanelBar, { MinimizePanelIcon } from '../ui/MinimizedPanelBar';
 
 interface Props {
   labelledBy: string;
@@ -31,7 +31,7 @@ export default function FilePickerShell({ labelledBy, title, subtitle, onClose, 
         </div>
         <div className="flex shrink-0 items-center gap-1">
           {headerActions}
-          <IconActionButton label={`最小化${title}`} variant="neutral" onClick={() => setMinimized(true)}><svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 11.5h10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg></IconActionButton>
+          <IconActionButton label={`最小化${title}`} variant="neutral" onClick={() => setMinimized(true)}><MinimizePanelIcon /></IconActionButton>
           <IconActionButton label={`关闭${title}`} variant="neutral" onClick={onClose}><svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" /></svg></IconActionButton>
         </div>
       </div>

@@ -22,7 +22,7 @@ import {
 } from '../ui/FormControls';
 import Modal from '../ui/Modal';
 import IconActionButton from '../ui/IconActionButton';
-import { ClosePanelIcon } from '../ui/MinimizedPanelBar';
+import { ClosePanelIcon, MinimizePanelIcon } from '../ui/MinimizedPanelBar';
 import Tooltip from '../ui/Tooltip';
 import ThemePreviewBar from './ThemePreviewBar';
 
@@ -63,6 +63,7 @@ const ThemeSettingsDialog = forwardRef<ThemeSettingsDialogHandle, ThemeSettingsD
   const lifecycleRef = useRef(0);
   const baseUpdatedAtRef = useRef(theme.settings.updatedAt);
   const dirtyRef = useRef(false);
+  const busy = theme.saving || theme.loading || uploading;
 
   const setDirty = useCallback((dirty: boolean) => {
     dirtyRef.current = dirty;
@@ -100,8 +101,8 @@ const ThemeSettingsDialog = forwardRef<ThemeSettingsDialogHandle, ThemeSettingsD
   }, [theme.preview]);
 
   useEffect(() => {
-    onBusyChange?.(theme.saving || theme.loading || uploading);
-  }, [onBusyChange, theme.loading, theme.saving, uploading]);
+    onBusyChange?.(busy);
+  }, [onBusyChange, busy]);
 
   useEffect(() => {
     openRef.current = open;
@@ -169,12 +170,10 @@ const ThemeSettingsDialog = forwardRef<ThemeSettingsDialogHandle, ThemeSettingsD
     onClose();
   }, [discardChanges, onClose, theme.saving]);
 
-  useImperativeHandle(ref, () => ({
-    discardChanges,
-    minimize: () => {
-      if (!theme.saving && !theme.loading && !uploading) setPreviewMinimized(true);
-    },
-  }), [discardChanges, setPreviewMinimized, theme.loading, theme.saving, uploading]);
+  const minimize = useCallback(() => {
+    if (!busy) setPreviewMinimized(true);
+  }, [busy, setPreviewMinimized]);
+  useImperativeHandle(ref, () => ({ discardChanges, minimize }), [discardChanges, minimize]);
 
   useEffect(() => {
     if (!open || !minimized || embedded) return;
@@ -242,7 +241,7 @@ const ThemeSettingsDialog = forwardRef<ThemeSettingsDialogHandle, ThemeSettingsD
       {!embedded && <div className="flex items-start justify-between gap-4 border-b border-[var(--color-border)] px-4 py-3.5 sm:px-5">
         <div><h2 id="theme-settings-title" className="text-base font-semibold text-[var(--color-text)]">主题与外观</h2><p className="mt-0.5 text-xs text-[var(--color-text-tertiary)]">背景营造氛围，面板始终保证消息清晰可读</p></div>
         <div className="flex items-center gap-1">
-          <Tooltip coexist content="收起设置面板，在完整页面中查看当前未保存的主题效果"><button type="button" onClick={() => setPreviewMinimized(true)} disabled={theme.saving || theme.loading || uploading} className="flex h-8 w-8 items-center justify-center rounded-lg text-[var(--color-text-tertiary)] transition-colors hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus-ring)] disabled:opacity-50" aria-label="最小化主题预览"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 11.5h10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg></button></Tooltip>
+          <Tooltip coexist content="收起设置面板，在完整页面中查看当前未保存的主题效果"><button type="button" onClick={minimize} disabled={busy} className="flex h-8 w-8 items-center justify-center rounded-lg text-[var(--color-text-tertiary)] transition-colors hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus-ring)] disabled:opacity-50" aria-label="最小化主题预览"><MinimizePanelIcon /></button></Tooltip>
           <IconActionButton label="关闭主题设置" variant="neutral" tooltip={false} className="h-8 w-8" onClick={closeAndRollback} disabled={theme.saving}><ClosePanelIcon /></IconActionButton>
         </div>
       </div>}

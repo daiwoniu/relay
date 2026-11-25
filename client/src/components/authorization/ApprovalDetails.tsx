@@ -1,3 +1,4 @@
+import { describeFileChanges } from '../../stores/process-event-summary';
 import { shouldShowApprovalReason } from './approval-details-model';
 
 type Details = Record<string, unknown>;
@@ -5,9 +6,9 @@ type Details = Record<string, unknown>;
 export default function ApprovalDetails({ details, summary }: { details: Details; summary?: string }) {
   const command = Array.isArray(details.command) ? details.command.join(' ') : details.command;
   const commandActions = Array.isArray(details.commandActions) ? details.commandActions : [];
-  const changedFiles = details.fileChanges && typeof details.fileChanges === 'object'
+  const changedFiles = details.fileChanges && typeof details.fileChanges === 'object' && !Array.isArray(details.fileChanges)
     ? Object.keys(details.fileChanges)
-    : [];
+    : describeFileChanges(details).paths;
   const rawInput = details.rawInput && typeof details.rawInput === 'object'
     ? details.rawInput as Record<string, unknown>
     : {};
@@ -39,7 +40,7 @@ export default function ApprovalDetails({ details, summary }: { details: Details
       )}
       {Boolean(details.cwd) && <div className="break-all text-[var(--color-text-tertiary)]">目录：{String(details.cwd)}</div>}
       {Boolean(details.grantRoot) && <div className="break-all text-[var(--color-text-tertiary)]">授权目录：{String(details.grantRoot)}</div>}
-      {changedFiles.length > 0 && <div className="text-[var(--color-text-secondary)]">涉及文件：{changedFiles.join('、')}</div>}
+      {changedFiles.length > 0 && <div className="break-all text-[var(--color-text-secondary)]">涉及文件：{changedFiles.join('、')}</div>}
       {Boolean(details.permissions) && (
         <pre className="approval-details__code max-h-32 overflow-auto rounded-lg border border-[var(--color-border-light)] bg-[var(--color-surface)] px-3 py-2 text-[11px] text-[var(--color-text-secondary)] whitespace-pre-wrap break-all">{JSON.stringify(details.permissions, null, 2)}</pre>
       )}

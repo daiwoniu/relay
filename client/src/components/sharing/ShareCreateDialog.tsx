@@ -16,7 +16,7 @@ import {
   textFormButtonClassName,
 } from '../ui/FormControls';
 import Modal from '../ui/Modal';
-import MinimizedPanelBar, { ClosePanelIcon } from '../ui/MinimizedPanelBar';
+import MinimizedPanelBar, { ClosePanelIcon, MinimizePanelIcon } from '../ui/MinimizedPanelBar';
 import IconActionButton from '../ui/IconActionButton';
 import SharePreviewDialog from './SharePreviewDialog';
 import { getShareCaution } from './share-caution';
@@ -143,7 +143,7 @@ export default function ShareCreateDialog({ draft, onClose }: { draft: ShareDraf
           <h2 id="share-create-title" className="text-base font-semibold text-[var(--color-text)]">创建分享</h2>
           <p className="mt-1 text-xs text-[var(--color-text-secondary)]">创建后内容和有效期不可修改。</p>
         </div>
-        <div className="flex shrink-0 items-center gap-1"><IconActionButton label="最小化创建分享" variant="neutral" tooltip={false} className="h-8 w-8" onClick={() => {featureAction('share','minimize','message_menu');setMinimized(true);}}><svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 11.5h10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg></IconActionButton><IconActionButton label="关闭创建分享" variant="neutral" tooltip={false} className="h-8 w-8" disabled={submitting} onClick={close}><ClosePanelIcon /></IconActionButton></div>
+        <div className="flex shrink-0 items-center gap-1"><IconActionButton label="最小化创建分享" variant="neutral" tooltip={false} className="h-8 w-8" onClick={() => {featureAction('share','minimize','message_menu');setMinimized(true);}}><MinimizePanelIcon /></IconActionButton><IconActionButton label="关闭创建分享" variant="neutral" tooltip={false} className="h-8 w-8" disabled={submitting} onClick={close}><ClosePanelIcon /></IconActionButton></div>
       </div>
 
       <div className="mb-3 flex items-center gap-2.5 rounded-xl border border-[var(--color-notice-info-border)] bg-[var(--color-notice-info-bg)] px-3 py-2.5">

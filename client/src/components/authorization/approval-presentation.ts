@@ -1,4 +1,5 @@
 import type { PendingApprovalKind } from '../../generated/relay-contracts.ts';
+import { containsInteractionCommandSyntax, normalizeInteractionReason } from '../../../../server/src/engine/interaction-purpose.ts';
 
 type ApprovalPresentationInput = {
   kind: PendingApprovalKind;
@@ -35,34 +36,14 @@ function inlineParameterPlaceholder(kind: PendingApprovalKind, networkApproval: 
   return networkApproval ? '相关地址' : '相关权限参数';
 }
 
-function containsFullParameter(value: string): boolean {
-  return /https?:\/\//i.test(value)
-    || /[A-Za-z]:[\\/]/.test(value)
-    || /(?:^|[\s（(“"'：:])(?:\.{1,2}[\\/]|\/)[^\s，。！？；]+/.test(value)
-    || /(?:^|\s)--?[A-Za-z][\w-]*(?:[=\s]|$)/.test(value)
-    || /\b(?:token|secret|password|passwd|api[_-]?key|authorization)=\S+/i.test(value)
-    || /\b(?:npm|pnpm|yarn)\s+(?:run|install|ci|test|exec|start|build|add|remove|update|publish)\b/i.test(value)
-    || /\bgit\s+(?:add|commit|diff|status|show|log|push|pull|merge|rebase|checkout|switch|worktree)\b/i.test(value)
-    || /\b(?:node|python(?:3)?|mvn|curl|docker|kubectl|powershell|pwsh)\s+[^\s，。！？；]+/i.test(value)
-    || /\b(?:SELECT|UPDATE|DELETE|INSERT|ALTER|DROP|CREATE)\b[\s\S]*\b(?:FROM|INTO|TABLE|SET|VALUES)\b/i.test(value)
-    || /\b(?:Get|Set|New|Remove|Start|Stop|Invoke|Test)-[A-Za-z]+\s+\S+/i.test(value)
-    || /\b(?:cat|ls|grep|rg|find|sed|awk|chmod|chown|rm|cp|mv|bash|sh)\s+\S+/i.test(value)
-    || /\\\\[^\\\s]+\\[^\\\s]+/.test(value)
-    || /&&|\|\|/.test(value);
-}
-
 function normalizeChineseReason(
   value: unknown,
   kind: PendingApprovalKind,
   networkApproval: boolean,
 ): string | null {
   if (typeof value !== 'string') return null;
-  const normalized = normalizeWhitespace(value)
-    .replace(/^是否允许(?:我)?\s*/, '')
-    .replace(/[？?]+$/, '')
-    .replace(/`[^`\r\n]+`/g, inlineParameterPlaceholder(kind, networkApproval));
-  const purpose = normalizeWhitespace(normalized);
-  return purpose && CHINESE_TEXT_PATTERN.test(purpose) && !containsFullParameter(purpose)
+  const purpose = normalizeInteractionReason(value, inlineParameterPlaceholder(kind, networkApproval));
+  return purpose && CHINESE_TEXT_PATTERN.test(purpose) && !containsInteractionCommandSyntax(purpose)
     ? purpose
     : null;
 }

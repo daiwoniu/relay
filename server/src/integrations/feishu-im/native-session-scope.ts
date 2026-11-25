@@ -24,6 +24,9 @@ export function feishuExecutionId(parts: readonly (string | number)[]) {
   const hex = createHash('sha256').update(JSON.stringify(['relay-feishu', ...parts])).digest('hex');
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-5${hex.slice(13, 16)}-8${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
 }
+export const feishuAttachmentOwnerId = (actorId: string) => feishuExecutionId([actorId, 'attachment-owner']);
+export const feishuAttachmentUploadId = (messageId: string, attachment: { type: string; key: string }) =>
+  feishuExecutionId([messageId, attachment.type, attachment.key, 'attachment-upload']);
 export function formatFeishuTurnPrompt(content: string, scope: { fromFeishu: boolean; handoff?: string; senderDisplayName?: string }) {
   if (!scope.fromFeishu && !scope.handoff) return content;
   const context = scope.handoff

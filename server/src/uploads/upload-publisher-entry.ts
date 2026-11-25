@@ -6,6 +6,7 @@ import { ProjectUploadStore,UploadError } from './project-uploads.js';
 import { UploadPublishInputSchema } from './upload-publisher-contract.js';
 import { UploadedFileDraftDtoSchema } from '../contracts/index.js';
 import { UploadManifestReadSchema } from './read-upload-snapshot.js';
+import { uploadMessageDirectory } from './upload-promotion-contract.js';
 const key=(value:string)=>process.platform==='win32'?value.toLowerCase():value;
 const waiting=new Map<string,(allowed:boolean)=>void>();
 parentPort!.on('message',message=>{if(message?.requestId!==workerData.requestId||typeof message.permissionId!=='string'||typeof message.allowed!=='boolean')return;waiting.get(message.permissionId)?.(message.allowed);});
@@ -36,7 +37,7 @@ try{
   const root=fs.realpathSync(input.projectPath);if(key(root)!==key(path.resolve(input.projectPath)))throw new UploadError(409,'项目路径已变化');
   const store=new ProjectUploadStore({now:()=>request.createdAt});
   const inspect=()=>{
-    const directory=path.join(root,'.relay_upload','tmp',request.messageId);
+    const directory=uploadMessageDirectory(root,'tmp',request.messageId);
     for(const target of [path.join(root,'.relay_upload'),path.join(root,'.relay_upload','tmp'),directory]){
       if(!fs.existsSync(target))throw new UploadError(404,'附件不存在');const value=fs.lstatSync(target);if(!value.isDirectory()||value.isSymbolicLink()||key(fs.realpathSync(target))!==key(target))throw new UploadError(409,'附件目录已变化');
     }
@@ -45,7 +46,7 @@ try{
     const entries=manifest.attachments.filter(entry=>entry.uploadId===request.uploadId);if(!entries.length)throw new UploadError(404,'附件不存在');if(entries.length!==1)throw new UploadError(409,'附件来源已变化');const entry=entries[0]!;
     const draft=UploadedFileDraftDtoSchema.parse({id:entry.attachmentId,kind:'uploaded_file',messageId:manifest.messageId,uploadId:entry.uploadId,projectId:manifest.projectId,name:entry.name,path:path.join(directory,entry.storedName),size:entry.size,mimeType:entry.mimeType});
     if(!fs.existsSync(draft.path))throw new UploadError(409,'附件已变化');
-    if(draft.id!==request.attachmentId||draft.name!==request.name||draft.mimeType!==request.mimeType||draft.size!==request.size||key(path.dirname(draft.path))!==key(path.join(root,'.relay_upload','tmp',request.messageId))||hashFile(draft.path,request.size)!==input.digest)throw new UploadError(409,'附件与请求不一致');return UploadedFileDraftDtoSchema.parse(draft);
+    if(draft.id!==request.attachmentId||draft.name!==request.name||draft.mimeType!==request.mimeType||draft.size!==request.size||key(path.dirname(draft.path))!==key(directory)||hashFile(draft.path,request.size)!==input.digest)throw new UploadError(409,'附件与请求不一致');return UploadedFileDraftDtoSchema.parse(draft);
   };
   let draft;
   try{draft=inspect();}catch(error){if(!(error instanceof UploadError)||error.status!==404||input.mode==='inspect')throw error;}

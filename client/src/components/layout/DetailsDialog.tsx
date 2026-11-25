@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import IconActionButton from '../ui/IconActionButton';
 import Modal from '../ui/Modal';
-import MinimizedPanelBar from '../ui/MinimizedPanelBar';
+import MinimizedPanelBar, { MinimizePanelIcon } from '../ui/MinimizedPanelBar';
 
 export default function DetailsDialog({ open, title, description, onClose, children, presentation = 'info', panelId }: {
   open: boolean;
@@ -26,7 +26,7 @@ export default function DetailsDialog({ open, title, description, onClose, child
     >
       <div className={`details-dialog__header flex items-center justify-between gap-3 ${presentation === 'info' ? 'info-panel__header' : ''}`}>
         <div className="min-w-0"><div id={titleId} className={`details-dialog__title ${presentation === 'info' ? 'info-panel__title' : ''}`}>{title}</div>{description && <div className="mt-0.5 truncate text-xs text-[var(--color-text-tertiary)]">{description}</div>}</div>
-        <div className="flex shrink-0 items-center gap-1">{presentation === 'task' && <IconActionButton label={`最小化${title}`} variant="neutral" tooltip={false} onClick={() => setMinimized(true)} className="h-7 w-7"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><path d="M3 10.5h8" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/></svg></IconActionButton>}
+        <div className="flex shrink-0 items-center gap-1">{presentation === 'task' && <IconActionButton label={`最小化${title}`} variant="neutral" tooltip={false} onClick={() => setMinimized(true)} className="h-7 w-7"><MinimizePanelIcon /></IconActionButton>}
         <IconActionButton label="关闭详情" variant="neutral" tooltip={false} onClick={onClose} className="h-7 w-7">
           <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><path d="M3.5 3.5l7 7M10.5 3.5l-7 7" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/></svg>
         </IconActionButton></div>

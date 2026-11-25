@@ -4,6 +4,10 @@ import { createPortal } from 'react-dom';
 import { registerMinimizedPanel } from './minimizedPanelRegistry';
 import useMinimizedPanelSlot, { focusMinimizedPanelSlot } from './useMinimizedPanelSlot';
 
+export function MinimizePanelIcon() {
+  return <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 11.5h10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>;
+}
+
 export function RestorePanelIcon() {
   return <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M5 4.5h6.5v7H5zM3.5 10V3.5H10" stroke="currentColor" strokeWidth="1.35" strokeLinejoin="round" strokeLinecap="round"/></svg>;
 }
@@ -48,7 +52,7 @@ export default function MinimizedPanelBar({ open, panelId, title, description = 
   return createPortal(
     <div role="region" aria-label={`${title}已最小化`} data-panel-id={panelId} className="minimized-panel-bar">
       <div className="minimized-panel-bar__identity">
-        <span className="minimized-panel-bar__icon" aria-hidden="true">{icon}</span>
+        <button type="button" className="minimized-panel-bar__icon" aria-label={`移动已收起的窗口（${title}）`} title="拖动或用方向键移动已收起的窗口">{icon}</button>
         <span className="minimized-panel-bar__copy"><strong className="minimized-panel-bar__title">{title}</strong><span className={`minimized-panel-bar__description${descriptionClassName ? ` ${descriptionClassName}` : ''}`} aria-live={announceDescription ? 'polite' : undefined}>{description}</span></span>
       </div>
       <div className="minimized-panel-bar__actions">

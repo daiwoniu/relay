@@ -4,6 +4,7 @@ import path from 'node:path';
 import { UploadedFileDraftDtoSchema,type UploadedFileDraftDto } from '../contracts/index.js';
 import { canonicalJson,StorageContractError } from '../storage/command-boundary.js';
 import { UploadPublishInputSchema,type UploadPublishInput } from './upload-publisher-contract.js';
+import { uploadMessageDirectory } from './upload-promotion-contract.js';
 /** Called inside the shared physical-root activity owner. This promise ends only after the Worker exits. */
 export class UploadPublisher{
   private closed=false;private readonly active=new Set<Worker>();
@@ -26,7 +27,7 @@ export class UploadPublisher{
         if(draft||error){failed=true;return;}
         if(['FORBIDDEN','NOT_FOUND','CONFLICT','PAYLOAD_TOO_LARGE','INVALID_ARGUMENT','STORAGE_UNAVAILABLE'].includes(message.error)){error=message.error;return;}
         try{canonicalJson(message.draft,32768);const value=UploadedFileDraftDtoSchema.parse(message.draft),expected=input.request,key=(value:string)=>process.platform==='win32'?value.toLowerCase():value;
-          if(value.id!==expected.attachmentId||value.uploadId!==expected.uploadId||value.messageId!==expected.messageId||value.projectId!==expected.projectId||value.name!==expected.name||value.size!==expected.size||value.mimeType!==expected.mimeType||key(path.dirname(value.path))!==key(path.join(path.resolve(input.projectPath),'.relay_upload','tmp',expected.messageId)))throw new Error();draft=value;
+          if(value.id!==expected.attachmentId||value.uploadId!==expected.uploadId||value.messageId!==expected.messageId||value.projectId!==expected.projectId||value.name!==expected.name||value.size!==expected.size||value.mimeType!==expected.mimeType||key(path.dirname(value.path))!==key(uploadMessageDirectory(path.resolve(input.projectPath),'tmp',expected.messageId)))throw new Error();draft=value;
         }catch{failed=true;}
       });
       worker.on('error',()=>{failed=true;});worker.once('exit',code=>{clearTimeout(timer);signal?.removeEventListener('abort',terminate);this.active.delete(worker);if(code===0&&!failed&&draft)resolve(draft);else reject(new StorageContractError(code===0&&!failed&&error?error:'STORAGE_UNAVAILABLE'));});

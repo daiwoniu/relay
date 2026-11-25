@@ -63,44 +63,50 @@ export function splitFeishuReplyBody(body: string, executionLine?: string) {
 }
 
 export function buildFeishuContextCard(id: string, body: string, card?: FeishuContextCard, executionLine?: string) {
+  const plain = (content: string) => ({ tag: 'plain_text', content });
   const button = (choice: FeishuCardChoice, label: string, type: 'primary' | 'default') => ({
-    tag: 'button', text: { tag: 'plain_text', content: label }, type,
-    value: { relay: card?.kind === 'clarify' ? 'clarify' : 'new-context', id, choice },
+    tag: 'button' as const, text: plain(label), type,
+    behaviors: [{ type: 'callback' as const, value: { relay: card?.kind === 'clarify' ? 'clarify' : 'new-context', id, choice } }],
   });
   const actions = card?.kind === 'clarify'
     ? [...clarificationLabels(card.candidates).map((title, index) => button(matterChoices[index]!, title, 'default')),
       button('supplement', '都不是，我补充一下', 'default')]
     : card ? [button('carry', '带摘要新建', 'primary'), ...(card.kind === 'private' ? [button('clear', '空白新建', 'default')] : [])] : [];
   const { text, footer } = splitFeishuReplyBody(body, executionLine);
-  const plain = (content: string) => ({ tag: 'plain_text', content });
-  const elements: { tag: string; content?: string; text?: ReturnType<typeof plain>; actions?: typeof actions; elements?: ReturnType<typeof plain>[] }[] =
-    [footer
-      ? { tag: 'markdown', content: feishuModelMarkdown(text) }
-      : { tag: 'div', text: plain(text) }];
-  if (actions.length) elements.push({ tag: 'action', actions });
-  if (footer) elements.push({ tag: 'note', elements: [plain(footer)] });
-  return { elements };
+  const content = footer
+    ? { tag: 'markdown' as const, content: feishuModelMarkdown(text) }
+    : { tag: 'div' as const, text: plain(text) };
+  return {
+    schema: '2.0',
+    body: { elements: [content, ...actions, ...(footer
+      ? [{ tag: 'div' as const, text: { ...plain(footer), text_size: 'notation', text_color: 'grey' } }]
+      : [])] },
+  };
 }
 
-export function buildFeishuReplyPayload(outgoing: {
+export function buildFeishuDelivery(outgoing: {
   id: string; body: string; contextCard?: FeishuContextCard; inbound: { executionLine?: string } | null;
   replyTo: string | null; inThread: boolean; chatId: string;
 }) {
+  const request = (content: string, msg_type: 'interactive' | 'text') => {
+    const message = { content, msg_type, uuid: outgoing.id };
+    return outgoing.replyTo
+      ? { method: 'reply', payload: { path: { message_id: outgoing.replyTo },
+        data: { ...message, reply_in_thread: outgoing.inThread } } } as const
+      : { method: 'create', payload: { params: { receive_id_type: 'chat_id' },
+        data: { ...message, receive_id: outgoing.chatId } } } as const;
+  };
   const executionLine = outgoing.inbound?.executionLine;
   if (outgoing.contextCard || executionLine) {
-    const routing = outgoing.replyTo ? { reply_in_thread: outgoing.inThread } : { receive_id: outgoing.chatId };
-    const cardData = (footer?: string) => ({
-      content: JSON.stringify(buildFeishuContextCard(outgoing.id, outgoing.body, outgoing.contextCard, footer)),
-      msg_type: 'interactive' as const, uuid: outgoing.id,
-    });
-    // The size limit applies to the JSON request including the escaped card content.
-    const fits = (data: ReturnType<typeof cardData>) => Buffer.byteLength(JSON.stringify({ ...data, ...routing })) <= 30_000;
-    const data = cardData(executionLine);
-    if (fits(data)) return data;
+    const card = (footer?: string) => request(
+      JSON.stringify(buildFeishuContextCard(outgoing.id, outgoing.body, outgoing.contextCard, footer)), 'interactive');
+    const fits = (delivery: ReturnType<typeof request>) => Buffer.byteLength(JSON.stringify(delivery.payload.data)) <= 30_000;
+    const delivery = card(executionLine);
+    if (fits(delivery)) return delivery;
     if (outgoing.contextCard && executionLine) {
-      const plainCard = cardData();
+      const plainCard = card();
       if (fits(plainCard)) return plainCard;
     }
   }
-  return { content: JSON.stringify({ text: outgoing.body }), msg_type: 'text' as const, uuid: outgoing.id };
+  return request(JSON.stringify({ text: outgoing.body }), 'text');
 }

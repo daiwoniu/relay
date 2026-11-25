@@ -5,6 +5,8 @@ import { parseAcceptanceArguments, runEngineScenarios } from './lib/engine-scena
 test('真实引擎必须同时显式提供 allow、engine 和 scenario', () => {
   assert.deepEqual(parseAcceptanceArguments([]), { mode: 'read-only' });
   assert.deepEqual(parseAcceptanceArguments(['--workbench']), { mode: 'read-only', workbench:true });
+  assert.deepEqual(parseAcceptanceArguments(['--feishu-approvals']), { mode: 'read-only', feishuApprovals: true });
+  assert.deepEqual(parseAcceptanceArguments(['--feishu-approvals-built']), { mode: 'read-only', feishuApprovals: true, built: true });
   assert.throws(()=>parseAcceptanceArguments(['--workbench','--allow-engine-run','--engine','codex','--scenario','complete']),/未知参数/u);
   for (const args of [
     ['--allow-engine-run'],

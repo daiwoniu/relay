@@ -230,6 +230,7 @@ function StepStatus({ step }: { step: ProcessStep }) {
 
 interface Props {
   readOnly?: boolean;
+  renderReadOnlyInteractionActions?: (step: ProcessStep) => ReactNode;
   flowDetailsPending?: boolean;
   onLoadFlowDetails?: () => void;
   flowRuntimeStatus?: FlowRuntimeStatus;
@@ -457,9 +458,9 @@ function ProcessSubtaskBlock({ step, searchTarget = false, full, report }: { ste
   );
 }
 
-function ProcessExecutionGroup({ sections, sessionId, onInteractionRespond, onAsyncQuestionAnswer, answeredAsyncQuestionIds, asyncQuestionAnswers, canAnswerAsyncQuestion, searchTargetItemId, full, readOnly, renderSubtaskReport }: {
+function ProcessExecutionGroup({ sections, sessionId, onInteractionRespond, onAsyncQuestionAnswer, answeredAsyncQuestionIds, asyncQuestionAnswers, canAnswerAsyncQuestion, searchTargetItemId, full, renderReadOnlyInteraction, renderSubtaskReport }: {
   renderSubtaskReport?: (step: ProcessStep) => ReactNode;
-  readOnly?: boolean;
+  renderReadOnlyInteraction?: (step: ProcessStep, key?: string) => ReactNode;
   sections: ProcessExecutionSection[];
   sessionId?: string;
   onInteractionRespond?: InteractionResponseHandler;
@@ -474,7 +475,7 @@ function ProcessExecutionGroup({ sections, sessionId, onInteractionRespond, onAs
     <div data-process-execution-group>
       {sections.map((section) => {
         if (section.type === 'interaction') {
-          if (readOnly) return <ReadOnlyInteraction key={section.key} step={section.step} />;
+          if (renderReadOnlyInteraction) return renderReadOnlyInteraction(section.step, section.key);
           const searchTarget = section.step.id === searchTargetItemId;
           if (section.step.details?.interactionKind === 'async_question') return <div key={section.key} className="process-timeline__interaction" data-search-target={searchTarget ? `operation:${section.step.id}` : undefined}><AsyncQuestionPanel step={section.step} sessionId={sessionId || ''} answered={answeredAsyncQuestionIds?.has(section.step.id) || false} answerContent={asyncQuestionAnswers?.get(section.step.id)} canAnswer={Boolean(canAnswerAsyncQuestion)} onAnswer={onAsyncQuestionAnswer} onRespond={onInteractionRespond} full={full} /></div>;
           return <div key={section.key} className="process-timeline__interaction" data-search-target={searchTarget ? `operation:${section.step.id}` : undefined} data-search-content={searchTarget ? true : undefined}><InteractionPanel step={section.step} onRespond={onInteractionRespond} full={full} /></div>;
@@ -580,7 +581,9 @@ function FlowRawRecord({ step }: { step: ProcessStep }) {
   return <details className="flow-raw" onToggle={event => {if(event.currentTarget.open!==open)featureAction('message',event.currentTarget.open?'expand_details':'close','message');setOpen(event.currentTarget.open);}}><summary>原始记录</summary>{open && <pre>{JSON.stringify(step, null, 2)}</pre>}</details>;
 }
 
-function ProcessStepsComponent({ steps, sessionId, messageId, processContent, processContentDetail, processTimeline, renderNarrativeDetail, defaultCollapsed = true, preserveExpandedOnSettle = false, settled = true, narrativeStatus = 'completed', onInteractionRespond, onAsyncQuestionAnswer, answeredAsyncQuestionIds, asyncQuestionAnswers, canAnswerAsyncQuestion, searchTargetScope, searchTargetItemId, full, historicalRecords, historicalRecordCount = 0, flowContext, flowFinalContent, flowFinalRecordedAt, flowOutcome, flowRuntimeStatus, flowDetailsPending, onLoadFlowDetails, readOnly = false }: Props) {
+function ProcessStepsComponent({ steps, sessionId, messageId, processContent, processContentDetail, processTimeline, renderNarrativeDetail, defaultCollapsed = true, preserveExpandedOnSettle = false, settled = true, narrativeStatus = 'completed', onInteractionRespond, onAsyncQuestionAnswer, answeredAsyncQuestionIds, asyncQuestionAnswers, canAnswerAsyncQuestion, searchTargetScope, searchTargetItemId, full, historicalRecords, historicalRecordCount = 0, flowContext, flowFinalContent, flowFinalRecordedAt, flowOutcome, flowRuntimeStatus, flowDetailsPending, onLoadFlowDetails, readOnly = false, renderReadOnlyInteractionActions }: Props) {
+  const renderReadOnlyInteraction = readOnly ? (step: ProcessStep, key?: string) => <ReadOnlyInteraction key={key}
+    step={step} settled={settled} actions={renderReadOnlyInteractionActions?.(step)} /> : undefined;
   const reportAvailable = Boolean(sessionId && messageId && !readOnly);
   const flowDisplayContext = useMemo(() => flowContext ? { ...flowContext, canReadSubAgentReports: reportAvailable } : undefined, [flowContext, reportAvailable]);
   const followups = useSessionFollowupStore(state => sessionId ? state.bySession[sessionId] : undefined);
@@ -703,15 +706,15 @@ function ProcessStepsComponent({ steps, sessionId, messageId, processContent, pr
                 const status = getProcessNarrativeStatus(processTimeline || EMPTY_FLOW_TIMELINE, section.itemId, settled, narrativeStatus);
                 return <ProcessNarrativeRow key={section.key} content={section.content} detail={status === 'completed' ? renderNarrativeDetail?.(section.content) : undefined} status={status} defaultExpanded={section.itemId === defaultExpandedNarrativeItemId} itemId={section.itemId} searchTarget={searchTargetScope === 'process' && section.itemId === searchTargetItemId} full={full} />;
               }
-              return <ProcessExecutionGroup key={section.key} sections={section.sections} sessionId={sessionId} onInteractionRespond={onInteractionRespond} onAsyncQuestionAnswer={onAsyncQuestionAnswer} answeredAsyncQuestionIds={answeredAsyncQuestionIds} asyncQuestionAnswers={asyncQuestionAnswers} canAnswerAsyncQuestion={canAnswerAsyncQuestion} searchTargetItemId={searchTargetScope === 'operation' ? searchTargetItemId : undefined} full={full} readOnly={readOnly} renderSubtaskReport={renderSubtaskReport} />;
+              return <ProcessExecutionGroup key={section.key} sections={section.sections} sessionId={sessionId} onInteractionRespond={onInteractionRespond} onAsyncQuestionAnswer={onAsyncQuestionAnswer} answeredAsyncQuestionIds={answeredAsyncQuestionIds} asyncQuestionAnswers={asyncQuestionAnswers} canAnswerAsyncQuestion={canAnswerAsyncQuestion} searchTargetItemId={searchTargetScope === 'operation' ? searchTargetItemId : undefined} full={full} renderReadOnlyInteraction={renderReadOnlyInteraction} renderSubtaskReport={renderSubtaskReport} />;
             }) : <>
               {normalizedProcessContent && <ProcessNarrativeRow content={normalizedProcessContent} detail={processContentDetail} status={narrativeStatus} defaultExpanded={settled} searchTarget={searchTargetScope === 'process'} full={full} />}
-              {fallbackExecutionSection && <ProcessExecutionGroup sections={fallbackExecutionSection.sections} sessionId={sessionId} onInteractionRespond={onInteractionRespond} onAsyncQuestionAnswer={onAsyncQuestionAnswer} answeredAsyncQuestionIds={answeredAsyncQuestionIds} asyncQuestionAnswers={asyncQuestionAnswers} canAnswerAsyncQuestion={canAnswerAsyncQuestion} searchTargetItemId={searchTargetScope === 'operation' ? searchTargetItemId : undefined} full={full} readOnly={readOnly} renderSubtaskReport={renderSubtaskReport} />}
+              {fallbackExecutionSection && <ProcessExecutionGroup sections={fallbackExecutionSection.sections} sessionId={sessionId} onInteractionRespond={onInteractionRespond} onAsyncQuestionAnswer={onAsyncQuestionAnswer} answeredAsyncQuestionIds={answeredAsyncQuestionIds} asyncQuestionAnswers={asyncQuestionAnswers} canAnswerAsyncQuestion={canAnswerAsyncQuestion} searchTargetItemId={searchTargetScope === 'operation' ? searchTargetItemId : undefined} full={full} renderReadOnlyInteraction={renderReadOnlyInteraction} renderSubtaskReport={renderSubtaskReport} />}
             </>}
             {historicalRecords}
   </>;
   const renderFlowDetail = (step: ProcessStep, hasFilePreview = false) => {
-    if (readOnly && step.type === 'interaction') return <ReadOnlyInteraction step={step} />;
+    if (renderReadOnlyInteraction && step.type === 'interaction') return renderReadOnlyInteraction(step);
     if (step.type === 'userMessage' || step.type === 'agentMessage') return <FlowRawRecord step={step} />;
     if (isPendingProcessInteraction(step, answeredAsyncQuestionIds?.has(step.id)) && step.details.interactionKind === 'async_question') return <p className="text-xs text-[var(--color-text-secondary)]">此问题尚未关联到回答，请使用流程上方的提问卡片查看或补充回答。</p>;
     if (settled && step.type !== 'plan' && getProcessStepStatus(step) === 'in_progress' && !step.details.resolvedAction && !answeredAsyncQuestionIds?.has(step.id)) return <><p className="text-xs text-[var(--color-text-secondary)]">本次执行已结束，此步骤结果未确认。</p><FlowRawRecord step={step} /></>;

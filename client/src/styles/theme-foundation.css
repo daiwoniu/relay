@@ -128,9 +128,8 @@
 }
 
 .word-document-preview {
-  max-width: 56rem;
-  margin: 0 auto;
   padding: 1.25rem;
+  overflow-wrap: anywhere;
   color: var(--color-text);
   font-size: var(--theme-font-content);
   line-height: var(--theme-line-height-content);

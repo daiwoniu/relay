@@ -4,13 +4,16 @@ import { z } from 'zod';
 import type { RelayEnv } from '../auth/authorization.js';
 import { createRequireStoredUserSession } from '../auth/stored-session.js';
 import { presentApiError } from '../contracts/index.js';
-import { feishuConcurrencySchema, feishuIdentity, feishuPolicyKey, type FeishuBotConfig } from '../integrations/feishu-im/inbound.js';
+import { feishuConcurrencySchema, feishuIdentity, feishuManualDecisions, feishuPolicyKey, type FeishuBotConfig } from '../integrations/feishu-im/inbound.js';
 import { resolveFeishuScope } from '../integrations/feishu-im/config.js';
 import { FeishuImConnectionError, feishuSettingsRequest, type ManagedFeishuIm } from '../integrations/feishu-im/managed-config.js';
 import type { CoreStoragePort } from '../storage/contracts.js';
 import { StorageContractError } from '../storage/command-boundary.js';
 import { recordCommittedOperation, requestAnalyticsOperationId } from '../analytics/command-collector.js';
 import { FEISHU_ADMIN_MUTATION_ACTIONS, type AnalyticsFeatureProperties } from '../analytics/registry.js';
+import type { SessionRuntime } from '../engine/runtime.js';
+import { presentProcessItems } from '../messages/presenter.js';
+import { restoreOperationReferences } from '../process-timeline.js';
 
 const querySchema = z.object({ bot: z.string().max(128).optional(), chatId: z.string().max(128).optional(),
   before: z.coerce.number().int().positive().optional(), days: z.coerce.number().int().min(1).max(90).default(7),
@@ -56,6 +59,7 @@ async function observeFeishuMutation(c: Context<RelayEnv>, action: string, run: 
 
 export function createStoredFeishuImRouter(options: {
   port: CoreStoragePort; management: ManagedFeishuIm; assertExclusiveWriter: () => Promise<void>;
+  readRuntime?: (sessionId: string) => SessionRuntime | undefined;
 }) {
   const router = new Hono<RelayEnv>();
   const { management } = options;
@@ -84,13 +88,41 @@ export function createStoredFeishuImRouter(options: {
   router.get('/configuration/summary-models', async c => c.json(await management.summaryModels()));
   router.get('/configuration/platform-models', async c => c.json(await management.platformModels()));
   const reviewQuery = z.object({ bot: z.string().uuid(), sequence: z.coerce.number().int().positive().safe() }).strict();
+  router.get('/execution', async c => {
+    const parsed = reviewQuery.safeParse(c.req.query());
+    if (!parsed.success) return c.json(presentApiError('消息记录无效'), 400);
+    const bot = management.bots().find(item => item.id === parsed.data.bot);
+    if (!bot) return c.json({ execution: null });
+    const scope = await resolveFeishuScope(options.port, bot);
+    if (!scope) return c.json({ execution: null });
+    const { execution } = await options.port.runFeishuAdmin({ principal: c.get('relayStoragePrincipal')!,
+      request: { ...scope, action: 'execution', sequence: parsed.data.sequence } });
+    if (!execution) return c.json({ execution: null });
+    const { active, confirmedInteractions = [], ...saved } = execution;
+    const runtime = active && options.readRuntime?.(active.sessionId);
+    const live = runtime && runtime.attemptId === active?.attemptId ? runtime : undefined;
+    if (active && !live && !confirmedInteractions.length) return c.json({ execution: null });
+    const view = live ? {
+      steps: presentProcessItems(live.turnItems, live.isRunning ? 'in_progress' : 'completed'),
+      processContent: live.commentaryContent, processTimeline: live.processTimeline,
+    } : { ...saved, ...(active ? {} : { active }) };
+    if (!confirmedInteractions.length) return c.json({ execution: view });
+    const steps = new Map((view.steps ?? []).map(item => [item.id, item]));
+    for (const item of confirmedInteractions) {
+      const current = steps.get(item.id);
+      steps.set(item.id, current ? { ...current, ...item, details: { ...current.details, ...item.details } } : item);
+    }
+    const processTimeline = view.processTimeline?.length
+      ? restoreOperationReferences(view.processTimeline, confirmedInteractions.map(item => item.id)) : view.processTimeline;
+    return c.json({ execution: { ...view, steps: [...steps.values()], processTimeline } });
+  });
   router.get('/approvals', async c => {
     const parsed = reviewQuery.safeParse(c.req.query());
     if (!parsed.success) return c.json(presentApiError('审核记录无效'), 400);
     return c.json(await management.approvals(c.get('relayStoragePrincipal')!, parsed.data.bot, parsed.data.sequence));
   });
   router.post('/approvals', c => observeFeishuMutation(c, 'decide_approval', async (commit, operationId) => {
-    const parsed = reviewQuery.extend({ id: z.string().min(1).max(256), action: z.enum(['accept', 'decline']) })
+    const parsed = reviewQuery.extend({ id: z.string().min(1).max(256), action: z.enum(feishuManualDecisions) })
       .safeParse(await c.req.json().catch(() => null));
     if (!parsed.success) return c.json(presentApiError('审核操作无效'), 400);
     const { bot, sequence, id, action } = parsed.data;

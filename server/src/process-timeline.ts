@@ -83,3 +83,38 @@ export function insertOperationReference(
   if (timeline.some((entry) => entry.type === 'operation' && entry.itemId === itemId)) return timeline;
   return [...timeline, { type: 'operation', itemId }];
 }
+
+export function restoreOperationReferences(
+  timeline: ProcessTimelineEntry[],
+  itemIds: string[],
+  previous: ProcessTimelineEntry[] = [],
+): ProcessTimelineEntry[] {
+  const key = (entry: ProcessTimelineEntry) => `${entry.type}:${entry.itemId}`;
+  const existing = new Set(timeline.map(key));
+  const missing = new Set(itemIds.filter(id => !existing.has(`operation:${id}`)));
+  if (!missing.size) return timeline;
+
+  // Put recovered operations before the nearest surviving entry that followed them.
+  const insertions = new Map<string, ProcessTimelineEntry[]>();
+  const tail: ProcessTimelineEntry[] = [];
+  let before = tail;
+  for (let index = previous.length - 1; index >= 0; index -= 1) {
+    const entry = previous[index]!;
+    const anchor = key(entry);
+    if (existing.has(anchor)) {
+      before = insertions.get(anchor) ?? [];
+      insertions.set(anchor, before);
+    } else if (entry.type === 'operation' && missing.delete(entry.itemId)) {
+      before.push(entry);
+    }
+  }
+  const withRestored = timeline.flatMap(entry => {
+    const anchor = key(entry);
+    const added = insertions.get(anchor);
+    if (!added?.length) return [entry];
+    insertions.delete(anchor);
+    return [...added.reverse(), entry];
+  });
+  return [...withRestored,
+    ...tail.reverse(), ...[...missing].map(itemId => ({ type: 'operation' as const, itemId }))];
+}

@@ -16,6 +16,7 @@ import ProgressiveCodePreview from './ProgressiveCodePreview';
 import { formatGitDiffHunkHeader } from './git-diff-hunk';
 import { readFileGitDiff, type FileGitDiffResult } from '../../api/filesystem';
 import PreviewState from './PreviewState';
+import ImageFilePreview from './ImageFilePreview';
 import { getFilePreviewView, isMarkdownPreview, supportsRenderedPreview, type FilePreviewView } from './file-preview-view';
 import { attachPreviewScrollRestoration, type PreviewScrollPosition } from './preview-scroll-restoration';
 import { revealPreviewTab } from './preview-tab-scroll';
@@ -286,6 +287,8 @@ export default function RightPanelContent({
   }, [activeTab?.id, activeTab?.loading, activeTab?.previewError, activeTab?.language, activeTab?.forceAccessAvailable, activeTab?.textPreviewTruncated, activeTab?.fileAccessToken, activeTab?.sourcePath, activeTab?.title]);
   const gitDiff = gitDiffResult && gitDiffResult.tabId === activeTab?.id && gitDiffResult.result.changed ? gitDiffResult.result.diff : null;
   const showGitDiff = previewView === 'git-diff';
+  const imageUrl = !showGitDiff && !activeTab?.previewError && activeTab?.isImage ? activeTab.imageUrl : undefined;
+  const showingImage = Boolean(imageUrl);
   const gitDiffLines = useMemo(() => {
     const start = gitDiff?.indexOf('\n@@') ?? -1;
     return start < 0 ? ['无逐行变更'] : gitDiff!.slice(start + 1).split('\n');
@@ -317,8 +320,12 @@ export default function RightPanelContent({
   useLayoutEffect(() => {
     const element = htmlPreviewScrollRef.current;
     if (!element || !scrollKey || activeTab?.loading) return;
+    if (showingImage) {
+      element.scrollTo(0, 0);
+      return;
+    }
     return attachPreviewScrollRestoration(element, scrollPositions.current.get(scrollKey), (position) => scrollPositions.current.set(scrollKey, position));
-  }, [scrollKey, activeTab?.loading, htmlPreviewScrollRef]);
+  }, [scrollKey, activeTab?.loading, htmlPreviewScrollRef, showingImage]);
   useEffect(() => {
     const ids = new Set(tabs.map((tab) => tab.id));
     for (const key of scrollPositions.current.keys()) {
@@ -465,7 +472,8 @@ export default function RightPanelContent({
             {previewModeControl}
             {updating && <div className="workspace-preview-git-status" role="status">正在更新预览…</div>}
             {!showGitDiff && gitDiffError?.tabId === activeTab.id && <div className="workspace-preview-git-status" role="status">Git 变更暂不可用<button type="button" onClick={() => onRefresh(activeTab)}>重试</button></div>}
-            <div ref={htmlPreviewScrollRef} className="workspace-preview-viewport flex-1 min-h-0 overflow-auto" role="region" aria-label="文件内容" tabIndex={0}>
+            <div ref={htmlPreviewScrollRef} className="workspace-preview-viewport flex-1 min-h-0 overflow-auto"
+              role={showingImage ? undefined : 'region'} aria-label={showingImage ? undefined : '文件内容'} tabIndex={showingImage ? undefined : 0}>
               {activeTab.textPreviewTruncated && !activeTab.previewError && <div className="workspace-preview-notice is-warning is-compact" role="status">文件 {formatFileMetadataSize(activeTab.contentSize ?? activeTab.fileMetadata?.size ?? NaN)}，{activeTab.textPreviewTruncationReason === 'output-size' ? '转换后的内容超过输出保护上限，请下载查看完整文件' : '超过当前预览容量'}；仅显示开头（最多 100 行 / 64 KB）。{activeTab.textPreviewTruncationReason !== 'output-size' && <button type="button" onClick={onOpenSettings}>调整预览容量</button>}</div>}
               {activeTab.previewError ? (
                 <PreviewState
@@ -505,11 +513,8 @@ export default function RightPanelContent({
                     <SpreadsheetPreview document={activeTab.documentPreview} sourcePath={activeTab.sourcePath || activeTab.title} accessToken={activeTab.fileAccessToken} requestSignal={requestSignal} />
                   )}
                 </Suspense>
-              ) : activeTab.isImage && activeTab.imageUrl ? (
-                <div className="flex items-center justify-center p-4 min-h-full">
-                  <img src={activeTab.imageUrl} alt={activeTab.title} className="max-w-full max-h-full rounded-lg" onError={(event) => { event.currentTarget.style.display = 'none'; event.currentTarget.nextElementSibling?.classList.remove('hidden'); }} />
-                  <PreviewState hidden tone="danger" title="图片加载失败" description="文件可能已移动、损坏或当前格式无法显示。" />
-                </div>
+              ) : imageUrl ? (
+                <ImageFilePreview key={activeTab.id} src={imageUrl} title={activeTab.title} />
               ) : activeTab.compressedPreviewAvailable ? (
                 <PreviewState
                   tone="warning"

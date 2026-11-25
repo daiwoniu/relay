@@ -26,6 +26,8 @@ export async function projectStoredRuntimeInteractions(runtime:SessionRuntime,en
     runtime.pendingInteractions.set(id,{request,interaction,standalone:false,createdAt:envelope.meta.observedAt,connectionId:runtime.engineConnectionId});
     runtime.turnItems=upsertTurnItem(runtime.turnItems,item);runtime.processTimeline=insertOperationReference(runtime.processTimeline,id);
     const completed=await respondStoredAutomatically(runtime,id,adapter,context);
+    const pending=runtime.pendingInteractions.get(id);
+    if(!completed&&pending)pending.manualReview=true;
     const presented=presentProcessItem(completed??item,completed?'completed':'in_progress');
     if(presented)await publishStoredRuntimeEvent({type:completed?'item_complete':'item_start',sessionId:runtime.sessionId,item:presented},context.guard,options);
   }else{

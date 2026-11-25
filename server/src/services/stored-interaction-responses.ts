@@ -3,7 +3,7 @@ import { RespondInteractionCommandSchema,type RespondInteractionCommand } from '
 import type { CoreStoragePort,StoragePrincipal,InteractionResponseJob } from '../storage/contracts.js';
 import { canonicalJson,parseStoragePrincipal,StorageContractError } from '../storage/command-boundary.js';
 import type { EngineInteractionAdapter } from '../engine/facets.js';
-import type { SessionRuntime } from '../engine/runtime.js';
+import { isProviderResolvedInteraction,type SessionRuntime } from '../engine/runtime.js';
 import { buildInteractionResponse } from '../ws/frontend-interactions.js';
 import type { StoredStopBinding } from './stored-runtime-stop.js';
 
@@ -14,7 +14,7 @@ interface Options {
   storeId:string;generation:number;assertExclusiveWriter:()=>Promise<void>;
   getBinding:(sessionId:string)=>StoredStopBinding|undefined;
   getAdapter:(binding:StoredStopBinding)=>EngineInteractionAdapter|undefined;
-  submitted:(input:{binding:StoredStopBinding;pending:Pending;command:RespondInteractionCommand;job:InteractionResponseJob;guard:{isCurrent:()=>boolean;assertCurrent:()=>void}})=>Promise<void>;
+  submitted:(input:{binding:StoredStopBinding;pending?:Pending;command:RespondInteractionCommand;job:InteractionResponseJob;guard:{isCurrent:()=>boolean;assertCurrent:()=>void}})=>Promise<void>;
   prepared?:(sessionId:string,interactionId:string)=>Promise<void>;
   onFailure?:(code:'INTERACTION_RESPONSE_UNCONFIRMED')=>void;
 }
@@ -22,6 +22,10 @@ const active=new Map<string,{digest:string;run:Promise<Outcome>}>();
 const hash=(input:unknown,max=1024*1024)=>createHash('sha256').update(canonicalJson(input,max)).digest('hex');
 const maintenance={kind:'system',purpose:'maintenance'} as const;
 function freeze<T>(value:T):T{if(value&&typeof value==='object'){for(const entry of Object.values(value))freeze(entry);Object.freeze(value);}return value;}
+function providerSettled(runtime:SessionRuntime,id:string){
+  return !runtime.pendingInteractions.has(id)&&runtime.settledInteractionIds.has(id)
+    &&runtime.turnItems.some(item=>item.id===id&&isProviderResolvedInteraction(item));
+}
 
 /** Candidate for user responses on active turns. Original answers and SDK payloads never enter storage. */
 export class StoredInteractionResponses {
@@ -61,8 +65,8 @@ export class StoredInteractionResponses {
     }catch{/* No release without a committed negative result. */}
     this.report();return{state:'unknown'};
   }
-  private capture(command:RespondInteractionCommand,projection=false){
-    const binding=this.options.getBinding(command.sessionId),runtime=binding?.runtime,pending=runtime?.pendingInteractions.get(command.interactionId);
+  private capture(command:RespondInteractionCommand,projection=false,dispatched?:Pending){
+    const binding=this.options.getBinding(command.sessionId),runtime=binding?.runtime,pending=dispatched??runtime?.pendingInteractions.get(command.interactionId);
     if(!binding||!runtime||!pending)return null;
     if(!runtime.attemptId||!runtime.leaseToken||pending.standalone&&!binding.events?.storage.isTerminalCommitted())return{unsupported:true} as const;
     const lifecycleCurrent=()=>pending.standalone?!runtime.isRunning&&!runtime.isStopping&&!!binding.events?.storage.isTerminalCommitted():projection||runtime.isRunning&&!runtime.isStopping;
@@ -73,7 +77,9 @@ export class StoredInteractionResponses {
     const adapter=this.options.getAdapter(binding);if(!adapter)return{unsupported:true} as const;
     const build=adapter.buildResponse;
     const isCurrent=()=>{
-      if(this.options.getBinding(command.sessionId)!==binding||runtime.pendingInteractions.get(command.interactionId)!==pending||runtime.engineConnection!==connection
+      const live=runtime.pendingInteractions.get(command.interactionId);
+      const resolved=projection&&!!dispatched&&!live&&providerSettled(runtime,command.interactionId);
+      if(this.options.getBinding(command.sessionId)!==binding||live!==pending&&!resolved||runtime.engineConnection!==connection
         ||runtime.engineConnectionId!==connectionId||runtime.attemptId!==attemptId||runtime.leaseToken!==leaseToken||runtime.engine!==engine
         ||binding.version!==version||pending.connectionId!==connectionId||!lifecycleCurrent()||this.options.getAdapter(binding)!==adapter||adapter.buildResponse!==build)return false;
       try{return hash({sessionId:command.sessionId,attemptId,connectionId,version,engine,interactionId:command.interactionId,
@@ -81,14 +87,26 @@ export class StoredInteractionResponses {
     };
     return{binding,pending,connection,connectionId,attemptId,leaseToken,version,engine,requestDigest,adapter,isCurrent};
   }
-  private async project(actor:Actor,command:RespondInteractionCommand,job:InteractionResponseJob):Promise<Outcome>{
+  private async project(actor:Actor,command:RespondInteractionCommand,job:InteractionResponseJob,dispatched?:Pending):Promise<Outcome>{
     let projectionPending=false;
     try{
-      const captured=this.capture(command,true);
+      const captured=this.capture(command,true,dispatched);
       if(captured&&!('unsupported'in captured)&&captured.requestDigest===job.requestDigest&&captured.attemptId===job.attemptId
         &&captured.connectionId===job.connectionId&&captured.version===job.runtimeVersion){
         const guard={isCurrent:captured.isCurrent,assertCurrent:()=>{if(!captured.isCurrent())throw new StorageContractError('CONFLICT');}};
         guard.assertCurrent();await this.options.submitted({binding:captured.binding,pending:captured.pending,command,job,guard});
+      }else if(!dispatched&&!captured&&!job.standalone){
+        // A replay can repair a confirmed decision after the provider removed the pending request.
+        // Match the original attempt and connection, and never invoke the engine on this path.
+        const binding=this.options.getBinding(command.sessionId),runtime=binding?.runtime;
+        const leaseToken=runtime?.leaseToken;
+        if(binding&&runtime&&leaseToken){
+          const isCurrent=()=>this.options.getBinding(command.sessionId)===binding&&runtime.leaseToken===leaseToken
+            &&binding.version===job.runtimeVersion&&runtime.attemptId===job.attemptId&&runtime.engineConnectionId===job.connectionId
+            &&providerSettled(runtime,command.interactionId);
+          if(isCurrent())await this.options.submitted({binding,command,job,
+            guard:{isCurrent,assertCurrent:()=>{if(!isCurrent())throw new StorageContractError('CONFLICT');}}});
+        }
       }
     }catch{projectionPending=true;this.report();}
     try{const current=await this.port.readInteractionResponseJob({principal:actor,jobId:job.jobId});if(!current||current.phase!=='submitted'||!this.sameIntent(current,command,job.responseDigest))return{state:'access-denied'};}
@@ -136,9 +154,9 @@ export class StoredInteractionResponses {
       const confirmed=await this.port.execute({protocolVersion:1,storeId:this.options.storeId,workerGeneration:this.options.generation,requestId:randomUUID(),
         operationId:'interaction-confirm:'+hash(jobId),principal:maintenance,command:{name:'interaction.confirmResponse',input:{jobId,
           claimToken:input.claimToken,requestDigest:input.requestDigest,responseDigest:digest}}});
-      if(confirmed.state==='committed')return this.project(actor,command,confirmed.value);
+      if(confirmed.state==='committed')return this.project(actor,command,confirmed.value,captured.pending);
       const actual=await this.port.readInteractionResponseJob({principal:maintenance,jobId});
-      if(actual?.phase==='submitted'&&actual.claimToken===input.claimToken&&actual.responseDigest===digest)return this.project(actor,command,actual);
+      if(actual?.phase==='submitted'&&actual.claimToken===input.claimToken&&actual.responseDigest===digest)return this.project(actor,command,actual,captured.pending);
       this.report();return{state:'unknown'};
     }catch(error){
       if(fresh&&!effectInvoked)return this.rejectFresh(fresh);

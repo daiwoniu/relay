@@ -1,11 +1,15 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import { createRequire } from 'node:module';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
+import { buildSync } from 'esbuild';
 import { readStyleSource } from '../../styles/style-source.test-helper.mjs';
 
 const header = fs.readFileSync(new URL('../chat/ChatHeader.tsx', import.meta.url), 'utf8');
 const panel = fs.readFileSync(new URL('RightPanel.tsx', import.meta.url), 'utf8');
 const content = fs.readFileSync(new URL('RightPanelContent.tsx', import.meta.url), 'utf8');
+const image = fs.readFileSync(new URL('ImageFilePreview.tsx', import.meta.url), 'utf8');
 const pdf = fs.readFileSync(new URL('PdfDocumentPreview.tsx', import.meta.url), 'utf8');
 const sheet = fs.readFileSync(new URL('SpreadsheetPreview.tsx', import.meta.url), 'utf8');
 const previewState = fs.readFileSync(new URL('PreviewState.tsx', import.meta.url), 'utf8');
@@ -59,7 +63,8 @@ test('预览空态、加载、失败和降级使用统一状态与提示骨架',
   assert.match(previewState, /className={`workspace-preview-state/);
   assert.match(content, /title="还没有打开文件"/);
   assert.match(content, /title="正在读取文件"/);
-  assert.match(content, /title="图片加载失败"/);
+  assert.match(content, /<ImageFilePreview key=\{activeTab.id\} src=\{imageUrl\}/);
+  assert.match(image, /<PreviewState tone="danger" title="图片加载失败"/);
   assert.match(content, /title="需要生成轻量预览"/);
   assert.match(content, /activeTab\.previewError/);
   assert.match(content, /title="文件预览失败"/);
@@ -74,13 +79,102 @@ test('预览空态、加载、失败和降级使用统一状态与提示骨架',
   assert.match(content, /<PreviewState compact tone=\{errorTone\}/);
 });
 
+test('图片预览使用滑条缩放，继续交由浏览器处理滚轮和触摸滚动', () => {
+  assert.match(image, /aria-label="缩小"[\s\S]*<input type="range"[\s\S]*aria-label="放大"/);
+  assert.match(image, /aria-label="适应窗口"[^>]*onClick=\{\(\) => zoomFromCenter\(null\)\}/);
+  assert.match(image, /aria-label="原始大小"[^>]*onClick=\{\(\) => zoomFromCenter\(ORIGINAL_SCALE\)\}>1:1/);
+  assert.match(image, /event\.pointerType !== 'mouse'/);
+  assert.doesNotMatch(image, /onWheel|onTouch|['"]wheel['"]|preventDefault/);
+  const styles = readStyleSource();
+  assert.match(styles, /\.workspace-image-preview__controls\s*\{[^}]*position: absolute;[^}]*left: 50%;[^}]*transparent/);
+  assert.match(styles, /\.workspace-image-preview__viewport\s*\{[^}]*overflow: auto/);
+  assert.doesNotMatch(styles, /\.workspace-image-preview[^{}]*\{[^}]*touch-action:\s*none/);
+});
+
+test('大图可直接切换到实际像素尺寸，并在窗口变化后恢复适应尺寸', (t) => {
+  const require = createRequire(import.meta.url);
+  const { outputFiles } = buildSync({
+    entryPoints: [fileURLToPath(new URL('ImageFilePreview.tsx', import.meta.url))],
+    bundle: true, platform: 'node', format: 'cjs', jsx: 'automatic', write: false,
+    external: ['react', 'react/jsx-runtime'],
+  });
+  const slots = [];
+  let cursor = 0;
+  let mount;
+  let resize;
+  const hooks = {
+    useRef(value) { return slots[cursor++] ??= { current: value }; },
+    useState(value) {
+      const index = cursor++;
+      slots[index] ??= { value };
+      return [slots[index].value, (next) => { slots[index].value = typeof next === 'function' ? next(slots[index].value) : next; }];
+    },
+    useLayoutEffect(effect) { mount ??= effect; },
+  };
+  const originalObserver = globalThis.ResizeObserver;
+  globalThis.ResizeObserver = class { constructor(callback) { resize = callback; } observe() {} disconnect() {} };
+  t.after(() => { globalThis.ResizeObserver = originalObserver; });
+  const module = { exports: {} };
+  new Function('require', 'module', 'exports', outputFiles[0].text)(name => name === 'react' ? hooks : require(name), module, module.exports);
+
+  const sizes = new Map();
+  const viewport = {
+    offsetWidth: 432, offsetHeight: 232, clientWidth: 432, clientHeight: 232,
+    getBoundingClientRect: () => ({ left: 0, top: 0 }), scrollTo() {}, scrollBy() {},
+  };
+  const element = {
+    naturalWidth: 8000, naturalHeight: 4000, complete: true,
+    style: { setProperty: (key, value) => sizes.set(key, value), removeProperty: (key) => sizes.delete(key) },
+    getBoundingClientRect: () => ({ left: 0, top: 0, width: parseFloat(sizes.get('--preview-image-width')), height: parseFloat(sizes.get('--preview-image-height')) }),
+  };
+  function render() {
+    cursor = 0;
+    const result = module.exports.default({ src: 'large.png', title: 'large.png' });
+    const [controls, region] = result.props.children;
+    region.props.ref.current = viewport;
+    region.props.children[0].props.children.props.ref.current = element;
+    return controls;
+  }
+  const previewWidth = () => sizes.get('--preview-image-width');
+  render();
+  t.after(mount());
+  const [minus, slider, plus] = render().props.children;
+  assert.equal(previewWidth(), '400px');
+  assert.equal(slider.props['aria-valuetext'], '5%');
+  assert.equal(minus.props.disabled, true);
+  plus.props.onClick();
+  assert.equal(previewWidth(), '500px');
+  render().props.children[0].props.onClick();
+  assert.equal(previewWidth(), '400px');
+
+  render().props.children[4].props.children[1].props.onClick();
+  assert.equal(previewWidth(), '8000px');
+  assert.equal(render().props.children[1].props['aria-valuetext'], '100%');
+  viewport.offsetWidth = 232;
+  viewport.offsetHeight = 132;
+  resize();
+  assert.equal(previewWidth(), '8000px');
+  render().props.children[4].props.children[0].props.onClick();
+  assert.equal(previewWidth(), '200px');
+
+  viewport.offsetWidth = 2032;
+  viewport.offsetHeight = 1032;
+  resize();
+  let controls = render().props.children;
+  controls[1].props.onChange({ currentTarget: { valueAsNumber: Number(controls[1].props.max) } });
+  controls = render().props.children;
+  assert.equal(previewWidth(), '16000px');
+  assert.equal(controls[2].props.disabled, true);
+  controls[1].props.onChange({ currentTarget: { valueAsNumber: 0 } });
+  assert.equal(previewWidth(), '2000px');
+});
+
 test('条件态样式明确区分普通、警示、错误和加载反馈', () => {
   const styles = readStyleSource();
   assert.match(styles, /\.workspace-preview-state\s*\{/);
   assert.match(styles, /\.workspace-preview-state\.is-warning/);
   assert.match(styles, /\.workspace-preview-state\.is-danger/);
   assert.match(styles, /\.workspace-preview-state\.is-loading/);
-  assert.match(styles, /\.workspace-preview-state\.hidden\s*\{\s*display: none/);
   assert.match(styles, /\.workspace-preview-notice\.is-warning/);
   assert.match(styles, /\.workspace-preview-notice\.is-info/);
 });

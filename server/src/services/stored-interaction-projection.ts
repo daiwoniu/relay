@@ -15,15 +15,16 @@ export function createStoredInteractionProjection(port:CoreStoragePort,options:S
     const settled=()=>!runtime.pendingInteractions.has(command.interactionId)&&runtime.settledInteractionIds.has(command.interactionId);
     const queued=await binding.events.storage.reconcileInteractionProjection(async guard=>{
       guard.assertCurrent();
-      // A provider resolution can settle this request while this projection waits
-      // behind it. Stale UI work must not fail the authoritative runtime queue.
+      // A confirmed response may refine a provider resolution. Other stale work
+      // must not fail the authoritative runtime queue.
       if(!responseGuard.isCurrent())return settled();
       const view={...runtime,turnItems:structuredClone(runtime.turnItems),settledInteractionIds:new Set(runtime.settledInteractionIds)};
-      const completed=completeRuntimeInteraction(view,command.interactionId,{resolvedAction:command.action,source:'user',decidedAt:0});
+      const completed=completeRuntimeInteraction(view,command.interactionId,{resolvedAction:command.action,source:'user',decidedAt:0},true);
       const item=completed&&presentProcessItem(completed,'completed');if(!item)throw new StorageContractError('CONFLICT');
       const request={protocolVersion:1 as const,storeId:options.storeId,workerGeneration:options.generation,requestId:randomUUID(),
         operationId:`interaction-project:${job.jobId}`,principal:{kind:'system' as const,purpose:'maintenance' as const},
-        command:{name:'interaction.projectSubmitted' as const,input:{jobId:job.jobId,item,pendingCount:Math.max(0,runtime.pendingInteractions.size-1)}}};
+        command:{name:'interaction.projectSubmitted' as const,input:{jobId:job.jobId,item,
+          pendingCount:runtime.pendingInteractions.size-Number(!!pending&&runtime.pendingInteractions.get(command.interactionId)===pending)}}};
       const result=await port.execute(request);let value:CoreCommandOutputs['interaction.projectSubmitted'];
       if(result.state==='committed')value=result.value;
       else if(result.state==='unknown'){
@@ -32,8 +33,8 @@ export function createStoredInteractionProjection(port:CoreStoragePort,options:S
         if(record.state!=='committed'||record.commandName!=='interaction.projectSubmitted')throw new StorageContractError('STORAGE_UNAVAILABLE');value=record.value;
       }else throw new StorageContractError(result.code);
       guard.assertCurrent();if(!responseGuard.isCurrent())return settled();
-      completeRuntimeInteraction(runtime,command.interactionId,{resolvedAction:command.action,source:'user',decidedAt:Number(value.item.details?.decidedAt??0)});
-      if(runtime.pendingInteractions.get(command.interactionId)===pending)runtime.pendingInteractions.delete(command.interactionId);
+      completeRuntimeInteraction(runtime,command.interactionId,{resolvedAction:command.action,source:'user',decidedAt:Number(value.item.details?.decidedAt??0)},true);
+      if(pending&&runtime.pendingInteractions.get(command.interactionId)===pending)runtime.pendingInteractions.delete(command.interactionId);
       await publishStoredRuntimeEvent({type:'item_complete',sessionId:runtime.sessionId,item:value.item},guard,options);
       try{await options.changed?.(runtime.sessionId,value.messageId);}catch{/* Committed item stays recoverable by revision. */}
       return true;

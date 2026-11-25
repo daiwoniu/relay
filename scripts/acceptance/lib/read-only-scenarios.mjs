@@ -7,6 +7,7 @@ import { finalizeRunState } from './run-state.mjs';
 export async function runReadOnlyAcceptance({
   config, cookieValue,
   workbench = false,
+  additionalOnly = false,
   launchRuntime = (options) => launchEdge(options),
   connectPage = (runtime) => connectPageRuntime(runtime),
   cleanupRuntime = (options) => cleanupEdgeRuntime(options),
@@ -26,18 +27,22 @@ export async function runReadOnlyAcceptance({
     const page = connected.page;
     await page.enableMonitoring();
     await page.injectRelaySession({ origin: config.origin, cookieValue });
-    await page.navigate(config.origin);
-    // The admin shell does not open the chat WebSocket. Read its protocol
-    // handshake on the initial chat page before navigating to the workbench.
-    if (workbench) await page.waitForStable({ timeoutMs: config.timeouts?.navigationMs, requireMetadata: true });
-    for (const item of [
-      { id: 'desktop', viewport: config.desktopViewport, mobile: false },
-      { id: 'mobile', viewport: config.mobileViewport, mobile: true },
-    ]) scenarios.push(await (workbench ? runWorkbenchScenario : runViewportScenario)({ page, runtime, config, ...item }));
+    if (!additionalOnly) {
+      await page.navigate(config.origin);
+      // The admin shell does not open the chat WebSocket. Read its protocol
+      // handshake on the initial chat page before navigating to the workbench.
+      if (workbench) await page.waitForStable({ timeoutMs: config.timeouts?.navigationMs, requireMetadata: true });
+      for (const item of [
+        { id: 'desktop', viewport: config.desktopViewport, mobile: false },
+        { id: 'mobile', viewport: config.mobileViewport, mobile: true },
+      ]) scenarios.push(await (workbench ? runWorkbenchScenario : runViewportScenario)({ page, runtime, config, ...item }));
+    }
     if (runAdditionalScenarios) {
       // The last read-only viewport is mobile, whose sidebar is closed by default.
-      await page.setViewport(config.desktopViewport, { mobile: false });
-      await page.waitForStable({ timeoutMs: config.timeouts?.navigationMs, requireMetadata: true });
+      if (!additionalOnly) {
+        await page.setViewport(config.desktopViewport, { mobile: false });
+        await page.waitForStable({ timeoutMs: config.timeouts?.navigationMs, requireMetadata: true });
+      }
       scenarios.push(...await runAdditionalScenarios({ page, runtime }));
     }
   } catch (error) {

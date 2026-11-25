@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode, type Ref } from 'react';
 import Modal from './Modal';
 import IconActionButton from './IconActionButton';
-import MinimizedPanelBar from './MinimizedPanelBar';
+import MinimizedPanelBar, { MinimizePanelIcon } from './MinimizedPanelBar';
 import { featureAction } from '../../analytics/features';
 import type { AnalyticsFeature } from '../../../../server/src/analytics/registry';
 
@@ -169,7 +169,7 @@ export default function PanelShell({
         </div>
         <div className="panel-shell__header-actions">
           {headerActions}
-          {minimizable && <IconActionButton label={`最小化${title}`} tooltip={false} variant="neutral" className="h-9 w-9 rounded-xl" onClick={minimize}><svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 11.5h10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg></IconActionButton>}
+          {minimizable && <IconActionButton label={`最小化${title}`} tooltip={false} variant="neutral" className="h-9 w-9 rounded-xl" onClick={minimize}><MinimizePanelIcon /></IconActionButton>}
           <IconActionButton label={`关闭${title}`} tooltip={false} variant="neutral" className="h-9 w-9 rounded-xl text-lg" disabled={closeDisabled} onClick={onClose}><span aria-hidden="true">×</span></IconActionButton>
         </div>
       </header>

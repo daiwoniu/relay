@@ -8,6 +8,7 @@ import { runReadOnlyAcceptance } from './lib/read-only-scenarios.mjs';
 import { createScenarioResult, writeAcceptanceReport } from './lib/report.mjs';
 import { SESSION_PATH } from './lib/paths.mjs';
 import { parseAcceptanceArguments, runEngineScenarios } from './lib/engine-scenarios.mjs';
+import { runFeishuApprovalScenarios } from './lib/feishu-approvals.mjs';
 
 const args = process.argv.slice(2);
 if (args.length === 1 && ['help', '--help', '-h'].includes(args[0])) printHelp();
@@ -35,9 +36,11 @@ async function main(rawArgs) {
       config,
       cookieValue: session.cookieValue,
       workbench: options.workbench === true,
+      additionalOnly: options.feishuApprovals === true,
       runAdditionalScenarios: options.mode === 'engine'
         ? ({ page }) => runEngineScenarios({ page, engine: options.engine, scenario: options.scenario })
-        : options.accountSettings ? ({ page }) => runAccountSettings(page) : undefined,
+        : options.accountSettings ? ({ page }) => runAccountSettings(page)
+        : options.feishuApprovals ? ({ page, runtime }) => runFeishuApprovalScenarios({ page, runtime, config, built: options.built }) : undefined,
     });
     console.log(`验收结论：${report.status}`);
     console.log(`运行目录：.relay-dev/acceptance/${report.runId}`);
@@ -73,5 +76,6 @@ async function relayAvailable(origin) {
 }
 
 function printHelp() {
+  console.log('飞书审批：npm run acceptance:page -- --feishu-approvals\n飞书审批（本地构建）：npm run acceptance:page -- --feishu-approvals-built');
   console.log(`Relay Headless 页面验收\n\n用法：\n  npm run acceptance:page\n  npm run acceptance:page -- --workbench\\n  npm run acceptance:page -- --account-settings\\n  npm run acceptance:page -- --allow-engine-run --engine <codex|codebuddy|all> --scenario <complete|stop|refresh>\n\n说明：\n  默认只读；不会创建会话、发送消息、停止任务或重启 Relay。\n  --workbench 检查当前正式工作台的桌面/窄屏列表、详情和横向溢出，不切换前端构建。\n  真实引擎必须同时显式提供 allow、engine、scenario，且不会自动重启服务或注入 Provider 故障。\n  使用独立 Edge profile，完成报告、截图和精确清理。`);
 }

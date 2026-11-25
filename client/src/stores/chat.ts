@@ -252,7 +252,7 @@ interface ChatStore {
   openRightPanel: (params: { title: string } & RightPanelContentUpdate) => string;
   closeRightPanel: () => void;
   closeRightPanelTab: (tabId: string) => void;
-  closeAllRightPanelTabs: () => void;
+  closeAllRightPanelTabs: (options?: { report?: boolean }) => void;
   hideRightPanel: () => void;
   setActiveTabId: (id: string) => void;
   updateRightPanelTab: (tabId: string, params: RightPanelContentUpdate) => boolean;
@@ -922,8 +922,8 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         : {}),
     });
   },
-  closeAllRightPanelTabs: () => {
-    if(get().rightPanelTabs.length)tracker.action({feature:'file_preview',action:'close_all',surface:'preview_toolbar'});
+  closeAllRightPanelTabs: (options) => {
+    if(options?.report!==false&&get().rightPanelTabs.length)tracker.action({feature:'file_preview',action:'close_all',surface:'preview_toolbar'});
     for (const tab of get().rightPanelTabs) disposeFilePreviewTab(tab);
     set({ rightPanelTabs: [], activeTabId: null, prevActiveTabId: null, panelVisible: false, rightPanelPinned: false });
   },

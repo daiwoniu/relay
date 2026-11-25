@@ -7,6 +7,7 @@ import { useAuth } from '../../auth/AuthContext';
 import { calculateAvatarCrop, validateNewPassword } from './avatar-editor';
 import UserAvatar from './UserAvatar';
 import IconActionButton from '../ui/IconActionButton';
+import { MinimizePanelIcon } from '../ui/MinimizedPanelBar';
 import PanelShell from '../ui/PanelShell';
 import SettingsNavigation from '../ui/SettingsNavigation';
 import { useChatStore } from '../../stores/chat';
@@ -282,7 +283,7 @@ export default function AccountSettingsDialog({ open, onClose, mobile }: { open:
     <PanelShell analyticsFeature="settings" open={open} onClose={() => requestSettingsNavigation('close')} closeDisabled={editingTheme && themeBusy} closeOnEscape={!themeMinimized} suspended={themeMinimized} minimizable={!editingTheme} title={mobile && !mobileCategories ? selectedSection.label : '设置中心'} minimizedTitle="设置中心" icon={<UserMenuIcon type="settings" />} titleId="account-settings-title" size="settings" mobile={mobile} mobileFitContent={!nestedScroll}
       onNavigateBack={mobile && !mobileCategories ? () => requestSettingsNavigation('categories') : undefined}
       backLabel="返回设置分类"
-      headerActions={editingTheme ? <IconActionButton label="预览主题" variant="neutral" className="h-9 w-9 rounded-xl" disabled={themeBusy} onClick={() => themeSettingsRef.current?.minimize()}><svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.4" aria-hidden="true"><path d="M2 9s2.6-4.5 7-4.5S16 9 16 9s-2.6 4.5-7 4.5S2 9 2 9Z" /><circle cx="9" cy="9" r="1.75" /></svg></IconActionButton> : undefined}
+      headerActions={editingTheme ? <IconActionButton label="最小化主题预览" variant="neutral" className="h-9 w-9 rounded-xl" disabled={themeBusy} onClick={() => themeSettingsRef.current?.minimize()}><MinimizePanelIcon /></IconActionButton> : undefined}
       sidebar={!mobile ? sectionNavigation : undefined}
       bodyRef={settingsBodyRef} bodyId="account-settings-panel" bodyRole={mobile ? undefined : 'tabpanel'} bodyLabelledBy={mobile ? 'account-settings-title' : `settings-nav-${selectedSection.id}`} bodyTabIndex={mobile ? -1 : 0} bodyClassName={`focus:outline-none ${nestedScroll ? 'panel-shell__body--nested-scroll' : ''} ${mobile ? 'p-4 pb-[max(1rem,env(safe-area-inset-bottom))]' : 'p-6'}`}>
       {mobileCategories ? <SettingsNavigation items={navigationItems} activeId={selectedSection.id} onChange={requestSectionChange} presentation="list" /> :

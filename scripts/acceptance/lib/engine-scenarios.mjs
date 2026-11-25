@@ -15,6 +15,8 @@ export function parseAcceptanceArguments(args) {
   if (args.length === 0) return { mode: 'read-only' };
   if (args.length === 1 && args[0] === '--workbench') return { mode: 'read-only', workbench: true };
   if (args.length === 1 && args[0] === '--account-settings') return { mode: 'read-only', accountSettings: true };
+  if (args.length === 1 && args[0] === '--feishu-approvals') return { mode: 'read-only', feishuApprovals: true };
+  if (args.length === 1 && args[0] === '--feishu-approvals-built') return { mode: 'read-only', feishuApprovals: true, built: true };
   const values = new Map();
   let allowed = false;
   for (let index = 0; index < args.length; index += 1) {

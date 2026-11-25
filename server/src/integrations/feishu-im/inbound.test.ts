@@ -11,10 +11,11 @@ import { nativeQueries } from '../../storage/native-queries.js';
 import { feishuBindingId, feishuBotConfigSchema, feishuPolicyKey, normalizeFeishuInbound } from './inbound.js';
 import { FeishuImReceiver } from './receiver.js';
 import { FeishuImWorker } from './worker.js';
-import { NativeFeishuConversation } from './native-conversation.js';
+import { feishuApprovalWaitBody, NativeFeishuConversation } from './native-conversation.js';
+import { defineNormalizedInteraction } from '../../engine/interactions.js';
 import { ensureUserProfileColumns, MODEL_DEFAULT_PROFILE_COLUMNS } from '../../db/user-profile.js';
 import { readFeishuBotInfo, readFeishuSenderName } from './sdk.js';
-import { buildFeishuContextCard, buildFeishuReplyPayload, feishuContextCommandReply } from './context-card.js';
+import { buildFeishuContextCard, buildFeishuDelivery, feishuContextCommandReply } from './context-card.js';
 import { isSummaryRequest } from './history-summary.js';
 import { feishuEngineReplyLine } from './reply-execution.js';
 import { feishuExecutionId, formatFeishuTurnPrompt, resolveExecutionTrust } from './native-session-scope.js';
@@ -24,32 +25,71 @@ import { fixture } from '../../storage/storage-fixture.test-support.js';
 import type { CoreStoragePort, QueueClaim } from '../../storage/contracts.js';
 import { EngineRegistry } from '../../engine/registry.js';
 import { ENGINE_CATALOG } from '../../engine/catalog.js';
+import { Readable } from 'node:stream';
+import { StoredProjectUploads } from '../../services/stored-project-uploads.js';
+import { StoredDraftCleanup } from '../../services/stored-draft-cleanup.js';
+import { StoredMessageAttachments } from '../../services/stored-message-attachments.js';
+import { StorageWorkerClient } from '../../storage/worker-client.js';
+import { ProjectFileActivities } from '../../uploads/project-file-activities.js';
+import { UploadPromoter } from '../../uploads/upload-promoter.js';
+import { uploadMessageDirectory } from '../../uploads/upload-promotion-contract.js';
+import { FeishuAttachmentError, uploadFeishuAttachments } from './attachments.js';
 
 const settings = feishuBotConfigSchema.parse({ id: 'bot', appId: 'cli_a', appSecret: 'test', projectId: 'project' });
 const bot = { ...settings, workspaceName: '试点', workspacePath: '/business' };
 
-test('Feishu model replies render Markdown with a separate footer and keep the context actions', () => {
-  const source = '**结果**\n\n- 第一项\n\n```ts\nconst ok = true;\n```';
+test('Feishu model replies use Card JSON 2.0 Markdown with a separate footer and keep the context actions', () => {
+  const source = '# **结果**\n\n> 引用第一段\n>\n> 引用第二段\n\n| 项目 | 状态 |\n| --- | --- |\n| 测试 | 完成 |\n\n```ts\nconst ok = true;\n```';
   const executionLine = '引擎：Codex · 模型：GPT · 强度：高 · 速度：常规 · 压缩次数：0';
   const outgoing = {
     id: 'msg', body: `${source}\n\n${executionLine}`, inbound: { executionLine },
     replyTo: 'om_source', inThread: true, chatId: 'oc_group',
   };
-  const payload = buildFeishuReplyPayload({ ...outgoing, contextCard: { kind: 'private' } });
+  const delivery = buildFeishuDelivery({ ...outgoing, contextCard: { kind: 'private' } });
+  assert.equal(delivery.method, 'reply');
+  const payload = delivery.payload.data;
   assert.equal(payload.msg_type, 'interactive');
   assert.equal(payload.uuid, 'msg');
-  const { elements } = JSON.parse(payload.content);
+  const card = JSON.parse(payload.content) as ReturnType<typeof buildFeishuContextCard>;
+  assert.equal(card.schema, '2.0');
+  const { elements } = card.body;
   assert.deepEqual(elements[0], { tag: 'markdown', content: source });
-  assert.deepEqual(elements[1].actions.map((action: { value: { choice: string } }) => action.value.choice), ['carry', 'clear']);
-  assert.deepEqual(elements[2], { tag: 'note', elements: [{ tag: 'plain_text', content: executionLine }] });
-  assert.deepEqual(buildFeishuContextCard('msg', `<at id=all>所有人</at>\n\n${executionLine}`, undefined, executionLine).elements[0],
+  assert.deepEqual(elements.filter(item => item.tag === 'button').map(action => action.behaviors[0]),
+    ['carry', 'clear'].map(choice => ({ type: 'callback', value: { relay: 'new-context', id: 'msg', choice } })));
+  assert.deepEqual(elements[3], { tag: 'div', text: { tag: 'plain_text', content: executionLine, text_size: 'notation', text_color: 'grey' } });
+  assert.deepEqual(buildFeishuContextCard('msg', `<at id=all>所有人</at>\n\n${executionLine}`, undefined, executionLine).body.elements[0],
     { tag: 'markdown', content: '&lt;at id=all>所有人&lt;/at>' });
 
   const largeBody = `${'长'.repeat(10_000)}\n\n${executionLine}`;
-  assert.deepEqual(buildFeishuReplyPayload({ ...outgoing, body: largeBody }),
-    { content: JSON.stringify({ text: largeBody }), msg_type: 'text', uuid: 'msg' });
-  assert.deepEqual(buildFeishuReplyPayload({ ...outgoing, body: '操作完成', inbound: null }),
-    { content: JSON.stringify({ text: '操作完成' }), msg_type: 'text', uuid: 'msg' });
+  assert.deepEqual(buildFeishuDelivery({ ...outgoing, body: largeBody }).payload.data,
+    { content: JSON.stringify({ text: largeBody }), msg_type: 'text', uuid: 'msg', reply_in_thread: true });
+  assert.deepEqual(buildFeishuDelivery({ ...outgoing, body: '操作完成', inbound: null, replyTo: null }),
+    { method: 'create', payload: { params: { receive_id_type: 'chat_id' },
+      data: { content: JSON.stringify({ text: '操作完成' }), msg_type: 'text', uuid: 'msg', receive_id: 'oc_group' } } });
+});
+
+test('Feishu checks the serialized send body at the exact card limit', () => {
+  const executionLine = '引擎：Codex';
+  const suffix = `\n\n${executionLine}`;
+  for (const replyTo of [null, 'om_source']) {
+    const outgoing = { id: 'msg', body: '中' + suffix, inbound: { executionLine }, replyTo, inThread: true, chatId: 'oc_group' };
+    const baseline = buildFeishuDelivery(outgoing);
+    const limit = 30_000;
+    const text = '中' + 'a'.repeat(limit - Buffer.byteLength(JSON.stringify(baseline.payload.data)));
+    const exact = buildFeishuDelivery({ ...outgoing, body: text + suffix });
+    assert.equal(exact.payload.data.msg_type, 'interactive');
+    assert.equal(Buffer.byteLength(JSON.stringify(exact.payload.data)), limit);
+    assert.equal(buildFeishuDelivery({ ...outgoing, body: text + '中' + suffix }).payload.data.msg_type, 'text');
+  }
+  const withButtons = { id: 'msg', body: '中' + suffix, inbound: { executionLine }, replyTo: 'om_source',
+    inThread: true, chatId: 'oc_group', contextCard: { kind: 'private' as const } };
+  const baseline = buildFeishuDelivery(withButtons);
+  const oversized = '中' + 'a'.repeat(30_001 - Buffer.byteLength(JSON.stringify(baseline.payload.data))) + suffix;
+  const downgraded = buildFeishuDelivery({ ...withButtons, body: oversized }).payload.data;
+  assert.equal(downgraded.msg_type, 'interactive');
+  const { body } = JSON.parse(downgraded.content) as ReturnType<typeof buildFeishuContextCard>;
+  assert.deepEqual(body.elements[0], { tag: 'div', text: { tag: 'plain_text', content: oversized } });
+  assert.equal(body.elements.filter(item => item.tag === 'button').length, 2);
 });
 
 function permitFixtureSender(db: ReturnType<typeof nativeQueries>, { inbound }: Parameters<typeof acceptFeishuInbound>[1]) {
@@ -106,7 +146,7 @@ test('Feishu records unapproved users, sends the fixed reply, and scopes live gr
     runFeishuAdmin(db, grant, 'owner');
     assert.equal(runFeishuAdmin(db, list, 'owner').userAccess?.[0].allowed, true);
     for (const original of [inbound, direct]) {
-      const pending = runFeishuWork(db, { action: 'pending', ...scope, workspacePath, deniedOnly: true, inFlightChats: [original.chatId] });
+      const pending = runFeishuWork(db, { action: 'pending', ...scope, workspacePath, feedbackOnly: true, inFlightChats: [original.chatId] });
       assert.ok(pending?.kind === 'inbound' && pending.accessDenied);
       const target = { ...scope, workspacePath, sequence: pending.sequence };
       assert.equal(runFeishuWork(db, { action: 'prepareRelayTurn', ...target, engineId: 'codex' }), null);
@@ -115,8 +155,9 @@ test('Feishu records unapproved users, sends the fixed reply, and scopes live gr
       const reply = runFeishuWork(db, { action: 'claim', ...adminScope, workspacePath });
       assert.ok(reply?.kind === 'outbound');
       assert.equal(reply.replyTo, original.messageId);
-      assert.deepEqual(buildFeishuReplyPayload(reply), {
+      assert.deepEqual(buildFeishuDelivery(reply).payload.data, {
         uuid: reply.id, msg_type: 'text', content: JSON.stringify({ text: '你还没有这个机器人的使用权限，请联系管理员开通后再发送消息。' }),
+        reply_in_thread: false,
       });
     }
     const otherBot = { ...inbound, botId: 'other' };
@@ -124,7 +165,7 @@ test('Feishu records unapproved users, sends the fixed reply, and scopes live gr
     assert.deepEqual(runFeishuAdmin(db, { ...list, botId: otherBot.botId }, 'owner').userAccess,
       [{ id: inbound.senderId, name: null, allowed: false }]);
     assert.equal(acceptFeishuInbound(db, { inbound: { ...inbound, messageId: 'om_allowed' }, workspacePath }), 'received');
-    assert.equal(runFeishuWork(db, { action: 'pending', ...scope, workspacePath, deniedOnly: true }), null);
+    assert.equal(runFeishuWork(db, { action: 'pending', ...scope, workspacePath, feedbackOnly: true }), null);
     const allowed = runFeishuWork(db, { action: 'pending', ...scope, workspacePath });
     assert.ok(allowed?.kind === 'inbound' && !allowed.accessDenied);
     runFeishuAdmin(db, { ...grant, allowed: false }, 'owner');
@@ -149,7 +190,7 @@ test('Feishu authorization reminders are prepared even while all model slots are
   let prepared = false;
   const worker = new FeishuImWorker({ bots: [localBot], port: { runFeishuWork: async request => {
     if (request.action === 'tenant') return { kind: 'tenant', tenantKey: inbound.tenantKey };
-    if (request.action === 'pending' && request.deniedOnly) return {
+    if (request.action === 'pending' && request.feedbackOnly) return {
       kind: 'inbound', sequence: 1, inbound, accessDenied: true, relatedTaskIds: [], receivedAt: 1,
     };
     if (request.action === 'prepare') {
@@ -163,6 +204,142 @@ test('Feishu authorization reminders are prepared even while all model slots are
   try {
     await worker['process'](localBot);
     assert.ok(prepared);
+  } finally { await worker.close(); }
+});
+
+test('Feishu manual review exposes supported decisions and forwards them to the matching Relay attempt', async () => {
+  type Options = ConstructorParameters<typeof NativeFeishuConversation>[0];
+  const principal = { kind: 'user', userId: 'owner', authSessionHash: 'test-session' } as const;
+  const submissions: unknown[] = [];
+  const connectionId = 'current';
+  const manual = { connectionId, manualReview: true };
+  const runtime = { sessionId: 'session', attemptId: 'attempt', isRunning: true, engineConnectionId: connectionId, pendingInteractions: new Map([
+    ['command', { ...manual, interaction: { kind: 'command', availableActions: ['accept_once', 'decline'], snapshot: { title: '执行命令', command: 'Get-Item sample.txt' } } }],
+    ['file', { ...manual, interaction: { kind: 'file', availableActions: ['decline'], snapshot: { title: '读取文件', path: 'sample.txt' } } }],
+    ['cancel', { ...manual, interaction: { kind: 'command', availableActions: ['accept_once', 'cancel'], snapshot: { title: '仅允许或取消' } } }],
+    ['question', { ...manual, interaction: { kind: 'async_question', availableActions: ['submit'], snapshot: { title: '请输入' } } }],
+    ['checking', { connectionId, interaction: { kind: 'command', availableActions: ['accept_once'], snapshot: { title: '正在判定自动授权' } } }],
+  ]) };
+  const native = new NativeFeishuConversation({
+    port: { runFeishuWork: async () => assert.fail(), execute: async () => assert.fail(),
+      runFeishuAdmin: async () => ({ reviewTurn: { sessionId: 'session', attemptId: 'attempt' } }) },
+    graph: {
+      runtimes: { get: () => runtime },
+      responses: { respond: async (actor: unknown, command: unknown) => { submissions.push([actor, command]); return { state: 'submitted' }; } },
+    } as unknown as Options['graph'],
+    registry: null!, catalog: async () => assert.fail(), storeId: 'store', generation: 1, assertExclusiveWriter: async () => {},
+  });
+  const scope = { botId: 'bot', tenantKey: 'tenant' };
+  const { requests } = await native.approvals(principal, scope, 7);
+  assert.deepEqual(requests.map(({ id, accept, decline, cancel }) => ({ id, accept, decline, cancel })), [
+    { id: 'command', accept: true, decline: true, cancel: false }, { id: 'file', accept: false, decline: true, cancel: false },
+    { id: 'cancel', accept: true, decline: false, cancel: true },
+  ]);
+  await assert.rejects(native.approvals(principal, scope, 7, { id: 'file', action: 'accept', operationId: 'unavailable' }), /CONFLICT/);
+  await native.approvals(principal, scope, 7, { id: 'command', action: 'accept', operationId: 'allow-once' });
+  await native.approvals(principal, scope, 7, { id: 'file', action: 'decline', operationId: 'decline' });
+  await assert.rejects(native.approvals(principal, scope, 7, { id: 'cancel', action: 'decline', operationId: 'unsupported-decline' }), /CONFLICT/);
+  await native.approvals(principal, scope, 7, { id: 'cancel', action: 'cancel', operationId: 'cancel-request' });
+  assert.deepEqual(submissions, [
+    [principal, { type: 'respond_interaction', sessionId: 'session', interactionId: 'command', operationId: 'allow-once', action: 'accept' }],
+    [principal, { type: 'respond_interaction', sessionId: 'session', interactionId: 'file', operationId: 'decline', action: 'decline' }],
+    [principal, { type: 'respond_interaction', sessionId: 'session', interactionId: 'cancel', operationId: 'cancel-request', action: 'cancel' }],
+  ]);
+  runtime.attemptId = 'next-attempt';
+  assert.deepEqual(await native.approvals(principal, scope, 7), { requests: [] });
+});
+
+test('Feishu approval notices preserve lines and share only recognized operation descriptions', () => {
+  const command = (reason: string, value = 'npm run check -- --private-argument') => defineNormalizedInteraction({ requestId: 1, kind: 'command',
+    snapshot: { title: '执行命令', reason, command: value }, availableActions: ['accept_once', 'decline'] });
+  const file = defineNormalizedInteraction({ requestId: 2, kind: 'file',
+    snapshot: { title: '读取内部报表', path: '/private/report.xlsx' }, availableActions: ['decline'] });
+  const network = defineNormalizedInteraction({ requestId: 3, kind: 'permissions',
+    snapshot: { title: '网络授权', networkApprovalContext: { host: 'intranet.example' } }, availableActions: ['accept_once'] });
+  const question = defineNormalizedInteraction({ requestId: 4, kind: 'user_input', snapshot: { title: '提问' }, availableActions: ['submit'] });
+  const body = feishuApprovalWaitBody([command('运行项目检查'), question]);
+  assert.deepEqual(body?.split('\n'), ['任务正在等待 Relay 人工审核。', '申请授权：执行命令', '申请说明：运行项目检查',
+    '所需授权通过后，任务会自动继续。你无需重复发送。']);
+  const delivery = buildFeishuDelivery({ id: 'approval-notice', body: body!, inbound: null,
+    replyTo: 'om_original', inThread: true, chatId: 'oc_group' });
+  assert.equal(delivery.method, 'reply');
+  assert.deepEqual(delivery.payload.data, { uuid: 'approval-notice', msg_type: 'text', content: JSON.stringify({ text: body }), reply_in_thread: true });
+  const combined = feishuApprovalWaitBody([command('检查账单周期与更新时间是否一致'), file, network, command('Build the project')]);
+  assert.match(combined!, /\n申请授权：执行命令、进行文件操作、访问网络\n/);
+  assert.match(combined!, /\n申请说明：检查账单周期与更新时间是否一致、Build the project。另有 2 项请在对应授权记录查看详情\n/);
+  assert.doesNotMatch(combined!, /内部报表|private|intranet|授权通过后/);
+  const launch = feishuApprovalWaitBody([command('', 'java -Dprofile=internal -jar "D:/private/xxl-job-admin.jar" --server.port=12345')]);
+  assert.match(launch!, /\n申请说明：请在 Relay 处理过程的授权记录中查看具体用途和操作详情。\n/);
+  assert.doesNotMatch(launch!, /private|internal|server\.port|12345/);
+  const grouped = feishuApprovalWaitBody([file, command('是否允许我运行项目检查？'), command('运行项目检查'), command('临时启动 XXL-JOB')]);
+  assert.match(grouped!, /\n申请说明：运行项目检查、临时启动 XXL-JOB。另有 1 项请在对应授权记录查看详情\n/);
+  assert.doesNotMatch(grouped!, /private|内部报表/);
+  const verify = feishuApprovalWaitBody([command('是否允许我执行这段 Python 来核对飞书项目中的当前任务？', 'python private-script.py')]);
+  assert.match(verify!, /\n申请说明：执行这段 Python 来核对飞书项目中的当前任务\n/);
+  assert.doesNotMatch(verify!, /private-script/);
+  const trigger = feishuApprovalWaitBody([command('是否允许我运行 `python private-script.py` 以便核对 XXL-JOB 的触发参数（token=secret）？', 'powershell -Command "python private-script.py"')]);
+  assert.match(trigger!, /\n申请说明：运行相关操作以便核对 XXL-JOB 的触发参数（敏感参数）\n/);
+  assert.doesNotMatch(trigger!, /token|secret|private-script|powershell/);
+  const raw = feishuApprovalWaitBody([command('是否允许我运行 git status --porcelain 以便确认改动是否已保存？')]);
+  assert.match(raw!, /\n申请说明：确认改动是否已保存\n/);
+  assert.doesNotMatch(raw!, /git status|porcelain/);
+  const filePurpose = feishuApprovalWaitBody([{ ...file, snapshot: { ...file.snapshot, reason: '核实表格中的结算日期' } }]);
+  assert.match(filePurpose!, /\n申请说明：核实表格中的结算日期\n/);
+  assert.equal(feishuApprovalWaitBody([question]), null);
+});
+
+test('Feishu sends one waiting reply for the current manual request and still saves the final reply', async () => {
+  const localBot = { ...bot, workspacePath: process.cwd() };
+  const inbound = normalizeFeishuInbound(localBot, 'ou_bot', event())!;
+  const scope = { botId: inbound.botId, tenantKey: inbound.tenantKey };
+  const turn = { sessionId: randomUUID(), messageId: randomUUID(), engineId: 'codex' as const,
+    workspacePath: localBot.workspacePath, actorId: 'actor', conversation: 'group' };
+  const interaction = defineNormalizedInteraction({ requestId: 1, kind: 'command', snapshot: { title: '执行命令', reason: '运行测试' },
+    availableActions: ['accept_once', 'decline'] });
+  const request = { interaction, connectionId: 'current', manualReview: false };
+  const runtime = { isRunning: true, attemptId: feishuExecutionId([turn.messageId, 'attempt']), engineConnectionId: 'current',
+    pendingInteractions: new Map([['request', request]]) };
+  const replies: unknown[] = [];
+  let reads = 0;
+  let claims = 0;
+  let finalReply: unknown;
+  const runFeishuWork: CoreStoragePort['runFeishuWork'] = async input => {
+    if (input.action === 'prepareRelayTurn') return { kind: 'relayTurnPrepared', turn, content: '运行测试', preferencesRevision: 0 };
+    if (input.action === 'readRelayTurn') {
+      reads++;
+      if (reads === 1) return { kind: 'relayTurnResult', state: 'pending' };
+      if (reads < 5) {
+        request.manualReview = true;
+        return { kind: 'relayTurnResult', state: 'pending' };
+      }
+      return { kind: 'relayTurnResult', state: 'completed', body: '测试完成', contextCompactionCount: 0, usage: null };
+    }
+    if (input.action === 'takeApprovalNotice') {
+      claims++;
+      assert.equal(reads, claims + 1);
+      if (claims === 1) return null;
+      return { kind: 'approvalNotice', id: 'notice', chatId: inbound.chatId, replyTo: inbound.messageId, inThread: true };
+    }
+    if (input.action === 'prepare') finalReply = input.response?.body;
+    return null;
+  };
+  const assertExclusiveWriter = async () => {};
+  const graph = { scheduler: { drain: async () => {} }, runtimes: { get: () => runtime } };
+  const nativeConversation = new NativeFeishuConversation({ port: { runFeishuWork, execute: () => assert.fail(), runFeishuAdmin: () => assert.fail() },
+    graph: graph as unknown as ConstructorParameters<typeof NativeFeishuConversation>[0]['graph'], registry: null!,
+    catalog: async () => ({ engineId: 'codex', fetchedAt: 0, stale: false, models: [] }), storeId: 'store', generation: 1, assertExclusiveWriter });
+  const worker = new FeishuImWorker({ bots: [localBot], port: { runFeishuWork }, assertExclusiveWriter, diagnostic: () => assert.fail(),
+    nativeConversation, acquireTurn: () => null });
+  worker['client'] = async () => ({ im: { message: { reply: async (payload: unknown) => {
+    replies.push(payload);
+    return { code: 0, data: { message_id: 'om_notice' } };
+  } } } }) as unknown as Client;
+  try {
+    await worker['processInbound'](localBot, scope, { kind: 'inbound', inbound: { ...inbound, relayTurn: turn }, sequence: 1, relatedTaskIds: [], receivedAt: 1 });
+    assert.equal(claims, 2);
+    assert.deepEqual(replies, [{ path: { message_id: inbound.messageId }, data: { uuid: 'notice', msg_type: 'text', reply_in_thread: true,
+      content: JSON.stringify({ text: feishuApprovalWaitBody([interaction]) }) } }]);
+    assert.equal(finalReply, '测试完成');
   } finally { await worker.close(); }
 });
 
@@ -482,6 +659,18 @@ test('Feishu uses the native turn queue and recovers the same committed request 
     assert.ok(result?.kind === 'relayTurnPrepared');
     const { turn } = result;
     const read = { ...scope, action: 'readRelayTurn' as const, sequence: pending.sequence };
+    const approvalNotice = { ...scope, action: 'takeApprovalNotice' as const, sequence: pending.sequence, messageId: turn.messageId };
+    assert.equal(store.runFeishuWork(approvalNotice), null);
+    const inspect = (request: Parameters<typeof runFeishuAdmin>[1], actorId = 'owner') => {
+      const sqlite = new DatabaseSync(f.filename);
+      try { return runFeishuAdmin(nativeQueries(sqlite), request, actorId); }
+      finally { sqlite.close(); }
+    };
+    const adminScope = { botId: scope.botId, tenantKey: scope.tenantKey };
+    const liveRange = { ...adminScope, action: 'inspect' as const, from: Date.now() - 30000, to: Date.now() + 30000 };
+    assert.equal(inspect({ ...liveRange, conversationList: true }).conversations?.[0]?.relayStatus, 'queued');
+    const executionRequest = { ...adminScope, action: 'execution' as const, sequence: pending.sequence };
+    assert.throws(() => inspect(executionRequest, 'admin'), /FORBIDDEN/);
     assert.deepEqual(store.runFeishuWork(read), { kind: 'relayTurnResult', state: 'notAdmitted' });
     const request = { protocolVersion: 1, storeId: 'store', workerGeneration: 1, requestId: 'req1',
       operationId: 'feishu-test', principal: actor, command: { name: 'turn.enqueue', input: {
@@ -510,6 +699,8 @@ test('Feishu uses the native turn queue and recovers the same committed request 
     assert.equal(f.scalar("SELECT requested_by_user_id FROM engine_queue_entries WHERE resource_key='zcode:feishu' AND state='claimed'"), turn.actorId);
     if (claimed.state !== 'committed') assert.fail('turn was not claimed');
     const claim = claimed.value as QueueClaim;
+    assert.deepEqual(inspect(executionRequest).execution,
+      { active: { sessionId: turn.sessionId, attemptId: claim.attemptId } });
     assert.equal(store.checkQueueDispatch({ principal: actor, claim }), true);
     const checkAutoApproval = (now: number) => {
       const sqlite = new DatabaseSync(f.filename);
@@ -547,6 +738,22 @@ test('Feishu uses the native turn queue and recovers the same committed request 
     f.mutate("UPDATE projects SET path='D:/synthetic' WHERE id='project'");
     const runtime = { kind: 'runtime' as const, sessionId: turn.sessionId, attemptId: claim.attemptId, connectionId: 'test-connection', runtimeVersion: 1 };
     store.registerRuntime({ storeId: 'store', workerGeneration: 2, leaseToken: claim.leaseToken, runtime });
+    const approvalItem = { id: 'saved-approval', type: 'interaction', status: 'completed', details: { title: '执行命令', resolvedAction: 'accept',
+      decisionSource: 'user', effectiveScope: null, trustExpiresAt: null, decidedAt: 200 } };
+    f.mutate(`INSERT INTO _relay_interaction_responses VALUES('fixture-job','${turn.sessionId}','${claim.attemptId}','${runtime.connectionId}',1,
+      '${approvalItem.id}','submitted','{}',200,200);
+      INSERT INTO _relay_storage_operations(operation_id,owner_key,command_name,input_digest,scope_session_id,principal_json,result_json,committed_at)
+      VALUES('interaction-project:fixture-job','maintenance','interaction.projectSubmitted','digest','${turn.sessionId}','{}','${JSON.stringify({ item: approvalItem })}',200)`);
+    assert.deepEqual(inspect(executionRequest).execution?.confirmedInteractions, [approvalItem]);
+    assert.equal(store.runFeishuWork(approvalNotice), null);
+    f.mutate(`UPDATE sessions SET status='awaiting_action' WHERE id='${turn.sessionId}'`);
+    assert.equal(store.runFeishuWork({ ...approvalNotice, messageId: randomUUID() }), null);
+    f.mutate('UPDATE feishu_im_settings SET enabled=0');
+    assert.equal(store.runFeishuWork(approvalNotice), null);
+    f.mutate('UPDATE feishu_im_settings SET enabled=1');
+    assert.deepEqual(store.runFeishuWork(approvalNotice), { kind: 'approvalNotice', id: feishuExecutionId([turn.messageId, 'approval-notice']),
+      chatId: inbound.chatId, replyTo: inbound.messageId, inThread: !!inbound.threadId });
+    assert.equal(store.runFeishuWork(approvalNotice), null);
     const answer = '测试通过';
     const modelInfo = { engineId: 'zcode' as const, effective: { id: 'actual-model', displayName: '实际模型', reasoningEffort: 'high' },
       resolvedServiceTier: 'fast', rerouted: true };
@@ -561,10 +768,13 @@ test('Feishu uses the native turn queue and recovers the same committed request 
     assert.equal(store.execute({ ...envelope, requestId: 'req5', operationId: 'feishu-terminal', command: { name: 'turn.projectTerminal', input: {
       decision: { id: 'feishu-decision', sessionId: turn.sessionId, attemptId: claim.attemptId, engineId: 'zcode',
         externalTurnId: 'test-external-turn', outcome: 'completed', reasonCode: 'FINAL_ANSWER_COMPLETED', factId: fact.id, decidedAt: fact.observedAt, projectedAt: null },
-      message: { id: 'feishu-final', turnId: 'test-external-turn', content: answer, items: null, metadata: { modelInfo }, durationMs: 10 },
+      message: { id: 'feishu-final', turnId: 'test-external-turn', content: answer, items: null,
+        metadata: { modelInfo, processContent: '部署过程' }, durationMs: 10 },
     } } }).state, 'committed');
     assert.deepEqual(store.runFeishuWork(read), { kind: 'relayTurnResult', state: 'completed', body: answer, usage: null, modelInfo,
       contextCompactionCount: 0 });
+    assert.equal(inspect(executionRequest).execution?.processContent, '部署过程');
+    assert.deepEqual(inspect(executionRequest).execution?.confirmedInteractions, [approvalItem]);
     f.mutate("UPDATE messages SET content='different answer' WHERE id='feishu-final'");
     assert.deepEqual(store.runFeishuWork(read), { kind: 'relayTurnResult', state: 'failed' });
     f.mutate(`UPDATE messages SET content='${answer}' WHERE id='feishu-final';
@@ -602,6 +812,9 @@ test('Feishu uses the native turn queue and recovers the same committed request 
     const continuation = store.runFeishuWork({ ...scope, action: 'prepareRelayTurn', sequence: followup.sequence, engineId: 'zcode',
       configurationId, taskId: 'task1' });
     assert.ok(continuation?.kind === 'relayTurnPrepared');
+    const matter = inspect(liveRange).matters?.[0];
+    assert.equal(matter?.relayStatus, 'queued');
+    assert.ok(inspect({ ...liveRange, matterId: matter!.id, chatId: inbound.chatId }).messages?.some(item => item.sequence === followup.sequence));
     assert.notEqual(continuation.turn.sessionId, turn.sessionId);
     assert.match(continuation.turn.handoff ?? '', /测试通过/);
     const cardHistory = { ...scope, action: 'readSummaryReplies' as const, sequence: followup.sequence,
@@ -672,6 +885,9 @@ test('Feishu private native sessions reuse context and split in the message view
     assert.equal(management.byUser?.[0]?.displayName, '王小明');
     const second = receive('follow', '接着说');
     assert.equal(second.inbound.senderName, '王小明');
+    const waiting = runFeishuAdmin(db, { ...scope, action: 'inspect', chatId: base.chatId,
+      conversationId: `native:${firstTurn.sessionId}`, from: Date.now() - 30000, to: Date.now() + 30000 }, 'owner');
+    assert.deepEqual(waiting.messages?.map(message => [message.messageId, message.relayStatus]), [['follow', 'queued'], ['hello', null]]);
     assert.equal(start(second).sessionId, firstTurn.sessionId);
     const answer = '说它家里不够冷。';
     db.run('UPDATE sessions SET context_compaction_count=3 WHERE id=?', [firstTurn.sessionId]);
@@ -775,6 +991,183 @@ test('direct text needs no mention and remains bound to the app and the user', (
   assert.equal(direct?.threadId, null);
   assert.equal(normalizeFeishuInbound(bot, 'ou_bot', { ...input, message: { ...message, chat_type: 'group' } }), null);
   assert.equal(normalizeFeishuInbound(bot, 'ou_user', { ...input, message }), null);
+});
+
+test('direct media becomes durable file references or an explicit unsupported message', () => {
+  const input = event();
+  const normalize = (message_type: string, content: unknown) => normalizeFeishuInbound(bot, 'ou_bot', {
+    ...input, message: { ...input.message, mentions: [], chat_type: 'p2p', message_type, content: JSON.stringify(content) },
+  });
+  assert.deepEqual(normalize('image', { image_key: 'img_one' })?.attachments, [{ type: 'image', key: 'img_one' }]);
+  assert.deepEqual(normalize('file', { file_key: 'file_one', file_name: '报告.pdf' })?.attachments,
+    [{ type: 'file', key: 'file_one', name: '报告.pdf' }]);
+  const post = normalize('post', { zh_cn: { content: [
+    [{ tag: 'text', text: '比较这两张图' }], [{ tag: 'img', image_key: 'img_one' }], [{ tag: 'img', image_key: 'img_two' }],
+  ] } });
+  assert.equal(post?.text, '比较这两张图');
+  assert.deepEqual(post?.attachments, [{ type: 'image', key: 'img_one' }, { type: 'image', key: 'img_two' }]);
+  const oversized = Array.from({ length: 11 }, (_, index) => [{ tag: 'img', image_key: 'img_' + index }]);
+  assert.equal(normalize('post', { content: oversized })?.contentIssue, 'too_many_attachments');
+  assert.equal(normalize('audio', { file_key: 'audio_one' })?.contentIssue, 'unsupported');
+  assert.equal(normalize('file', { file_key: '../invalid' })?.contentIssue, 'unsupported');
+});
+
+test('unsupported Feishu messages are deduplicated and get fixed feedback with every engine slot busy', async () => {
+  const f = fixture();
+  const workspacePath = process.cwd();
+  f.mutate(FEISHU_IM_SCHEMA_SQL);
+  f.mutate(`UPDATE projects SET path='${workspacePath.replaceAll("'", "''")}' WHERE id='project'`);
+  const localBot = { ...bot, workspacePath };
+  const source = event();
+  const inbound = normalizeFeishuInbound(localBot, 'ou_bot', { ...source, message: { ...source.message,
+    chat_type: 'p2p', message_type: 'audio', content: '{"file_key":"audio_one"}' } })!;
+  const sqlite = new DatabaseSync(f.filename), db = nativeQueries(sqlite);
+  const worker = new FeishuImWorker({ bots: [localBot], port: { runFeishuWork: async command => runFeishuWork(db, command) },
+    assertExclusiveWriter: async () => {}, diagnostic: () => assert.fail(),
+    nativeConversation: { reply: async () => assert.fail('fixed feedback must not call the model') }, acquireTurn: () => null });
+  worker['senderName'] = () => ({ name: null, expiresAt: 0 });
+  worker['deliver'] = async () => {};
+  try {
+    assert.equal(acceptPermittedInbound(db, { workspacePath, inbound }), 'received');
+    assert.equal(acceptFeishuInbound(db, { workspacePath, inbound }), 'duplicate');
+    await worker['process'](localBot);
+    await worker['process'](localBot);
+    assert.equal(db.get('SELECT category FROM feishu_im_inbox')?.category, 'unsupported_message');
+    assert.equal(db.get('SELECT count(*) AS total FROM feishu_im_outbox')?.total, 1);
+    assert.match(String(db.get('SELECT body FROM feishu_im_outbox')?.body), /已收到.*暂不支持/);
+  } finally {
+    await worker.close();
+    sqlite.close();
+    f.cleanup();
+  }
+});
+
+test('Feishu downloads multiple resources using Relay upload quotas and promotes them into a fenced queued turn', async () => {
+  const f = fixture();
+  const root = mkdtempSync(join(tmpdir(), 'relay-feishu-attachments-test-'));
+  const projectId = randomUUID(), configurationId = randomUUID();
+  f.mutate(FEISHU_IM_SCHEMA_SQL);
+  f.mutate(`INSERT INTO projects (id,owner_user_id,path,name) VALUES('${projectId}','owner','${root.replaceAll("'", "''")}','Uploads');
+    INSERT INTO feishu_im_settings VALUES('${configurationId}','cli_a','${projectId}','测试机器人',1,1,'{}','secret',NULL)`);
+  const localBot = { ...bot, id: configurationId, projectId, workspacePath: root };
+  const source = event();
+  const inbound = normalizeFeishuInbound(localBot, 'ou_bot', { ...source, message: { ...source.message, chat_type: 'p2p',
+    message_type: 'post', content: JSON.stringify({ content: [
+      [{ tag: 'text', text: '对照附件' }], [{ tag: 'img', image_key: 'img_one' }],
+      [{ tag: 'file', file_key: 'file_one', file_name: '手册.pdf' }],
+    ] }) } })!;
+  const database = new DatabaseSync(f.filename);
+  try { permitFixtureSender(nativeQueries(database), { workspacePath: root, inbound }); }
+  finally { database.close(); }
+  const storeId = 'feishu-attachments', generation = 1;
+  const port = await StorageWorkerClient.open({ filename: f.filename, storeId, generation, initialize: true,
+    defaultConcurrency: { 'zcode:feishu': 2 } });
+  const files = new ProjectFileActivities(), promoter = new UploadPromoter(), assertExclusiveWriter = async () => {};
+  const uploads = new StoredProjectUploads({ port, storeId, generation, files, assertExclusiveWriter });
+  const cleanup = new StoredDraftCleanup({ port, storeId, generation, files, assertExclusiveWriter });
+  const attachments = new StoredMessageAttachments({ port, files, promoter, assertExclusiveWriter,
+    grants: { allows: () => false, revoke: () => {} } });
+  try {
+    assert.equal(await port.acceptFeishuInbound({ workspacePath: root, inbound }), 'received');
+    assert.equal(await port.acceptFeishuInbound({ workspacePath: root, inbound }), 'duplicate');
+    const scope = { botId: inbound.botId, tenantKey: inbound.tenantKey, workspacePath: root };
+    const pending = await port.runFeishuWork({ ...scope, action: 'pending' });
+    assert.equal(pending?.kind, 'inbound');
+    if (pending?.kind !== 'inbound') assert.fail();
+    const mapped = await port.runFeishuWork({ ...scope, action: 'prepareRelayTurn', sequence: pending.sequence,
+      configurationId, engineId: 'zcode' });
+    if (mapped?.kind !== 'relayTurnPrepared') assert.fail();
+    const { turn, content, preferencesRevision } = mapped;
+    const attachmentScope = { ...scope, sequence: pending.sequence, messageId: turn.messageId };
+    const loadScope = async () => {
+      const result = await port.runFeishuWork({ ...attachmentScope, action: 'attachmentScope' });
+      if (result?.kind !== 'attachmentScope') assert.fail();
+      return result.scope;
+    };
+    const principal = { kind: 'system', purpose: 'scheduler' } as const;
+    const command = { name: 'turn.enqueue', input: { sessionId: turn.sessionId, messageId: turn.messageId,
+      attemptId: feishuExecutionId([turn.messageId, 'attempt']), engineId: 'zcode', resourceKey: 'zcode:feishu',
+      content, metadata: null, expectedPreferencesRevision: preferencesRevision,
+      origin: { kind: 'feishu', botId: inbound.botId, tenantKey: inbound.tenantKey, sequence: pending.sequence },
+    } } as const;
+    const execute = (operationId: string, nextCommand: Parameters<typeof port.execute>[0]['command']) =>
+      port.execute({ protocolVersion: 1, storeId, workerGeneration: generation, requestId: randomUUID(), operationId,
+        principal, command: nextCommand });
+    assert.equal((await execute('before-attachment', command)).state, 'rejected');
+    const downloaded: string[] = [];
+    const stageAttachments = () => uploadFeishuAttachments({ resources: inbound.attachments!, messageId: turn.messageId, feishuMessageId: inbound.messageId,
+      signal: new AbortController().signal, uploads, cleanup, onCleanupFailure: () => assert.fail(), readScope: loadScope, getResource: async payload => {
+        assert.equal(payload?.path.message_id, inbound.messageId);
+        downloaded.push(payload!.path.file_key);
+        const image = payload?.params.type === 'image';
+        return { getReadableStream: () => Readable.from([Buffer.from(image ? 'image-data' : '%PDF-test')]),
+          writeFile: async () => assert.fail(), headers: { 'content-type': image ? 'image/png' : 'application/pdf' } };
+      } });
+    const drafts = await stageAttachments();
+    assert.deepEqual(await stageAttachments(), drafts);
+    assert.deepEqual(downloaded, ['img_one', 'file_one', 'img_one', 'file_one']);
+    const invalid = drafts.map(draft => ({ ...draft, uploadId: randomUUID() }));
+    await assert.rejects(port.runFeishuWork({ ...attachmentScope, action: 'recordAttachmentDrafts', drafts: invalid }));
+    const stored = await port.runFeishuWork({ ...attachmentScope, action: 'recordAttachmentDrafts', drafts });
+    if (stored?.kind !== 'attachmentScope') assert.fail();
+    const restored = await port.runFeishuWork({ ...scope, action: 'prepareRelayTurn', sequence: pending.sequence, configurationId, engineId: 'zcode' });
+    assert.deepEqual(restored?.kind === 'relayTurnPrepared' && restored.turn.attachmentDrafts, drafts);
+    const prepared = await attachments.prepareInScope(stored.scope.viewerUserId, projectId, turn.messageId, drafts, loadScope);
+    assert.deepEqual(await attachments.prepareInScope(stored.scope.viewerUserId, projectId, turn.messageId, drafts, loadScope), prepared);
+    assert.equal((await execute('admit-attachment', command)).state, 'committed');
+    const claimed = await execute('claim-attachment', { name: 'queue.claim', input: { resourceKey: 'zcode:feishu', claimToken: 'attachment-claim' } });
+    if (claimed.state !== 'committed') assert.fail();
+    const claim = claimed.value as QueueClaim;
+    const payload = await port.readClaimedTurn({ principal, claim });
+    if (!payload) assert.fail();
+    const prompt = await attachments.prepareEngineInput(claim, payload, new AbortController().signal);
+    assert.match(prompt, /^对照附件/);
+    assert.deepEqual(JSON.parse(payload.message.metadata!).attachments, prepared);
+    assert.deepEqual(prepared.map(file => readFileSync(file.path, 'utf8')), ['image-data', '%PDF-test']);
+    const viewDb = new DatabaseSync(f.filename);
+    try {
+      const request = { action: 'inspect' as const, botId: scope.botId, tenantKey: scope.tenantKey, chatId: inbound.chatId,
+        conversationId: 'native:' + turn.sessionId, from: Date.now() - 60000, to: Date.now() + 1000 };
+      const timeline = runFeishuAdmin(nativeQueries(viewDb), request, 'owner');
+      assert.deepEqual(timeline.messages?.[0]?.attachments, prepared);
+      const redacted = runFeishuAdmin(nativeQueries(viewDb), request, 'admin');
+      assert.deepEqual(redacted.messages?.[0]?.attachments, prepared.map(({ path: _path, ...attachment }) => attachment));
+    } finally { viewDb.close(); }
+
+    // A failed second download must release the first file's temporary upload quota.
+    const failing = { ...inbound, chatId: 'oc_failure', messageId: 'om_failure' };
+    assert.equal(await port.acceptFeishuInbound({ workspacePath: root, inbound: failing }), 'received');
+    const next = await port.runFeishuWork({ ...scope, action: 'pending', inFlightChats: [inbound.chatId] });
+    if (next?.kind !== 'inbound') assert.fail();
+    const staged = await port.runFeishuWork({ ...scope, action: 'prepareRelayTurn', sequence: next.sequence,
+      configurationId, engineId: 'zcode' });
+    if (staged?.kind !== 'relayTurnPrepared') assert.fail();
+    await assert.rejects(uploadFeishuAttachments({
+      resources: failing.attachments!, messageId: staged.turn.messageId, feishuMessageId: failing.messageId,
+      signal: new AbortController().signal, uploads, cleanup, onCleanupFailure: () => assert.fail(),
+      readScope: async () => {
+        const result = await port.runFeishuWork({ ...scope, action: 'attachmentScope', sequence: next.sequence, messageId: staged.turn.messageId });
+        if (result?.kind !== 'attachmentScope') assert.fail();
+        return result.scope;
+      },
+      getResource: async resource => {
+        if (resource?.params.type === 'file') throw new Error('simulated Feishu download failure');
+        return { getReadableStream: () => Readable.from([Buffer.from('image-data')]), writeFile: async () => assert.fail(),
+          headers: { 'content-type': 'image/png' } };
+      },
+    }), (error: unknown) => error instanceof FeishuAttachmentError && error.reason === 'download');
+    const manifest = join(uploadMessageDirectory(root, 'tmp', staged.turn.messageId), 'manifest.json');
+    assert.deepEqual(JSON.parse(readFileSync(manifest, 'utf8')).attachments, []);
+  } finally {
+    attachments.close();
+    await uploads.close();
+    await cleanup.close();
+    await promoter.close();
+    await files.close();
+    await port.close();
+    f.cleanup();
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test('the authenticated bot-info endpoint provides bot identity and display name', async () => {
@@ -1217,8 +1610,8 @@ test('group clarification preserves the original question and accepts a single c
     }
     const card = cardFor('q1');
     assert.ok(card.contextCard?.kind === 'clarify');
-    const actions = buildFeishuContextCard(card.id, card.body, card.contextCard).elements[1]?.actions;
-    assert.deepEqual(actions?.map(action => action.text.content), ['客户回访', '发布核对', '都不是，我补充一下']);
+    const actions = buildFeishuContextCard(card.id, card.body, card.contextCard).body.elements.filter(item => item.tag === 'button');
+    assert.deepEqual(actions.map(action => action.text.content), ['客户回访', '发布核对', '都不是，我补充一下']);
     const receiver = new FeishuImReceiver({ bots: [], assertExclusiveWriter: async () => {}, diagnostic: () => {},
       port: { acceptFeishuInbound: async request => acceptPermittedInbound(db, request), runFeishuWork: async request => runFeishuWork(db, request) } });
     const click = (id: string, messageId: string, choice: string, openId = base.senderId) => receiver.receiveCard(configured, {
@@ -1273,7 +1666,8 @@ test('SDK card callbacks accept only the matching user, deduplicate choices, and
     function reply(messageId: string, chatType: 'group' | 'p2p', result: typeof response & {
       offerPrivateContext?: boolean; trackTitle?: string; senderName?: string;
     }) {
-      acceptPermittedInbound(db, { workspacePath, inbound: { ...base, messageId, chatType, chatId: chatType === 'p2p' ? 'oc_private' : base.chatId } });
+      acceptPermittedInbound(db, { workspacePath, inbound: { ...base, messageId, chatType, chatId: chatType === 'p2p' ? 'oc_private' : base.chatId,
+        ...(chatType === 'p2p' ? { attachments: [{ type: 'file', key: 'file_original' }] } : {}) } });
       const next = pending();
       assert.ok(next?.kind === 'inbound');
       runFeishuWork(db, { ...scope, action: 'prepare', workspacePath, sequence: next.sequence, response: result });
@@ -1299,7 +1693,7 @@ test('SDK card callbacks accept only the matching user, deduplicate choices, and
     assert.ok(card.contextCard?.kind === 'group');
     assert.match(card.body, /^事项最新状态/);
     assert.doesNotMatch(card.body, /^王小明，/);
-    assert.equal(buildFeishuContextCard(card.id, card.body, card.contextCard).elements[1]?.actions?.length, 1);
+    assert.equal(buildFeishuContextCard(card.id, card.body, card.contextCard).body.elements.filter(item => item.tag === 'button').length, 1);
     assert.equal(reply('same_session', 'group', response).contextCard, undefined);
     assert.equal((await click(card.id, base.chatId, 'reply_warning', 'carry', 'ou_other')).toast.type, 'warning');
     assert.equal((await click(card.id, base.chatId, 'reply_warning', 'clear')).toast.type, 'warning');
@@ -1345,12 +1739,13 @@ test('SDK card callbacks accept only the matching user, deduplicate choices, and
     const direct = reply('direct', 'p2p', { ...response, offerPrivateContext: true });
     assert.ok(direct.contextCard?.kind === 'private');
     assert.match(direct.body, /^事项最新状态/);
-    assert.equal(buildFeishuContextCard(direct.id, direct.body, direct.contextCard).elements[1]?.actions?.length, 2);
+    assert.equal(buildFeishuContextCard(direct.id, direct.body, direct.contextCard).body.elements.filter(item => item.tag === 'button').length, 2);
     assert.equal((await click(direct.id, 'oc_private', 'different_message', 'clear')).toast.type, 'warning');
     assert.match((await click(direct.id, 'oc_private', 'reply_direct', 'clear')).toast.content, /处理结果/);
     assert.match((await click(direct.id, 'oc_private', 'reply_direct', 'carry')).toast.content, /此卡片/);
     const directJob = pending();
     assert.ok(directJob?.kind === 'inbound');
+    assert.equal(directJob.inbound.attachments, undefined);
     assert.equal(directJob.inbound.text, '/新建 清空');
     assert.equal(directJob.inbound.cardAction?.replyTo, 'reply_direct');
   } finally { database.close(); }

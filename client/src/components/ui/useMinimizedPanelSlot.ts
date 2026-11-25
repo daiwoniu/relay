@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 
 const TRAY_ID = 'minimized-panel-tray';
 const SLOT_LIST_ID = 'minimized-panel-list';
-const trayObservers = new WeakMap<HTMLElement, ResizeObserver>();
+const trayResources = new WeakMap<HTMLElement, { observer?: ResizeObserver; viewportEvents: AbortController }>();
 
 function updateTray(list: HTMLElement) {
   const toggle = list.previousElementSibling;
@@ -16,6 +16,66 @@ function updateTray(list: HTMLElement) {
   if (toggle.textContent !== label) toggle.textContent = label;
 }
 
+export function enableMinimizedPanelDrag(tray: HTMLElement) {
+  let position: { x: number; y: number } | undefined;
+  let drag: { handle: HTMLButtonElement; pointerId: number; offsetX: number; offsetY: number } | undefined;
+
+  function findHandle(target: EventTarget | null) {
+    return target instanceof Element ? target.closest<HTMLButtonElement>('.minimized-panel-bar__icon') : null;
+  }
+
+  function move(x: number, y: number) {
+    const viewport = window.visualViewport;
+    const left = viewport?.offsetLeft ?? 0;
+    const top = viewport?.offsetTop ?? 0;
+    const right = left + (viewport?.width ?? window.innerWidth);
+    const bottom = top + (viewport?.height ?? window.innerHeight);
+    const { width, height } = tray.getBoundingClientRect();
+    position = {
+      x: Math.max(left, Math.min(x, right - width)),
+      y: Math.max(top, Math.min(y, bottom - height)),
+    };
+    tray.style.left = `${position.x}px`;
+    tray.style.top = `${position.y}px`;
+    tray.style.right = 'auto';
+    tray.style.bottom = 'auto';
+  }
+
+  const constrain = () => {
+    if (position) move(position.x, position.y);
+  };
+
+  tray.onpointerdown = event => {
+    if (!event.isPrimary || event.button !== 0 || (drag && tray.contains(drag.handle))) return;
+    const handle = findHandle(event.target);
+    if (!handle) return;
+    const rect = tray.getBoundingClientRect();
+    handle.setPointerCapture(event.pointerId);
+    drag = { handle, pointerId: event.pointerId, offsetX: event.clientX - rect.left, offsetY: event.clientY - rect.top };
+  };
+  tray.onpointermove = event => {
+    if (drag?.pointerId === event.pointerId && event.target === drag.handle) move(event.clientX - drag.offsetX, event.clientY - drag.offsetY);
+  };
+  // Pointer capture is released by the browser on pointerup and pointercancel.
+  tray.onlostpointercapture = event => {
+    if (drag?.pointerId === event.pointerId && event.target === drag.handle) drag = undefined;
+  };
+  tray.onkeydown = event => {
+    if (!findHandle(event.target)) return;
+    const step = 24;
+    const { left, top } = tray.getBoundingClientRect();
+    switch (event.key) {
+      case 'ArrowLeft': move(left - step, top); break;
+      case 'ArrowRight': move(left + step, top); break;
+      case 'ArrowUp': move(left, top - step); break;
+      case 'ArrowDown': move(left, top + step); break;
+      default: return;
+    }
+    event.preventDefault();
+  };
+  return constrain;
+}
+
 function getTrayList() {
   const existingList = document.getElementById(SLOT_LIST_ID);
   if (existingList) return existingList;
@@ -23,6 +83,7 @@ function getTrayList() {
   const tray = document.createElement('div');
   tray.id = TRAY_ID;
   tray.className = 'minimized-panel-tray';
+  const constrain = enableMinimizedPanelDrag(tray);
   const toggle = document.createElement('button');
   toggle.type = 'button';
   toggle.className = 'minimized-panel-tray__toggle';
@@ -38,20 +99,40 @@ function getTrayList() {
   toggle.onclick = () => {
     const expanded = toggle.getAttribute('aria-expanded') === 'true';
     toggle.setAttribute('aria-expanded', String(!expanded));
+    constrain();
   };
-  tray.onkeydown = event => {
+  tray.addEventListener('keydown', event => {
     if (event.key !== 'Escape' || !toggle.getClientRects().length || toggle.getAttribute('aria-expanded') !== 'true') return;
     event.stopPropagation();
     toggle.setAttribute('aria-expanded', 'false');
+    constrain();
     toggle.focus();
-  };
+  });
   tray.append(toggle, list);
   document.body.appendChild(tray);
+  const viewportEvents = new AbortController();
+  const viewport = window.visualViewport;
+  const resize = () => {
+    if (viewport) {
+      tray.style.setProperty('--minimized-panel-viewport-width', `${viewport.width}px`);
+      tray.style.setProperty('--minimized-panel-viewport-height', `${viewport.height}px`);
+    }
+    constrain();
+  };
+  resize();
+  window.addEventListener('resize', resize, { signal: viewportEvents.signal });
+  viewport?.addEventListener('resize', resize, { signal: viewportEvents.signal });
+  viewport?.addEventListener('scroll', constrain, { signal: viewportEvents.signal });
+  let observer: ResizeObserver | undefined;
   if (typeof ResizeObserver !== 'undefined') {
-    const observer = new ResizeObserver(() => updateTray(list));
+    observer = new ResizeObserver(() => {
+      updateTray(list);
+      constrain();
+    });
     observer.observe(list);
-    trayObservers.set(list, observer);
+    observer.observe(tray);
   }
+  trayResources.set(list, { observer, viewportEvents });
   return list;
 }
 
@@ -73,7 +154,8 @@ export default function useMinimizedPanelSlot(open: boolean, activity?: 'running
     list.appendChild(nextSlot);
     updateTray(list);
     setSlot(nextSlot);
-    const observer = trayObservers.get(list);
+    const resources = trayResources.get(list);
+    const observer = resources?.observer;
     observer?.observe(nextSlot);
     return () => {
       observer?.unobserve(nextSlot);
@@ -82,12 +164,13 @@ export default function useMinimizedPanelSlot(open: boolean, activity?: 'running
       nextSlot.remove();
       if (!list.childElementCount) {
         observer?.disconnect();
-        trayObservers.delete(list);
+        resources?.viewportEvents.abort();
+        trayResources.delete(list);
         list.parentElement?.remove();
       } else {
         updateTray(list);
         if (hadFocus) {
-          const nextButton = list.querySelector<HTMLButtonElement>('button');
+          const nextButton = list.querySelector<HTMLButtonElement>('.minimized-panel-bar__actions button');
           focusMinimizedPanelSlot(nextButton, list.firstElementChild as HTMLElement);
         }
       }

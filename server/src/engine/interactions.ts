@@ -81,7 +81,7 @@ function sanitizeSnapshotText(value: string): string {
   return value
     .replace(/-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z0-9 ]*PRIVATE KEY-----/gi, '[REDACTED PRIVATE KEY]')
     .replace(/\bauthorization\s*[:=]\s*Bearer\s+[A-Za-z0-9._~+/-]+=*/gi, 'Authorization=[REDACTED]')
-    .replace(new RegExp(`\\b(${SENSITIVE_TEXT_FIELD})\\s*[:=]\\s*[^\\s,;&"']+`, 'gi'), '$1=[REDACTED]')
+    .replace(new RegExp(`\\b(${SENSITIVE_TEXT_FIELD})\\s*[:=]\\s*[^\\s,;&"'，；。！？）)]+`, 'gi'), '$1=[REDACTED]')
     .replace(new RegExp(`([?&]${SENSITIVE_TEXT_FIELD}=)[^&#\\s"']+`, 'gi'), '$1[REDACTED]')
     .replace(/\bBearer\s+[A-Za-z0-9._~+/-]+=*/gi, 'Bearer [REDACTED]')
     .slice(0, MAX_STRING_LENGTH);

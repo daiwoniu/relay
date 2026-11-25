@@ -6,10 +6,11 @@ import { isCanonicalWorkspace, resolveFeishuScope } from './config.js';
 import { createFeishuClient } from './sdk.js';
 import { FeishuSenderDirectory, type SenderName } from './sender-directory.js';
 import { isSummaryRequest, summarizeFeishuHistory } from './history-summary.js';
-import { buildFeishuReplyPayload, feishuContextCommandReply } from './context-card.js';
+import { buildFeishuDelivery, feishuContextCommandReply } from './context-card.js';
 import type { FeishuSummaryPlatform } from './managed-config.js';
 import type { NativeFeishuConversation } from './native-conversation.js';
 import { recordTrustedResult } from '../../analytics/command-collector.js';
+import { FeishuAttachmentError } from './attachments.js';
 
 const senderNameWaitMs = 300;
 
@@ -74,10 +75,10 @@ export class FeishuImWorker {
       const completion = this.completeReceipt(bot, scope).catch(() => undefined).finally(() => this.receiptCompletions.delete(bot.id));
       this.receiptCompletions.set(bot.id, completion);
     }
-    // Permission reminders do not use an engine slot or the conversation state.
-    const denied = await work({ ...scope, action: 'pending', workspacePath: bot.workspacePath, deniedOnly: true });
+    // Fixed feedback does not use an engine slot or the conversation state.
+    const feedback = await work({ ...scope, action: 'pending', workspacePath: bot.workspacePath, feedbackOnly: true });
     if (this.closed) return;
-    if (denied?.kind === 'inbound' && denied.accessDenied) await this.processInbound(bot, scope, denied);
+    if (feedback?.kind === 'inbound' && (feedback.accessDenied || feedback.inbound.contentIssue)) await this.processInbound(bot, scope, feedback);
     await this.deliver(bot, scope, work);
     const active = this.active.get(bot.id) ?? new Map<string, Promise<void>>();
     this.active.set(bot.id, active);
@@ -144,21 +145,26 @@ export class FeishuImWorker {
       : feishuPolicyKey(bot, outgoing.chatId) === outgoing.policyKey;
     if (allowed) {
       try {
-        const client = await this.client(bot);
-        await this.options.assertExclusiveWriter();
-        const data = buildFeishuReplyPayload(outgoing);
-        const response = outgoing.replyTo ? await client.im.message.reply({ path: { message_id: outgoing.replyTo },
-          data: { ...data, reply_in_thread: outgoing.inThread } }) : await client.im.message.create({ params: { receive_id_type: 'chat_id' },
-          data: { ...data, receive_id: outgoing.chatId } });
-        settle.state = response.code === 0 && response.data?.message_id ? 'sent' : typeof response.code === 'number' && response.code !== 0 ? 'failed' : 'unknown';
-        settle.messageId = response.data?.message_id ?? null;
-        settle.errorCode = settle.state === 'sent' ? null : `feishu-${response.code ?? 'missing'}`;
+        Object.assign(settle, await this.transmit(bot, () => outgoing));
       } catch {
         settle.state = 'unknown';
         settle.errorCode = 'transport';
       }
     }
     await work(settle);
+  }
+
+  private async transmit(bot: FeishuBotConfig, readOutgoing: () => Parameters<typeof buildFeishuDelivery>[0] | null) {
+    const client = await this.client(bot);
+    await this.options.assertExclusiveWriter();
+    const outgoing = readOutgoing();
+    if (!outgoing) return null;
+    const delivery = buildFeishuDelivery(outgoing);
+    const response = delivery.method === 'reply' ? await client.im.message.reply(delivery.payload)
+      : await client.im.message.create(delivery.payload);
+    const messageId = response.data?.message_id ?? null;
+    const state = response.code === 0 && messageId ? 'sent' : typeof response.code === 'number' && response.code !== 0 ? 'failed' : 'unknown';
+    return { state, messageId, errorCode: state === 'sent' ? null : `feishu-${response.code ?? 'missing'}` } as const;
   }
 
   private async client(bot: FeishuBotConfig) {
@@ -184,6 +190,14 @@ export class FeishuImWorker {
   }
 
   private async answer(bot: FeishuBotConfig, next: FeishuPending, scope: { botId: string; tenantKey: string }, loadName: () => SenderName) {
+    if (next.inbound.contentIssue === 'unsupported') {
+      return { category: 'unsupported_message', body: next.inbound.chatType === 'p2p'
+        ? '已收到。这种消息格式暂不支持，请改用文字、图片或文件发送。'
+        : '已收到。这种群消息格式暂不支持，请用文字 @ 我，或在私聊发送图片和文件。' };
+    }
+    if (next.inbound.contentIssue === 'too_many_attachments') {
+      return { category: 'attachment_error', body: '已收到。每条消息最多支持 10 个附件，请分批发送。' };
+    }
     if (next.inbound.mentionOnly) return { category: 'help', body: '请在 @ 我时一起发来你想问的问题。' };
     const resumed = !!next.inbound.relayTurn;
     if (next.inbound.cardAction?.card.kind === 'group') return { category: 'group_context_handoff', body: '正在处理会话交接。' };
@@ -206,7 +220,7 @@ export class FeishuImWorker {
           return new Map(result.replies.map(({ messageId, text }) => [messageId, text]));
         });
     }
-    const commandReply = !resumed && feishuContextCommandReply(next.inbound, next.relatedTaskIds);
+    const commandReply = !resumed && !next.inbound.attachments?.length && feishuContextCommandReply(next.inbound, next.relatedTaskIds);
     if (commandReply) return commandReply;
     if (next.needsGroupReference) {
       return { category: 'help', body: '你想接着哪条消息聊？可以引用那条消息再 @ 我，也可以补一句具体线索。' };
@@ -217,8 +231,28 @@ export class FeishuImWorker {
     const preferences = target && (target.engine !== 'bot' || target.model !== null) ? { engineId: target.engine === 'bot' ? 'codex' as const : target.engine,
       modelId: target.model, reasoningEffort: target.reasoningEffort ?? null, serviceTier: target.serviceTier ?? null } : defaults;
     const senderDisplayName = !resumed ? await this.nameForPrompt(loadName()) : null;
-    const result = await this.options.nativeConversation.reply(bot, next, preferences, this.stopSignal.signal,
-      { ...matter, ...(senderDisplayName ? { senderDisplayName } : {}) });
+    let result: Awaited<ReturnType<NativeFeishuConversation['reply']>>;
+    try {
+      result = await this.options.nativeConversation.reply(bot, next, preferences, this.stopSignal.signal,
+        { ...matter, ...(senderDisplayName ? { senderDisplayName } : {}),
+          sendApprovalNotice: async (target, readBody) => {
+            try {
+              const result = await this.transmit(bot, () => {
+                const body = this.closed ? null : readBody();
+                return body ? { ...target, body, inbound: null } : null;
+              });
+              if (result && result.state !== 'sent') this.options.diagnostic();
+            } catch { this.options.diagnostic(); }
+          } });
+    } catch (error) {
+      if (!(error instanceof FeishuAttachmentError)) throw error;
+      const body = {
+        download: '已收到消息，但没能从飞书下载附件。请确认机器人有读取消息资源的权限，或稍后重新发送。',
+        upload: '已收到消息，但没能将附件存入 Relay。请检查文件格式或稍后重新发送。',
+        limit: '已收到消息，但附件超过大小限制或项目容量不足。请缩小文件或分批发送。',
+      }[error.reason];
+      return { category: 'attachment_error', body };
+    }
     return result ? { category: 'conversation', body: result.body, executionLine: result.executionLine,
       ...(result.taskId === undefined ? {} : { taskId: result.taskId }),
       ...(result.taskTitle === undefined ? {} : { taskTitle: result.taskTitle }),

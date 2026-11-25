@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import type { ProjectDto, PublicUserDto } from '../../generated/relay-contracts';
 import { listProjectMemberCandidates, listProjectMembers, removeProjectMember, setProjectMember, type ProjectMemberDto, type ProjectMemberRole } from '../../api/projects';
 import Modal from '../ui/Modal';
-import MinimizedPanelBar, { ClosePanelIcon } from '../ui/MinimizedPanelBar';
+import MinimizedPanelBar, { ClosePanelIcon, MinimizePanelIcon } from '../ui/MinimizedPanelBar';
 import IconActionButton from '../ui/IconActionButton';
 
 interface Props {
@@ -99,7 +99,7 @@ export default function ProjectMembersDialog({ project, onClose }: Props) {
 
   return <><Modal open suspended={minimized} onClose={onClose} labelledBy="project-members-title" containerClassName="items-end sm:items-center" contentClassName="w-full sm:w-auto">
     <div className="max-h-[88vh] w-full overflow-y-auto rounded-t-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 shadow-xl sm:w-[min(92vw,32rem)] sm:rounded-2xl sm:p-5">
-      <div className="flex items-start justify-between gap-3"><div><h2 id="project-members-title" className="text-sm font-semibold text-[var(--color-text)]">管理授权</h2><p className="mt-1 text-xs text-[var(--color-text-tertiary)]">{project.name} · 授权账号直接使用原项目</p></div><div className="flex shrink-0 items-center gap-1"><IconActionButton label="最小化管理授权" variant="neutral" tooltip={false} className="h-8 w-8" onClick={() => setMinimized(true)}><svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 11.5h10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg></IconActionButton><IconActionButton label="关闭管理授权" variant="neutral" tooltip={false} className="h-8 w-8" onClick={onClose}><ClosePanelIcon /></IconActionButton></div></div>
+      <div className="flex items-start justify-between gap-3"><div><h2 id="project-members-title" className="text-sm font-semibold text-[var(--color-text)]">管理授权</h2><p className="mt-1 text-xs text-[var(--color-text-tertiary)]">{project.name} · 授权账号直接使用原项目</p></div><div className="flex shrink-0 items-center gap-1"><IconActionButton label="最小化管理授权" variant="neutral" tooltip={false} className="h-8 w-8" onClick={() => setMinimized(true)}><MinimizePanelIcon /></IconActionButton><IconActionButton label="关闭管理授权" variant="neutral" tooltip={false} className="h-8 w-8" onClick={onClose}><ClosePanelIcon /></IconActionButton></div></div>
       {error && <div role="alert" className="mt-3 rounded-lg border border-[var(--color-status-danger)]/25 bg-[var(--color-danger-hover)] px-3 py-2 text-xs text-[var(--color-status-danger)]"><span className="mb-1 block font-medium">{error.action}</span><FailureNotice error={error.cause} /></div>}
 
       {loading ? <div className="py-8 text-center text-xs text-[var(--color-text-secondary)]">加载授权中…</div> : <>

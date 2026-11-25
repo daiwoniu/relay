@@ -3,6 +3,7 @@ import path from 'node:path';
 import { connectCdpClient } from './cdp-client.mjs';
 import { redactDocumentationPage } from './documentation-screenshots.mjs';
 import { installDocumentationFixture, prepareDocumentationScene } from './documentation-fixture.mjs';
+import { installFeishuApprovalFixture, inspectFeishuApprovalFixture } from './feishu-approvals.mjs';
 
 export class PageSession {
   #cdp; #snapshot; #loadCount = 0; #evidence = { exceptions: [], logErrors: [], httpErrors: [], protocolVersion: null, webSockets: { created: 0, closed: 0, reconnects: 0 } }; #socketUrls = new Map();
@@ -78,6 +79,15 @@ export class PageSession {
 
   async installDocumentationFixture() {
     await this.#cdp.request('Page.addScriptToEvaluateOnNewDocument', { source: `(${installDocumentationFixture.toString()})()` });
+  }
+
+  async installFeishuApprovalFixture() {
+    await this.installDocumentationFixture();
+    await this.#cdp.request('Page.addScriptToEvaluateOnNewDocument', { source: `(${installFeishuApprovalFixture.toString()})()` });
+  }
+
+  inspectFeishuApprovalFixture(stage) {
+    return this.#evaluate(inspectFeishuApprovalFixture, stage, '飞书待审核示例未就绪');
   }
 
   async prepareDocumentationScene(scene) {

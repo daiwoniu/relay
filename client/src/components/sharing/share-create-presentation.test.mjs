@@ -25,5 +25,5 @@ test('创建分享保留风险提示、预览、创建和结果操作流程', ()
   assert.match(source, /void openPreview\(\)/);
   assert.match(source, /void submit\(\)/);
   assert.match(source, /copyToClipboard\(shareUrl\)/);
-  assert.match(source, /window\.open\(shareUrl, '_blank', 'noopener,noreferrer'\)/);
+  assert.match(source, /window\.open\(\s*shareUrl\s*,\s*'_blank'\s*,\s*'noopener,noreferrer'\s*\)/);
 });

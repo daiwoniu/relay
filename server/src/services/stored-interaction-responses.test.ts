@@ -51,16 +51,24 @@ async function setup(respond:(id:string|number,result:unknown)=>unknown=()=>{},r
 test('a protocol reply trailing the terminal repairs its saved interaction without reviving the task',async()=>{
   const entered=gate(),release=gate(),p=await setup(async()=>{entered.resolve();await release.promise;},true);
   try{
-    const input=command(),service=p.make({submitted:createStoredInteractionProjection(p.port,{storeId:'store',generation:1})});
+    const scopedId='interaction:connection:attempt:1',pending=p.runtime.pendingInteractions.get(interactionId)!;
+    p.runtime.pendingInteractions.delete(interactionId);p.runtime.pendingInteractions.set(scopedId,pending);
+    p.runtime.turnItems=[createInteractionItem(pending.interaction,'execCommandApproval','connection:attempt')];
+    const input={...command(),interactionId:scopedId,action:'decline' as const},service=p.make({submitted:createStoredInteractionProjection(p.port,{storeId:'store',generation:1})});
     const response=service.respond(owner,input);await entered.promise;
+    await p.events!.route({engineId:'codex',payload:{type:'server_request_resolved',requestId:1},
+      meta:{source:'realtime',sequence:1,observedAt:122,externalSessionId:'thread'}},async(event,context)=>{
+        await projectStoredRuntimeInteractions(p.runtime,event,context,undefined);
+      });
     await p.events!.route({engineId:'codex',payload:{type:'message_complete',turnId:'turn',content:'finished'},
-      meta:{source:'realtime',sequence:1,observedAt:123,externalSessionId:'thread',externalTurnId:'turn'}},async(event,context)=>{
+      meta:{source:'realtime',sequence:2,observedAt:123,externalSessionId:'thread',externalTurnId:'turn'}},async(event,context)=>{
         if(event.payload.type==='message_complete')await finishStoredAssistant(p.runtime,event.payload,context,{messageId:'answer',now:123,fileChanges:{}});
       });
     assert.equal(p.runtime.isRunning,false);release.resolve();
     assert.deepEqual(await response,{state:'submitted',projectionPending:false});assert.equal(p.runtime.pendingInteractions.size,0);
     assert.equal(p.f.scalar("SELECT content FROM messages WHERE id='answer'"),'finished');
-    assert.equal(JSON.parse(String(p.f.scalar("SELECT items FROM messages WHERE id='answer'")))[0].status,'completed');
+    const saved=JSON.parse(String(p.f.scalar("SELECT items FROM messages WHERE id='answer'")))[0];
+    assert.equal(saved.status,'completed');assert.equal(saved.details.resolvedAction,'decline');assert.equal(saved.details.decisionSource,'user');
     assert.equal(p.f.scalar('SELECT status FROM sessions'),'completed');
   }finally{release.resolve();await p.cleanup();}
 });
@@ -84,9 +92,12 @@ test('a resolved notification ahead of reply projection cannot poison completion
         const projected=projection(args);
         await Promise.all([resolved,projected]);
       }});
-      assert.deepEqual(await service.respond(owner,{...command(),interactionId:scopedId}),{state:'submitted',projectionPending:false});
+      const action=terminal==='completed'?'accept':'decline';
+      assert.deepEqual(await service.respond(owner,{...command(),interactionId:scopedId,action}),{state:'submitted',projectionPending:false});
       assert.equal(replies,1);assert.equal(p.phase(),'submitted');
       assert.equal(p.runtime.pendingInteractions.size,0);
+      assert.equal((p.runtime.turnItems[0]!.details as Record<string,unknown>).resolvedAction,action);
+      assert.equal((p.runtime.turnItems[0]!.details as Record<string,unknown>).decisionSource,'user');
       assert.equal(p.events!.storage.health().failed,false);
       if(terminal==='completed'){
         await p.events!.route({engineId:'codex',payload:{type:'message_complete',turnId:'turn',content:'finished'},
@@ -94,6 +105,7 @@ test('a resolved notification ahead of reply projection cannot poison completion
             if(event.payload.type==='message_complete')await finishStoredAssistant(p.runtime,event.payload,context,{messageId:'answer',now:124,fileChanges:{}});
           });
         assert.equal(p.f.scalar("SELECT content FROM messages WHERE id='answer'"),'finished');
+        assert.equal(JSON.parse(String(p.f.scalar("SELECT items FROM messages WHERE id='answer'")))[0].details.resolvedAction,'accept');
       }else{
         p.runtime.engineConnection!.cancel=async()=>{cancels++;};
         // Stop bindings are stable identities for an attempt.
@@ -135,6 +147,30 @@ test('an unresolved replacement stays projection-pending without poisoning the q
       assert.equal(replies,1,'projection retry must never resend authorization');
     }finally{await p.cleanup();}
   }
+});
+
+test('replaying a confirmed response repairs a provider-resolved item without a second engine response',async()=>{
+  let replies=0;const p=await setup(()=>{replies++;},true);
+  try{
+    const scopedId='interaction:connection:attempt:1',pending=p.runtime.pendingInteractions.get(interactionId)!;
+    p.runtime.pendingInteractions.delete(interactionId);p.runtime.pendingInteractions.set(scopedId,pending);
+    p.runtime.turnItems=[createInteractionItem(pending.interaction,'execCommandApproval','connection:attempt')];
+    const input={...command(),interactionId:scopedId,action:'decline' as const};
+    const initial=p.make({submitted:async()=>{
+      await p.events!.route({engineId:'codex',payload:{type:'server_request_resolved',requestId:1},
+        meta:{source:'realtime',sequence:1,observedAt:123,externalSessionId:'thread'}},async(event,context)=>{
+          await projectStoredRuntimeInteractions(p.runtime,event,context,undefined);
+        });
+      throw Error('synthetic interruption before projection');
+    }});
+    assert.deepEqual(await initial.respond(owner,input),{state:'submitted',projectionPending:true});
+    assert.equal(p.runtime.pendingInteractions.size,0);
+    const retry=p.make({submitted:createStoredInteractionProjection(p.port,{storeId:'store',generation:1})});
+    assert.deepEqual(await retry.respond(owner,{...input,action:'accept'}),{state:'rejected',code:'CONFLICT'});
+    assert.deepEqual(await retry.respond(owner,input),{state:'submitted',projectionPending:false});
+    assert.equal((p.runtime.turnItems[0]!.details as Record<string,unknown>).resolvedAction,'decline');
+    assert.equal(replies,1);
+  }finally{await p.cleanup();}
 });
 
 test('a real projection write failure still fails closed without resending the known protocol response',async()=>{

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -17,6 +17,12 @@ import { appPageRoutes } from '../../../../server/src/analytics/pages.ts';
 import { featureAction } from '../../analytics/features';
 import { FEISHU_ADMIN_MUTATION_ACTIONS } from '../../../../server/src/analytics/registry.ts';
 import { tracker } from '../../analytics/tracker';
+import { getSessionStatusPresentation, type DisplayedSessionStatus } from '../layout/session-status';
+import ProcessSteps from '../messages/ProcessSteps';
+import MessageAttachmentList from '../messages/MessageAttachmentList';
+import WorkspaceFilePreview from '../layout/WorkspaceFilePreview';
+import type { MessageAttachmentDto, MessageAttachmentSummaryDto } from '../../generated/relay-contracts';
+import type { ProcessStep, ProcessTimelineEntry } from '../../stores/chat';
 
 interface Chat { id: string; name: string; chatType: 'group' | 'p2p' }
 interface Bot { id: string; name: string; workspace: string; enabled: boolean; active: boolean; groups: Chat[]; connection: FeishuConnection }
@@ -25,19 +31,21 @@ interface Message {
   text: string; receivedAt: number; category: string | null; state: string | null; reply: string | null; executionLine?: string;
   replyId: string | null; sentId: string | null; errorCode: string | null; attempts: number | null; sentUpdatedAt: number | null;
   taskId: string | null; matterId: string | null; sourceCardId: string | null; replyCard: 'group' | 'private' | 'clarify' | null;
-  clarificationChoice?: string | null; clarificationTitles?: string[]; relayStatus?: string | null;
+  clarificationChoice?: string | null; clarificationTitles?: string[]; relayStatus?: DisplayedSessionStatus | null;
+  attachments?: (MessageAttachmentDto | MessageAttachmentSummaryDto)[]; pendingAttachments?: string[];
   conversation?: { model: string; called: boolean; usage: { total_tokens: number } | null };
   summary: { count: number; truncated: boolean; model: string; modelCalled: boolean; usage: { total_tokens: number } | null } | null;
 }
 interface Notice { id: string; chatId: string; body: string; state: string; createdAt: number; sentId: string | null; errorCode: string | null }
-interface Matter { id: string; title: string; chatId: string; taskId: string; sender: string; senderName?: string | null; sessionId: string | null; updatedAt: number; archivedAt: number | null }
+interface Matter { id: string; title: string; chatId: string; taskId: string; sender: string; senderName?: string | null; sessionId: string | null; updatedAt: number; archivedAt: number | null; relayStatus?: DisplayedSessionStatus | null }
 interface Count { name: string; displayName?: string | null; total: number; users?: number; groups?: number; days?: number; lastUsedAt?: number }
 type FeishuUsageCounts = Record<'conversationTokens' | 'summaryTokens' | 'conversationUnknown' | 'summaryUnknown', number>;
 interface FeishuUsageTrend {
   firstDay: string; lastDay: string; days: { day: string; all: FeishuUsageCounts }[];
   chats: { id: string; days: { day: string; tokens: number; unknown: number }[] }[];
 }
-interface Conversation { conversationId: string; chatId: string; chatType: Chat['chatType']; senderName: string | null; text: string; receivedAt: number; taskId: string | null; threadId: string | null; conversationOwnerId?: string | null; conversationOwnerName?: string | null; sequence: number; total: number }
+interface Conversation { conversationId: string; chatId: string; chatType: Chat['chatType']; senderName: string | null; text: string; receivedAt: number; taskId: string | null; threadId: string | null; conversationOwnerId?: string | null; conversationOwnerName?: string | null; sequence: number; total: number; relayStatus?: DisplayedSessionStatus | null }
+type Execution = { steps?: ProcessStep[]; processContent?: string; processTimeline?: ProcessTimelineEntry[]; stopped?: boolean };
 type MessagePage = { messages: Message[]; next: number | null };
 const conversationKey = (entry: Conversation) => `${entry.chatId}/${entry.conversationId}`;
 const noticeKey = (chatId: string) => `${chatId}/notices`;
@@ -47,43 +55,49 @@ interface Result { bots: Bot[]; selected: string | null; data: Data | null }
 const endpoint = '/api/admin/feishu-im';
 const trackAdmin = (action: string) => featureAction('feishu_admin', action, 'admin');
 
-type ApprovalRequest = { id: string; title: string; detail: string | null; accept: boolean; decline: boolean };
-function FeishuApprovals({ bot, sequence, onDecided }: { bot: string; sequence: number; onDecided: () => void }) {
+const approvalButtons = [['cancel', '取消请求'], ['decline', '拒绝'], ['accept', '允许本次']] as const;
+type ApprovalDecision = typeof approvalButtons[number][0];
+type ApprovalRequest = { id: string } & Record<ApprovalDecision, boolean>;
+function useFeishuApprovals(bot: string, sequence: number, onDecided: () => void) {
   const [requests, setRequests] = useState<ApprovalRequest[] | null>(null);
-  const [pending, setPending] = useState(false);
-  const [error, setError] = useState<unknown>(null);
-  async function review() {
+  const [pending, setPending] = useState<{ id: string; action: ApprovalDecision | 'review' } | null>(null);
+  const [failure, setFailure] = useState<{ id: string; error: unknown; description: string } | null>(null);
+  async function review(id: string) {
     trackAdmin('details');
-    setPending(true); setError(null);
+    setPending({ id, action: 'review' }); setFailure(null);
     try {
       const params = new URLSearchParams({ bot, sequence: String(sequence) });
       const response = await requestJson<{ requests: ApprovalRequest[] }>(`${endpoint}/approvals?${params}`);
       setRequests(response.requests);
-    } catch (failure) { setError(failure); }
-    finally { setPending(false); }
+    } catch (error) { setFailure({ id, error, description: '读取待审核操作失败' }); }
+    finally { setPending(null); }
   }
-  async function decide(id: string, action: 'accept' | 'decline') {
-    setPending(true); setError(null);
+  async function decide(id: string, action: ApprovalDecision) {
+    setPending({ id, action }); setFailure(null);
     try {
       await requestJson(`${endpoint}/approvals`, { method: 'POST', ...jsonBody({ bot, sequence, id, action }),
         analytics: { feature: 'feishu_admin', action: 'decide_approval', surface: 'admin' } });
       setRequests(current => current?.filter(item => item.id !== id) ?? null);
       onDecided();
-    } catch (failure) { setError(failure); }
-    finally { setPending(false); }
+    } catch (error) { setFailure({ id, error, description: '审核操作未确认' }); }
+    finally { setPending(null); }
   }
-  return <div className="feishu-turn-actions">
-    {error != null && <FailureNotice error={error} description="审核操作未确认" />}
-    <button type="button" disabled={pending} onClick={() => void review()}>{pending ? '正在处理…' : '查看待审核操作'}</button>
-    {requests?.length === 0 && <p>暂无可审核的工具请求。任务可能正在等待其他输入。</p>}
-    {requests?.map(request => <div key={request.id}>
-      <strong>{request.title}</strong>{request.detail && <pre>{request.detail}</pre>}
+  return (step: ProcessStep) => {
+    if (!['command_approval', 'file_approval', 'permissions_approval'].includes(String(step.details.interactionKind))) return null;
+    const request = requests?.find(item => item.id === step.id);
+    const activeAction = pending?.id === step.id ? pending.action : null;
+    return <div className="feishu-approvals" aria-label="待审核操作" aria-busy={activeAction !== null}>
+      {failure?.id === step.id && <FailureNotice error={failure.error} description={failure.description} />}
       <div className="feishu-row-actions">
-        {request.accept && <button type="button" disabled={pending} onClick={() => void decide(request.id, 'accept')}>允许本次</button>}
-        {request.decline && <button type="button" disabled={pending} onClick={() => void decide(request.id, 'decline')}>拒绝</button>}
+        {(!request || failure?.id === step.id) && <button type="button" disabled={pending !== null} onClick={() => void review(step.id)}>
+          {activeAction === 'review' ? '正在读取…' : requests ? '刷新待审核操作' : '查看待审核操作'}
+        </button>}
+        {request && approvalButtons.map(([action, label]) => request[action] && <button key={action} type="button"
+          className={action === 'accept' ? 'feishu-primary' : undefined} disabled={pending !== null}
+          onClick={() => void decide(request.id, action)}>{activeAction === action ? '正在提交…' : label}</button>)}
       </div>
-    </div>)}
-  </div>;
+    </div>;
+  };
 }
 const categoryLabels: Record<string, string> = { task_status: '任务状态', track_task: '跟进事项', help: '使用帮助',
   lookup_error: '查询失败', blocked: '已拦截', access_denied: '用户未开通', pending: '待处理', group_summary: '群总结', history_error: '群历史读取失败',
@@ -108,15 +122,55 @@ function messageSender(message: Message) {
   return feishuIdentityLabel(message.sender, message.senderName, message.chatType === 'p2p' ? '私聊用户' : '群成员');
 }
 
-function MessageProcessingDetails({ message }: { message: Message }) {
+function ExecutionStatus({ status }: { status?: DisplayedSessionStatus | null }) {
+  if (!status) return null;
+  const { label, tone } = getSessionStatusPresentation(status);
+  return <span className="feishu-status feishu-execution-status" data-tone={tone}><i aria-hidden="true" />{label}</span>;
+}
+
+function MessageProcessingDetails({ bot, message, onDecided }: { bot: string; message: Message; onDecided: () => void }) {
   const { summary, conversation } = message;
   const execution = summary ?? conversation;
   const called = summary ? summary.modelCalled : conversation?.called;
   const type = message.category && categoryLabels[message.category];
-  return <details className="feishu-processing-details" onToggle={event => {
-    if (event.currentTarget.open) trackAdmin('diagnostics');
-  }}>
-    <summary>处理详情</summary>
+  const active = Boolean(message.relayStatus && message.relayStatus !== 'queued');
+  const [open, setOpen] = useState(active);
+  const [process, setProcess] = useState<Execution | null>(null);
+  const [error, setError] = useState(false);
+  const [retry, setRetry] = useState(0);
+  const renderApproval = useFeishuApprovals(bot, message.sequence, () => {
+    setRetry(value => value + 1);
+    onDecided();
+  });
+  useEffect(() => { if (active) setOpen(true); }, [active]);
+  useEffect(() => {
+    if (!open) return;
+    const controller = new AbortController();
+    const params = new URLSearchParams({ bot, sequence: String(message.sequence) });
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    async function load() {
+      try {
+        if (active && document.hidden) return;
+        const { execution } = await requestJson<{ execution: Execution | null }>(`${endpoint}/execution?${params}`, { signal: controller.signal });
+        if (!controller.signal.aborted) {
+          if (execution || !active) setProcess(execution);
+          setError(false);
+        }
+      } catch { if (!controller.signal.aborted) setError(true); }
+      finally { if (!controller.signal.aborted && active) timer = setTimeout(() => void load(), 1500); }
+    }
+    void load();
+    return () => { controller.abort(); clearTimeout(timer); };
+  }, [bot, message.sequence, message.category, open, active, retry]);
+  return <details className="feishu-processing-details" open={open} onToggle={event => setOpen(event.currentTarget.open)}>
+    <summary onClick={() => { if (!open) trackAdmin('diagnostics'); }}>处理详情</summary>
+    {process && Boolean(process.steps?.length || process.processContent || process.processTimeline?.length) && (
+      <ProcessSteps readOnly steps={process.steps ?? []} processContent={process.processContent} processTimeline={process.processTimeline}
+        defaultCollapsed={false} preserveExpandedOnSettle settled={!active}
+        renderReadOnlyInteractionActions={message.relayStatus === 'awaiting_action' ? renderApproval : undefined}
+        narrativeStatus={process.stopped ? 'stopped' : active ? 'in_progress' : 'completed'} />
+    )}
+    {error && <button type="button" onClick={() => { trackAdmin('refresh'); setRetry(value => value + 1); }}>重新读取处理过程</button>}
     <dl>
       {type && <div><dt>处理结果</dt><dd>{type}</dd></div>}
       {summary && <div><dt>群历史</dt><dd>纳入 {summary.count} 条消息{summary.truncated && '，还有部分消息未纳入'}</dd></div>}
@@ -137,16 +191,13 @@ function MessageProcessingDetails({ message }: { message: Message }) {
 function useFeishuData(view: View, bot: string, chat: string, days: number, before: number | null, revision: number, focusMatter: string | null) {
   const [directory, setDirectory] = useState<Pick<Result, 'bots' | 'selected'>>({ bots: [], selected: null });
   const [response, setResponse] = useState<{ key: string; revision: number; focusMatter: string | null; data: Data | null; error: unknown } | null>(null);
-  const lastList = useRef<{ key: string; revision: number; matterIds: string[]; hasExtra: boolean } | null>(null);
   const enabled = view !== 'settings';
   const key = JSON.stringify([view, bot, chat, days, before]);
   useEffect(() => {
-    if (view !== 'matters') lastList.current = null;
     if (!enabled) return;
-    const cached = lastList.current;
-    if (view === 'matters' && cached?.key === key && cached.revision === revision
-      && (focusMatter ? cached.matterIds.includes(focusMatter) : !cached.hasExtra)) return;
     const abort = new AbortController();
+    const live = view === 'messages' || view === 'matters';
+    let timer: ReturnType<typeof setTimeout> | undefined;
     const params = new URLSearchParams({ days: String(days) });
     if (bot) params.set('bot', bot);
     if (chat) params.set('chatId', chat);
@@ -155,18 +206,25 @@ function useFeishuData(view: View, bot: string, chat: string, days: number, befo
     if (view === 'stats') params.set('stats', '1');
     if (view === 'users') params.set('directory', '1');
     if (focusMatter) params.set('focusMatter', focusMatter);
-    void requestJson<Result>(`${endpoint}?${params}`, { signal: abort.signal }).then(value => {
-      if (abort.signal.aborted) return;
-      setDirectory({ bots: value.bots, selected: value.selected });
-      if (view === 'matters') {
-        const matterIds = value.data?.matters.map(matter => matter.id) ?? [];
-        lastList.current = { key, revision, matterIds, hasExtra: matterIds.length > 100 };
+    async function load(background = false) {
+      let wait = 4000;
+      try {
+        if (background && document.hidden) return;
+        const value = await requestJson<Result>(`${endpoint}?${params}`, { signal: abort.signal });
+        if (abort.signal.aborted) return;
+        setDirectory({ bots: value.bots, selected: value.selected });
+        setResponse({ key, revision, focusMatter, data: value.data, error: null });
+        if (value.data?.tally.pending) wait = 1800;
+      } catch (error) {
+        if (!abort.signal.aborted && !background) {
+          setResponse(previous => ({ key, revision, focusMatter, data: previous?.key === key ? previous.data : null, error }));
+        }
+      } finally {
+        if (live && !abort.signal.aborted) timer = setTimeout(() => void load(true), wait);
       }
-      setResponse({ key, revision, focusMatter, data: value.data, error: null });
-    }).catch(error => {
-      if (!abort.signal.aborted) setResponse(previous => ({ key, revision, focusMatter, data: previous?.key === key ? previous.data : null, error }));
-    });
-    return () => abort.abort();
+    }
+    void load();
+    return () => { abort.abort(); clearTimeout(timer); };
   }, [enabled, view, bot, chat, days, before, key, revision, focusMatter]);
   const current = enabled && response?.key === key ? response : null;
   return { ...directory, data: current?.data, error: current?.revision === revision && current.focusMatter === focusMatter ? current.error : null,
@@ -194,6 +252,8 @@ function FeishuTimeline({ bot, chatId, conversationId, matterId, days, revision,
   const [olderError, setOlderError] = useState<unknown>(null);
   const [olderRequest, setOlderRequest] = useState<{ before: number } | null>(null);
   const [retry, setRetry] = useState(0);
+  const timeline = useRef<HTMLDivElement>(null);
+  const following = useRef(true);
   const query = new URLSearchParams({ bot, chatId, days: String(days) });
   if (conversationId) query.set('conversationId', conversationId);
   if (matterId) query.set('matterId', matterId);
@@ -208,20 +268,28 @@ function FeishuTimeline({ bot, chatId, conversationId, matterId, days, revision,
     let nextRefresh: ReturnType<typeof setTimeout> | undefined;
     setError(null);
     async function load(background = false) {
+      let wait = 4000;
       try {
+        if (background && document.hidden) return;
         const data = await readPage(scopedQuery, controller.signal);
         if (controller.signal.aborted) return;
-        setLatest(previous => previous ? { ...data, messages: [...new Map([...previous.messages, ...data.messages]
-          .map(message => [message.sequence, message])).values()] } : data);
+        setError(null);
+        setLatest(previous => {
+          const oldest = data.messages[data.messages.length - 1]?.sequence;
+          if (!previous || data.next == null || oldest === undefined) return data;
+          // A pending request may move to its assigned conversation. Keep only history older than the refreshed page.
+          return { ...data, messages: [...previous.messages.filter(message => message.sequence < oldest), ...data.messages] };
+        });
         if (data.messages.some(message => message.relayStatus || message.category === null || message.state === 'queued' || message.state === 'sending'
           || (message.category === 'access_denied' && message.state === null))) {
-          nextRefresh = setTimeout(() => void load(true), 5000);
+          wait = 1800;
         }
       } catch (failure) {
         if (!controller.signal.aborted) {
-          if (background) nextRefresh = setTimeout(() => void load(true), 5000);
-          else setError(failure);
+          if (!background) setError(failure);
         }
+      } finally {
+        if (!controller.signal.aborted) nextRefresh = setTimeout(() => void load(true), wait);
       }
     }
     void load();
@@ -240,10 +308,29 @@ function FeishuTimeline({ bot, chatId, conversationId, matterId, days, revision,
     });
     return () => controller.abort();
   }, [olderRequest, scopedQuery]);
+  useLayoutEffect(() => {
+    const element = timeline.current;
+    const panel = element?.closest<HTMLElement>('.feishu-detail');
+    if (!element || !panel || !latest) return;
+    const follow = () => {
+      if (following.current) panel.scrollTop = panel.scrollHeight;
+    };
+    const handleScroll = () => {
+      following.current = panel.scrollHeight - panel.clientHeight - panel.scrollTop < 80;
+    };
+    follow();
+    panel.addEventListener('scroll', handleScroll, { passive: true });
+    const observer = new ResizeObserver(follow);
+    observer.observe(element);
+    return () => {
+      observer.disconnect();
+      panel.removeEventListener('scroll', handleScroll);
+    };
+  }, [Boolean(latest)]);
   const next = older ? older.next : latest?.next;
   const messages = [...new Map([...(older?.messages ?? []), ...(latest?.messages ?? [])]
     .map(message => [message.sequence, message])).values()].sort((a, b) => a.sequence - b.sequence);
-  return <div className="feishu-timeline">
+  return <div className="feishu-timeline" ref={timeline}>
     {next != null && <button type="button" disabled={!!olderRequest} onClick={() => {
       trackAdmin(olderError == null ? 'paginate' : 'refresh');
       setOlderRequest({ before: next });
@@ -353,9 +440,11 @@ export default function FeishuImAdminPage() {
   const chat = params.get('chat') ?? '';
   const [days, setDays] = useState(7);
   const [matterDays, setMatterDays] = useState(30);
+  const [overviewOpen, setOverviewOpen] = useState(true);
   const [pagination, setPagination] = useState<{ scope: string; cursors: number[] } | null>(null);
   const [revision, setRevision] = useState(0);
   const [selected, setSelected] = useState<string | null>(null);
+  const selectedMessage = useRef<{ key: string; sequence: number } | null>(null);
   const [operation, setOperation] = useState<'busy' | 'idle'>('idle');
   const [outcome, setOutcome] = useState<{ scope: string; message?: string; error?: unknown } | null>(null);
   const [retryTarget, setRetry] = useState<{ scope: string; id: string; chatId: string; chatType?: Chat['chatType'] } | null>(null);
@@ -368,7 +457,9 @@ export default function FeishuImAdminPage() {
   const { bots, selected: defaultBot, data, error, loading, focusPending } = useFeishuData(view, bot, chat, days,
     view === 'messages' ? before : null, revision, view === 'matters' ? focusedMatter : null);
   const currentBot = bots.find(item => item.id === (bot || defaultBot));
-  const selectedConversation = data?.conversations?.find(item => conversationKey(item) === selected);
+  const selectedConversation = data?.conversations?.find(item => conversationKey(item) === selected)
+    ?? (selected && selectedMessage.current?.key === selected
+      ? data?.conversations?.find(item => item.sequence === selectedMessage.current?.sequence) : undefined);
   const noticeGroups = new Map(groupByChat(before ? [] : data?.notices ?? []));
   const messageGroups = new Map(groupByChat(data?.conversations ?? []));
   for (const chatId of noticeGroups.keys()) {
@@ -379,9 +470,10 @@ export default function FeishuImAdminPage() {
   const detailKey = view === 'matters' ? selectedMatter?.id : view === 'messages' && (selectedConversation || selectedNotices) ? selected : null;
   useEffect(() => {
     if (!detailKey) return;
-    detailPanel.current?.scrollTo({ top: 0 });
+    const notices = detailKey.endsWith('/notices');
+    if (notices) detailPanel.current?.scrollTo({ top: 0 });
     if (window.matchMedia('(max-width: 760px)').matches) {
-      viewport.current?.scrollTo({ top: 0 });
+      if (notices) viewport.current?.scrollTo({ top: 0 });
       detailHeading.current?.focus({ preventScroll: true });
     }
   }, [detailKey]);
@@ -409,19 +501,21 @@ export default function FeishuImAdminPage() {
       <div className="feishu-bubble is-user">
         <div className="feishu-bubble-meta"><strong>{messageSender(message)}</strong><small>{formatDateTime(message.receivedAt)}</small></div>
         <pre>{messageText(message)}</pre>
+        {message.attachments?.length ? <MessageAttachmentList attachments={message.attachments} />
+          : message.pendingAttachments?.length ? <ul className="feishu-pending-attachments" aria-label="消息附件">
+            {message.pendingAttachments.map((name, index) => <li key={index}>{name}</li>)}
+          </ul> : null}
       </div>
       <div className="feishu-bubble is-bot">
-        <div className="feishu-bubble-meta"><strong>{currentBot?.name ?? '机器人'}</strong>{showDelivery(message.state, message.category)}</div>
+        <div className="feishu-bubble-meta"><strong>{currentBot?.name ?? '机器人'}</strong>{message.relayStatus
+          ? <ExecutionStatus status={message.relayStatus} /> : showDelivery(message.state, message.category)}</div>
         {message.reply ? message.executionLine
           ? <div className="feishu-reply-markdown"><ReactMarkdown skipHtml remarkPlugins={[remarkGfm]} components={{
             img: ({ alt }) => <span>{alt || '图片'}</span>,
             a: ({ children, href }) => <a href={href} target="_blank" rel="noopener noreferrer">{children}</a>,
           }}>{message.reply}</ReactMarkdown></div>
-          : <pre>{message.reply}</pre> : <p className="feishu-reply-state">{message.relayStatus === 'awaiting_action' ? '等待审核'
-          : message.relayStatus === 'processing' ? '正在处理' : message.category === null ? '等待处理' : '暂无回复内容'}</p>}
+          : <pre>{message.reply}</pre> : !message.relayStatus && <p className="feishu-reply-state">{message.category === null ? '等待处理' : '暂无回复内容'}</p>}
         {message.executionLine && <p className="feishu-execution-note">{message.executionLine}</p>}
-        {currentBot && message.relayStatus === 'awaiting_action' && <FeishuApprovals bot={currentBot.id}
-          sequence={message.sequence} onDecided={() => setRevision(value => value + 1)} />}
         {message.replyCard === 'clarify'
           ? <p className="feishu-reply-buttons">{message.clarificationTitles?.map((title, index) => <span key={index}>{title}</span>)}<span>都不是，我补充一下</span></p>
           : message.replyCard && <p className="feishu-reply-buttons"><span>带摘要新建</span>{message.replyCard === 'private' && <span>空白新建</span>}</p>}
@@ -434,7 +528,7 @@ export default function FeishuImAdminPage() {
             {message.matterId && <button onClick={() => viewMatter(message.matterId!, undefined, message.chatId)}>查看事项</button>}
           </>}
         </div>
-        <MessageProcessingDetails message={message} />
+        {currentBot && <MessageProcessingDetails bot={currentBot.id} message={message} onDecided={() => setRevision(value => value + 1)} />}
       </div>
     </article>;
   }
@@ -482,12 +576,13 @@ export default function FeishuImAdminPage() {
     resetList();
   }
 
-  function selectMessageList(key: string, action: 'details' | 'notice_details', trigger: HTMLButtonElement) {
+  function selectMessageList(key: string, action: 'details' | 'notice_details', trigger: HTMLButtonElement, sequence?: number) {
     if (key !== selected) {
       trackAdmin(action);
       setOutcome(null);
     }
     listTrigger.current = trigger;
+    selectedMessage.current = sequence === undefined ? null : { key, sequence };
     setSelected(key);
   }
 
@@ -573,7 +668,10 @@ export default function FeishuImAdminPage() {
     finally { setOperation('idle'); }
   }
 
-  return <div className="feishu-admin">
+  const conversationView = view === 'messages' || view === 'matters';
+  const Overview = conversationView ? 'details' : 'div';
+  return <>
+  <div className="feishu-admin">
     <header className="feishu-header">
       <div className="feishu-header-inner">
         <div className="feishu-heading">
@@ -588,8 +686,8 @@ export default function FeishuImAdminPage() {
         </nav>
       </div>
     </header>
-    <main className="feishu-scroll" ref={viewport}>
-    <div className={detailKey ? 'feishu-content is-record-detail' : 'feishu-content'}>
+    <main className={`feishu-scroll${conversationView ? ' is-conversation-view' : ''}`} ref={viewport}>
+    <div className={`feishu-content${detailKey ? ' is-record-detail' : ''}`}>
     {view === 'settings' &&
       <FeishuImSettings editor={editor} onEdit={setEditor} onChanged={() => { resetList(); setRevision(value => value + 1); }} />
     }
@@ -606,6 +704,9 @@ export default function FeishuImAdminPage() {
     {view !== 'users' && !loading && !error && currentBot && data === null && <p className="feishu-card">{currentBot.active ? '在飞书发一条私聊消息，或在群里 @ 机器人，即可看到记录。' : '机器人暂未接收过消息。启用后，可以私聊或在群里 @ 它。'}</p>}
     {!loading && !error && bot && bots.length > 0 && !currentBot && <p className="feishu-card">这个链接指向的机器人暂不可用。请选择一个机器人查看记录。</p>}
     {currentBot || bots.length > 0 || error != null ? (
+      <Overview className={conversationView ? 'feishu-record-overview' : undefined} open={conversationView ? overviewOpen : undefined}
+        onToggle={conversationView ? event => setOverviewOpen((event.currentTarget as HTMLDetailsElement).open) : undefined}>
+      {conversationView && <summary>筛选与统计</summary>}
       <div className="feishu-toolbar">
         {(bots.length > 1 || (!currentBot && bots.length > 0)) && <select aria-label="机器人" value={currentBot?.id ?? ''} onChange={event => selectBot(event.target.value)}>{!currentBot && <option value="" disabled>请选择机器人</option>}{bots.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select>}
         {currentBot && view !== 'users' && <select aria-label={view === 'matters' ? '群聊' : '飞书会话'} value={chat} onChange={event => selectChat(event.target.value)}>
@@ -617,11 +718,12 @@ export default function FeishuImAdminPage() {
         {view !== 'users' && view !== 'matters' && <select aria-label="时间范围" value={days} onChange={event => { trackAdmin('range'); setDays(Number(event.target.value)); resetList(); }}><option value="7">最近 7 天</option><option value="30">最近 30 天</option><option value="90">最近 90 天</option></select>}
         <button onClick={refreshRecords} disabled={loading}>{loading ? '正在刷新…' : '刷新'}</button>
       </div>
+      {view === 'messages' && currentBot && data && <div className="feishu-counts"><span>已受理 <strong>{data.tally.received}</strong></span><span>待处理 <strong>{data.tally.pending}</strong></span><span>发送失败 <strong>{data.tally.failed}</strong></span><span>发送待确认 <strong>{data.tally.unknown}</strong></span></div>}
+      </Overview>
     ) : null}
     {view === 'users' && currentBot && <FeishuUserAccess key={currentBot.id} bot={currentBot.id} revision={revision} />}
     {currentBot && data && <>
       {view === 'messages' && <>
-        <div className="feishu-counts"><span>已受理 <strong>{data.tally.received}</strong></span><span>待处理 <strong>{data.tally.pending}</strong></span><span>发送失败 <strong>{data.tally.failed}</strong></span><span>发送待确认 <strong>{data.tally.unknown}</strong></span></div>
         <div className={`feishu-split ${selectedConversation || selectedNotices ? 'has-detail' : ''}`}>
           <section className="feishu-card feishu-message-list" aria-label="会话列表">
             <h2 ref={listHeading} tabIndex={-1}>飞书会话</h2>
@@ -629,8 +731,8 @@ export default function FeishuImAdminPage() {
               <h3><span className="feishu-override-kind" data-kind={items[0]?.chatType ?? 'group'}>{items[0]?.chatType === 'p2p' ? '私聊' : '群聊'}</span>
                 {items[0] ? conversationChatLabel(items[0]) : chatLabel(chatId, 'group')}</h3>
               {items.map(item => <button type="button" key={conversationKey(item)} className="feishu-row"
-                aria-pressed={conversationKey(item) === selected} onClick={event => selectMessageList(conversationKey(item), 'details', event.currentTarget)}>
-                <strong>{conversationName(item)}</strong>
+                aria-pressed={item === selectedConversation} onClick={event => selectMessageList(conversationKey(item), 'details', event.currentTarget, item.sequence)}>
+                <span className="feishu-message-lead"><strong>{conversationName(item)}</strong><ExecutionStatus status={item.relayStatus} /></span>
                 <span className="feishu-preview">{item.text}</span>
                 <small>{formatDateTime(item.receivedAt)} · {item.total} 条请求</small>
               </button>)}
@@ -648,7 +750,8 @@ export default function FeishuImAdminPage() {
             {selectedConversation ? <>
               <header className="feishu-detail-header">
                 {detailControls('返回会话列表', closeMessages)}
-                <h2 ref={detailHeading} tabIndex={-1}>{conversationName(selectedConversation)}</h2>
+                <div className="feishu-message-lead"><h2 ref={detailHeading} tabIndex={-1}>{conversationName(selectedConversation)}</h2>
+                  <ExecutionStatus status={selectedConversation.relayStatus} /></div>
                 <small>{conversationChatLabel(selectedConversation)} · {selectedConversation.total} 条请求</small>
               </header>
               <FeishuTimeline key={`${currentBot.id}:${conversationKey(selectedConversation)}:${days}`} bot={currentBot.id} chatId={selectedConversation.chatId}
@@ -682,8 +785,8 @@ export default function FeishuImAdminPage() {
             <h3><span className="feishu-override-kind" data-kind="group">群聊</span>{chatLabel(chatId, 'group')}</h3>
             {items.map(matter => <button type="button" className="feishu-row" aria-pressed={matter.id === focusedMatter}
               key={matter.id} onClick={event => viewMatter(matter.id, event.currentTarget)}>
-              <span className="feishu-message-lead"><strong>{matter.title}</strong><span className="feishu-status"
-                data-state={matter.archivedAt ? 'idle' : 'connected'}>{matter.archivedAt ? '已归档' : '跟进中'}</span></span>
+              <span className="feishu-message-lead"><strong>{matter.title}</strong>{matter.relayStatus ? <ExecutionStatus status={matter.relayStatus} />
+                : <span className="feishu-status" data-state={matter.archivedAt ? 'idle' : 'connected'}>{matter.archivedAt ? '已归档' : '跟进中'}</span>}</span>
               <small>{feishuIdentityLabel(matter.sender, matter.senderName, '群成员')} · {formatDateTime(matter.updatedAt)}</small>
             </button>)}
           </section>) : <p>暂无跟进事项。群聊中关联到事项的消息会显示在这里。</p>}
@@ -694,7 +797,8 @@ export default function FeishuImAdminPage() {
             {detailControls('返回事项列表', closeMatter)}
             <div className="feishu-message-lead">
               <h2 ref={detailHeading} tabIndex={-1}>{selectedMatter.title}</h2>
-              <span className="feishu-status" data-state={selectedMatter.archivedAt ? 'idle' : 'connected'}>{selectedMatter.archivedAt ? '已归档' : '跟进中'}</span>
+              {selectedMatter.relayStatus ? <ExecutionStatus status={selectedMatter.relayStatus} />
+                : <span className="feishu-status" data-state={selectedMatter.archivedAt ? 'idle' : 'connected'}>{selectedMatter.archivedAt ? '已归档' : '跟进中'}</span>}
             </div>
             <small>{chatLabel(selectedMatter.chatId, 'group')} · 发起人 {feishuIdentityLabel(selectedMatter.sender, selectedMatter.senderName, '群成员')}</small>
             <small>更新于 {formatDateTime(selectedMatter.updatedAt)}</small>
@@ -752,5 +856,7 @@ export default function FeishuImAdminPage() {
     </>}
     </div>
     </main>
-  </div>;
+  </div>
+  <WorkspaceFilePreview />
+  </>;
 }

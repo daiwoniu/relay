@@ -162,7 +162,7 @@ export class ManagedFeishuIm {
   }
 
   async approvals(principal: AdminPrincipal, id: string, sequence: number,
-    decision?: { id: string; action: 'accept' | 'decline'; operationId: string }) {
+    decision?: Parameters<NativeFeishuConversation['approvals']>[3]) {
     const bot = this.entries.get(id)?.bot;
     if (!bot) throw new StorageContractError('NOT_FOUND');
     const scope = await resolveFeishuScope(this.options.port, bot);

@@ -1,6 +1,6 @@
 import { applyInitialNativeMigration,assertNativeMigration } from './native-migrations.js';
 import { readHostedSites,saveHostedSite,deleteHostedSite } from './native-hosting.js';
-import { acceptFeishuInbound, authorizeFeishuRelayAdmission, feishuAutoApproval, runFeishuAdmin, runFeishuWork } from './native-feishu-im.js';
+import { acceptFeishuInbound, authorizeFeishuRelayAdmission, feishuAutoApproval, feishuRelayAttachmentMetadata, runFeishuAdmin, runFeishuWork } from './native-feishu-im.js';
 import { feishuExecutionActorPattern, isFeishuExecutionActor, isFeishuExecutionResource, resolveExecutionTrust } from '../integrations/feishu-im/native-session-scope.js';
 import { appendAnalytics,readAnalytics } from './native-analytics.js';
 import { AnalyticsRecordSchema,AnalyticsQuerySchema } from '../analytics/contract.js';
@@ -88,12 +88,12 @@ export class NativeStore {
       if (actor.role !== 'admin') deny('FORBIDDEN');
       return runFeishuAdmin(nativeQueries(this.db), input.request, actor.id);
     };
-    return ['inspect', 'session', 'settingsList', 'reviewTurn', 'listUserAccess'].includes(input.request.action) ? this.readOnly(run) : this.transaction(run);
+    return ['inspect', 'session', 'settingsList', 'reviewTurn', 'execution', 'listUserAccess'].includes(input.request.action) ? this.readOnly(run) : this.transaction(run);
   }
   runFeishuWork(input: Parameters<CoreStoragePort['runFeishuWork']>[0]) {
     canonicalJson(input, 64 * 1024);
     const run = () => runFeishuWork(nativeQueries(this.db), input);
-    return ['project', 'tenant', 'settings', 'settingsGroups', 'modelTargets', 'runtimeSettings', 'readRelayTurn', 'readSummaryReplies'].includes(input.action)
+    return ['project', 'tenant', 'settings', 'settingsGroups', 'modelTargets', 'runtimeSettings', 'readRelayTurn', 'readSummaryReplies', 'attachmentScope'].includes(input.action)
       ? this.readOnly(run) : this.transaction(run);
   }
   acceptFeishuInbound(input: Parameters<CoreStoragePort['acceptFeishuInbound']>[0]) {
@@ -1129,6 +1129,7 @@ export class NativeStore {
             const db = nativeQueries(this.db);
             const turn = authorizeFeishuRelayAdmission(db, input);
             requestedByUserId = turn.actorId;
+            metadata = feishuRelayAttachmentMetadata(turn);
             if (turn.preferences) {
               const saved = db.get(`SELECT selected_model_id, selected_reasoning_effort, selected_service_tier, active_attempt_id
                 FROM sessions WHERE id=?`, [turn.sessionId]);

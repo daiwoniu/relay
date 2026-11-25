@@ -5,8 +5,10 @@ import { projectStoredRecoverySnapshot } from './stored-runtime-recovery.js';
 
 test('恢复更新内容与状态但保留已有记录时间，不为恢复中新出现的事件补算时间', async () => {
   const runtime = createSessionRuntimeState({ sessionId: 'session', projectId: 'project', engine: 'codex' });
-  runtime.turnItems = [{ id: 'tool', type: 'commandExecution', status: 'in_progress', details: { command: 'echo old', firstObservedAt: 100, startedObservedAt: 100 } }];
-  runtime.processTimeline = [{ type: 'narrative', itemId: 'intro', content: 'old', firstObservedAt: 50 }];
+  const approval = { id: 'approval', type: 'interaction', status: 'completed', details: { resolvedAction: 'accept', decisionSource: 'user' } };
+  runtime.turnItems = [{ id: 'tool', type: 'commandExecution', status: 'in_progress', details: { command: 'echo old', firstObservedAt: 100, startedObservedAt: 100 } }, approval];
+  runtime.processTimeline = [{ type: 'narrative', itemId: 'intro', content: 'old', firstObservedAt: 50 },
+    { type: 'operation', itemId: approval.id }, { type: 'operation', itemId: 'tool' }];
   const context = {
     guard: { assertCurrent() {}, isCurrent: () => true },
     fact: { factType: 'recovery_completed', source: 'recovery' },
@@ -24,4 +26,6 @@ test('恢复更新内容与状态但保留已有记录时间，不为恢复中�
   assert.equal((runtime.turnItems[1]!.details as any)?.firstObservedAt, undefined);
   assert.equal((runtime.processTimeline[0] as any).firstObservedAt, 50);
   assert.equal((runtime.processTimeline[0] as any).content, 'recovered');
+  assert.deepEqual(runtime.turnItems.find(item => item.id === approval.id), approval);
+  assert.deepEqual(runtime.processTimeline.map(entry => entry.itemId), ['intro', approval.id, 'tool']);
 });

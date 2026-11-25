@@ -2,7 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { z } from 'zod';
 import { UploadedFileAttachmentDtoSchema,HostFileAttachmentDtoSchema } from '../contracts/index.js';
-import { UploadPromotionInputSchema,UploadInspectInputSchema,type UploadPromotionInput,type UploadInspectInput } from './upload-promotion-contract.js';
+import { UploadPromotionInputSchema,UploadInspectInputSchema,uploadMessageDirectory,type UploadPromotionInput,type UploadInspectInput } from './upload-promotion-contract.js';
 import { canonicalJson,StorageContractError } from '../storage/command-boundary.js';
 import { directory,mkdir,metadata,manifest,readFile,stat,writeNew,fileIdentitySchema,fileProofSchema,equal,unchanged } from './file-journal-primitives.js';
 const intentSchema=z.object({version:z.literal(1),request:UploadPromotionInputSchema,root:fileIdentitySchema,uploads:fileIdentitySchema,tmp:fileIdentitySchema,messages:fileIdentitySchema,
@@ -21,7 +21,8 @@ export async function promoteUploads(raw:UploadPromotionInput,mayWrite:()=>Promi
   }
   if(!request.uploads.length)return{uploads:[],hosts};
   const uploads=path.join(root,'.relay_upload'),tmp=path.join(uploads,'tmp'),messages=path.join(uploads,'messages');
-  const source=path.join(tmp,request.messageId),target=path.join(messages,request.messageId),journals=path.join(uploads,'.promotions'),journal=path.join(journals,request.messageId);
+  const source=uploadMessageDirectory(root,'tmp',request.messageId),target=uploadMessageDirectory(root,'messages',request.messageId),
+    journals=path.join(uploads,'.promotions'),journal=path.join(journals,request.messageId);
   const uploadsId=await directory(uploads),tmpId=await directory(tmp),messagesId=await directory(messages);
   if(!await mayWrite())throw new StorageContractError('FORBIDDEN');
   await mkdir(journals);await mkdir(journal);
@@ -73,7 +74,7 @@ export async function inspectPromotedAttachments(raw:UploadInspectInput){
       if(key(real)!==key(attachment.path)||!value?.isFile()||value.isSymbolicLink()||Number(value.size)!==attachment.size)conflict();hosts.push(attachment);continue;
     }
     const managed=path.join(root,'.relay_upload');await directory(managed);await directory(path.join(managed,'messages'));
-    const target=path.join(managed,'messages',input.messageId);await directory(target);
+    const target=uploadMessageDirectory(root,'messages',input.messageId);await directory(target);
     const document=await metadata(path.join(target,'manifest.json'));if(!document)conflict();const value=manifest(document!.value);
     if(value.messageId!==input.messageId||value.projectId!==input.projectId||value.userId!==input.userId)conflict();
     const entry=value.attachments.find(item=>item.attachmentId===attachment.id);

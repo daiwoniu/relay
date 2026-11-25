@@ -170,6 +170,7 @@ export const ANALYTICS_OBSERVATION_LIMITS = [
   { id:'download_saved',status:'unobservable',reason:'浏览器保存到磁盘的最终结果不可确认' },
   { id:'offline_html_interactions',status:'unobservable',reason:'离线HTML导出后不继续追踪' },
   { id:'continuous_raw_input',status:'excluded',reason:'不采集逐字符输入、滚动、鼠标轨迹或流式token' },
+  { id:'file_preview_image_zoom',status:'excluded',reason:'图片缩放滑条、缩放按钮、尺寸预设和平移只改变本地显示比例和位置' },
   { id:'nonexistent_controls',status:'excluded',reason:'项目文件当前没有筛选/分页，消息计划没有独立展开控件，分享选择没有全选或批量拒绝入口；不为候选清单虚构按钮事件' },
   { id:'feishu_explanatory_tooltips',status:'excluded',reason:'飞书管理的说明图标只展示已有页面说明，悬停、聚焦和触屏显示不计入业务操作' },
   { id:'feishu_trend_reading',status:'excluded',reason:'飞书趋势图逐日读数是本地展示；会话和日期范围切换沿用已有操作采集' },

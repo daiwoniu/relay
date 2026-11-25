@@ -104,6 +104,7 @@ test('主题面板复用共享复杂表单原语', () => {
 
 test('主题弹窗可最小化为未保存预览条并保持草稿预览', () => {
   assert.match(dialog, /最小化主题预览/);
+  assert.match(dialog, /aria-label="最小化主题预览"><MinimizePanelIcon \/>/);
   assert.match(dialog, /open=\{open && !minimized\}/);
   assert.match(dialog, /<ThemePreviewBar/);
   assert.match(dialog, /theme\.preview\(draft\)/);
@@ -131,6 +132,7 @@ test('嵌入设置中心后由父面板接管最小化、草稿确认与资源�
   assert.match(accountSettings, /title="放弃未保存的外观设置？"/);
   assert.match(accountSettings, /themeSettingsRef\.current\?\.discardChanges\(\)/);
   assert.match(accountSettings, /themeSettingsRef\.current\?\.minimize\(\)/);
+  assert.match(accountSettings, /label="最小化主题预览"[^\n]*<MinimizePanelIcon \/>/);
   assert.match(accountSettings, /closeOnEscape=\{!themeMinimized\}/);
 });
 

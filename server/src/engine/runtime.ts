@@ -49,6 +49,7 @@ export interface SessionRuntime {
     request: EngineInteractionRequest;
     interaction: NormalizedInteraction;
     standalone: boolean;
+    manualReview?: true;
     createdAt: number;
     connectionId: string | null;
   }>;
@@ -229,6 +230,11 @@ export type RuntimeInteractionDecision =
   | { resolvedAction: 'resolved_elsewhere'; source: 'resolved_elsewhere'; decidedAt: number }
   | { resolvedAction: 'accept'; source: 'session_trust' | 'project_trust'; expiresAt: number | null; decidedAt: number };
 
+export function isProviderResolvedInteraction(item: RuntimeTurnItem): boolean {
+  return item.type === 'interaction' && item.status === 'completed'
+    && (item.details as Record<string, unknown> | undefined)?.resolvedAction === 'resolved_elsewhere';
+}
+
 function rememberSettledInteraction(runtime: SessionRuntime, interactionId: string): void {
   runtime.settledInteractionIds.add(interactionId);
   if (runtime.settledInteractionIds.size <= 512) return;
@@ -240,11 +246,13 @@ export function completeRuntimeInteraction(
   runtime: SessionRuntime,
   interactionId: string,
   decision: RuntimeInteractionDecision,
+  reconcileConfirmedResponse = false,
 ): RuntimeTurnItem | null {
   const index = runtime.turnItems.findIndex((item) => item.id === interactionId);
   if (index < 0) return null;
   const existing = runtime.turnItems[index]!;
-  if (existing.status === 'completed') return existing;
+  if (existing.status === 'completed' && !(reconcileConfirmedResponse && decision.source === 'user'
+    && isProviderResolvedInteraction(existing))) return existing;
   const trustSource = decision.source === 'session_trust' || decision.source === 'project_trust';
   const completed: RuntimeTurnItem = {
     ...existing,
