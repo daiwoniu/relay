@@ -5,6 +5,7 @@ export interface ServiceRestartErrorPresentation {
   title: string;
   detail: string;
   showTerminalFallback: boolean;
+  outcomeUnconfirmed?: boolean;
   originalMessage?: string;
   code?: string;
 }

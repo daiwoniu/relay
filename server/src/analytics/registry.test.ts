@@ -23,6 +23,59 @@ function props(feature='settings',action='open',extra:Record<string,unknown>={})
   return {feature,action,surface:'unknown',...extra};
 }
 
+test('消息顶部和底部共用停止登记，意图关联服务端结果并兼容旧入口',()=>{
+  const operationId=randomUUID();
+  for(const surface of ['message_header','message_footer']){
+    assert.ok(AnalyticsClientEventSchema.safeParse(event('feature_action',props('composer','stop',{surface,operationId}))).success);
+    assert.equal(AnalyticsClientEventSchema.safeParse(event('feature_action',props('composer','stop',{surface}))).success,false);
+  }
+  assert.ok(AnalyticsClientEventSchema.safeParse(event('feature_action',props('composer','stop',{surface:'composer'}))).success);
+  for(const result of ['success','rejected','unknown']){
+    const outcome=event('operation_result',props('composer','stop',{operationId,result}));
+    assert.ok(AnalyticsEventSchema.safeParse(outcome).success);
+    assert.equal(AnalyticsClientEventSchema.safeParse(outcome).success,false);
+  }
+});
+
+test('工具集补齐的操作区分本地结果、取消意图和发起下载', () => {
+  const check = (action: string, extra: Record<string, unknown> = {}) => AnalyticsClientEventSchema.safeParse({
+    ...event('feature_action', { feature: 'tools', action, surface: 'tools', ...extra }),
+    page: 'tools',
+  });
+  for (const result of ['success', 'error', 'cancelled']) {
+    assert.equal(check('generate_media', { toolId: 'image-stitch', result }).success, true);
+  }
+  assert.equal(check('generate_media', { toolId: 'image-stitch' }).success, false);
+  assert.equal(check('extract_audio', { toolId: 'audio-edit', result: 'success' }).success, false);
+  assert.equal(check('extract_audio', { toolId: 'video-edit', result: 'success' }).success, true);
+  assert.equal(check('capture_frame', { toolId: 'video-edit', result: 'error' }).success, true);
+  assert.equal(check('save_preset', { toolId: 'image-layout', result: 'success' }).success, true);
+  for (const action of ['download', 'cancel_job']) {
+    assert.equal(check(action, { toolId: 'video-edit' }).success, true);
+    assert.equal(check(action, { toolId: 'video-edit', result: 'success' }).success, false);
+  }
+  assert.equal(check('download', { toolId: 'video-edit', filename: 'never collect' }).success, false);
+  assert.equal(check('hourly_weather', { toolId: 'weather', surface: 'workbench' }).success, true);
+  assert.equal(check('refresh_hourly_weather', { toolId: 'weather', result: 'error' }).success, true);
+  assert.equal(check('refresh_hourly_weather', { toolId: 'weather', result: 'error', city: 'never collect' }).success, false);
+  assert.equal(check('mode', { toolId: 'dates', mode: 'age' }).success, true);
+  assert.equal(check('mode', { toolId: 'dates', mode: 'compare' }).success, false);
+  assert.equal(check('change_theme', { mode: 'dark' }).success, true);
+  assert.equal(check('change_theme', { mode: 'compare' }).success, false);
+});
+
+test('飞书排障复制支持管理页来源，只采集结果', () => {
+  const copy = (feature: string, action: string, extra: Record<string, unknown> = {}) =>
+    AnalyticsClientEventSchema.safeParse({ ...event('feature_action', props(feature, action, { surface: 'admin', ...extra })),
+      page: 'feishu_bots' });
+  assert.equal(copy('message', 'copy', { result: 'success' }).success, false);
+  for (const result of ['success', 'error']) {
+    assert.equal(copy('feishu_admin', 'copy_id', { result }).success, true);
+  }
+  assert.equal(copy('feishu_admin', 'copy_id').success, false);
+  assert.equal(copy('feishu_admin', 'copy_id', { result: 'success', messageId: 'om_synthetic' }).success, false);
+});
+
 test('登记表每个语义主点唯一、覆盖矩阵没有伪装已接入且源码位置存在',()=>{
   assert.equal(new Set(ANALYTICS_REGISTRY.map(entry=>entry.id)).size,ANALYTICS_REGISTRY.length);
   assert.equal(new Set(ANALYTICS_REGISTRY.map(entry=>`${entry.name}:${entry.feature}:${entry.action}`)).size,ANALYTICS_REGISTRY.length);
@@ -42,6 +95,15 @@ test('登记表每个语义主点唯一、覆盖矩阵没有伪装已接入且�
   }
   assert.equal(ANALYTICS_EXISTING_COVERAGE.length,6);
   assert.ok(ANALYTICS_OBSERVATION_LIMITS.some(entry=>entry.id==='download_saved'&&entry.status==='unobservable'));
+  assert.ok(ANALYTICS_OBSERVATION_LIMITS.some(entry=>entry.id==='file_preview_html_carousel'&&entry.status==='excluded'));
+});
+
+test('在新标签页打开 HTML 只登记打开意图', () => {
+  const properties = props('file_preview', 'open_external', { surface: 'preview_toolbar' });
+  assert.equal(AnalyticsClientEventSchema.safeParse(event('feature_action', properties)).success, true);
+  for (const extra of [{ result: 'success' }, { filePath: 'private.html' }, { url: 'https://example.com' }]) {
+    assert.equal(AnalyticsClientEventSchema.safeParse(event('feature_action', { ...properties, ...extra })).success, false);
+  }
 });
 
 test('所有登记条目可被对应采集端解析，不能从客户端冒充服务器结果',()=>{
@@ -50,6 +112,7 @@ test('所有登记条目可被对应采集端解析，不能从客户端冒充�
       ...(entry.outcome==='required'?{result:entry.results[0]}:{}),
       ...(entry.correlated?{operationId:randomUUID()}:{}),
       ...(entry.toolIds?{toolId:entry.toolIds[0]}:{}),
+      ...(entry.id === 'tools.change_theme' ? { mode: 'dark' } : entry.id === 'tools.mode' ? { mode: 'stamp' } : {}),
     });
     const e=event(entry.name,p);
     assert.equal(AnalyticsEventSchema.safeParse(e).success,true,entry.id);

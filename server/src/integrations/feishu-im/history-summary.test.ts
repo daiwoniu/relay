@@ -49,7 +49,7 @@ test('thread summary bounds the source and returns only the summary and provider
     assert.deepEqual(ids, ['own-card', 'other-bot-card', 'own-text', 'other-bot-text', 'recent']);
     return new Map([['own-card', '**机器人回帖**'], ['own-text', longReply]]);
   });
-  assert.match(answer.body, /当前话题 · 4 条文本（已截断）/);
+  assert.match(answer.body, /当前话题 · 4 条文本消息（有部分记录未纳入）/);
   assert.equal(answer.summary?.usage?.total_tokens, 101);
   assert.doesNotMatch(JSON.stringify(answer), /本话题原文|太早|别的群|触发指令/);
 });

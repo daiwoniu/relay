@@ -26,7 +26,6 @@ import {
   buildPreviewLineNumbers,
   isLargeCodePreview,
   MAX_PREVIEW_LINE_NUMBERS,
-  shouldUseHtmlVisualization,
 } from './file-preview-lines';
 import {
   formatFileMetadataSize,
@@ -37,6 +36,7 @@ import {
 const PREVIEW_ACTION_ICON_PATHS: Record<string, string> = {
   refresh: 'M13 6a5.2 5.2 0 10.2 3M13 2.5V6H9.5',
   open: 'M9 2.5h4.5V7M13 3 7 9M6 3H3.5a1 1 0 0 0-1 1v8.5a1 1 0 0 0 1 1H12a1 1 0 0 0 1-1V10',
+  scripts: 'M6 3.5 11 8l-5 4.5z',
   download: 'M8 2v8m0 0L5 7m3 3l3-3M3 13h10',
 };
 const PdfDocumentPreview = lazy(() => import('./PdfDocumentPreview'));
@@ -213,14 +213,11 @@ export default function RightPanelContent({
   }, [activeTab?.id, activeTab?.loading]);
   const previewView = activeTab ? getFilePreviewView(activeTab) : 'source';
   const largeCodePreview = Boolean(activeTab?.language && isLargeCodePreview(activeTab.contentSize));
-  const htmlVisualizationEnabled = Boolean(
-    isHtmlPreview && activeTab && previewView === 'preview' && shouldUseHtmlVisualization(activeTab.contentSize, 'visualization'),
-  );
   const standaloneDocument = useMemo(() => (
     isHtmlPreview && activeTab && !activeTab.loading && !activeTab.previewError && !activeTab.textPreviewTruncated
-      ? buildStandaloneHtmlPreview(activeTab.content, activeTab.title)
+      ? buildStandaloneHtmlPreview(activeTab.content, activeTab.title, activeTab.htmlPreviewScriptsEnabled === true)
       : ''
-  ), [isHtmlPreview, activeTab?.content, activeTab?.title, activeTab?.loading, activeTab?.previewError, activeTab?.textPreviewTruncated]);
+  ), [isHtmlPreview, activeTab?.content, activeTab?.title, activeTab?.loading, activeTab?.previewError, activeTab?.textPreviewTruncated, activeTab?.htmlPreviewScriptsEnabled]);
   const [standalonePreview, setStandalonePreview] = useState({ document: '', url: '' });
   useEffect(() => {
     if (!standaloneDocument) return;
@@ -232,7 +229,13 @@ export default function RightPanelContent({
   const canAddHosting = user?.role==='admin' && /\.html?$/i.test(activeTab?.sourcePath||activeTab?.title||'') && !activeTab?.previewError && !activeTab?.forceAccessAvailable;
   const extraActions: ContextMenuItem[] = activeTab ? [
     {id:'refresh',label:'刷新文件',onSelect:()=>onRefresh(activeTab)},
-    ...(standaloneUrl?[{id:'open',label:'在新标签页打开 HTML',onSelect:()=>{window.open(standaloneUrl,'_blank','noopener,noreferrer');}}]:[]),
+    ...(standaloneUrl ? [{ id: 'open', label: '在新标签页打开 HTML', onSelect: () => {
+      featureAction('file_preview', 'open_external', 'preview_toolbar');
+      window.open(standaloneUrl, '_blank', 'noopener,noreferrer');
+    } }] : []),
+    ...(standaloneUrl && largeCodePreview && !activeTab.htmlPreviewScriptsEnabled
+      ? [{ id: 'scripts', label: '启用 HTML 脚本', onSelect: onRequestHtmlScripts }]
+      : []),
     ...(!activeTab.forceAccessAvailable?[{id:'download',label:downloading?'正在下载文件':'下载文件',disabled:downloading||activeTab.loading,onSelect:()=>onDownload(activeTab)}]:[]),
     ...(canAddHosting?[{id:'hosting',label:'添加托管',onSelect:()=>{window.dispatchEvent(new CustomEvent('relay:open-page-hosting',{detail:{path:activeTab.sourcePath||activeTab.title}}));}}]:[]),
   ].map(action=>({...action,icon:action.id==='hosting'?<PageHostingIcon size={15}/>:<svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d={PREVIEW_ACTION_ICON_PATHS[action.id]} stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/></svg>})) : [];
@@ -528,7 +531,7 @@ export default function RightPanelContent({
                 <Suspense fallback={<PreviewState tone="loading" title="正在排版 Markdown" />}>
                   <MarkdownFilePreview content={activeTab.content} sourcePath={activeTab.sourcePath || activeTab.title} />
                 </Suspense>
-              ) : htmlVisualizationEnabled ? (
+              ) : sandboxedHtmlDocument ? (
                 <div className="min-h-full bg-transparent">
                   {!activeTab.htmlPreviewScriptsEnabled && (
                     <div className="workspace-preview-notice is-warning">

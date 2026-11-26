@@ -8,8 +8,8 @@ test('明细联动保持全局筛选，并按功能动作结果在服务端查�
  const reset=new URLSearchParams(detailQuery('range=all',emptyDetailFilter));assert.equal(reset.has('beforeAt'),false);assert.equal(reset.has('feature'),false);
 });
 test('失败概览包含本地操作失败，取消与业务结果不累加为操作次数',()=>{
- assert.deepEqual(featureTotals({features:[{feature:'file_preview',views:1,actions:3,failures:2,results:{error:1,cancelled:8}}],operations:[]}),{actions:3,errors:2});
- assert.deepEqual(featureTotals(null),{actions:0,errors:0});assert.match(actionLabel('tools.pin','pin'),/置顶/);
+ assert.deepEqual(featureTotals({features:[{feature:'file_preview',views:1,actions:3,failures:2,results:{error:1,cancelled:8}},{feature:'settings',views:1,actions:2,results:{error:1}}],operations:[]}),{actions:5,errors:3,topFailure:{feature:'file_preview',count:2}});
+ assert.deepEqual(featureTotals(null),{actions:0,errors:0,topFailure:null});assert.match(actionLabel('tools.pin','pin'),/置顶/);
 });
 test('功能筛选收窄动作选项，并保留资讯及工具兼容动作',()=>{
  assert.ok(actionsForFeature('settings').includes('save'));

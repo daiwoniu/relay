@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
+import { localAction } from '../../../analytics/features';
 import { createQrSvg } from '../qr-code';
 import { ToolError } from '../tool-ui';
 import { AssetList, CanvasPreview, ImageExport, ImagePicker } from './image-ui';
 import { drawFitted, drawText, loadImage, sizeOf, type CanvasDesign, type Fit, type ImageAsset, type ImageFormat } from './image-render';
 import { Choice, ColorField, Details, Field, NumberField, Preview, Workspace, mediaButton, mediaInput, useMediaPreset } from './media-ui';
+import { fileSize } from './media-files';
 
 const fits = [['cover', '裁切填满'], ['contain', '完整保留（可留白）']] as const;
 const fitHint = '填满会裁掉边缘，完整保留会在边上留空。切换后可以看预览。';
@@ -73,13 +75,13 @@ export function ImageEdit({ storageKey }: { storageKey: string }) {
     setHeight(Math.max(1, Math.round(next.image.naturalHeight * scale)));
   }
   const live = original ? source : design;
-  return <Workspace preview={<Preview title="图片预览" empty="选择一张图片，预览会随设置更新。">{live && <>
+  return <Workspace widePreview preview={<Preview title="图片预览" empty="选择一张图片，预览会随设置更新。">{live && <>
     <div className="media-actions">
       <button className={mediaButton} type="button" aria-pressed={!original} onClick={() => setOriginal(false)}>处理效果</button>
       <button className={mediaButton} type="button" aria-pressed={original} onClick={() => setOriginal(true)}>原图</button>
     </div>
     <CanvasPreview design={live} label={original ? '原图' : '图片编辑效果'} white={!original && format === 'image/jpeg'} />
-    <p className="media-hint">{live.width} × {live.height} 像素</p>
+    <p className="media-hint">{original ? '原图' : '输出尺寸'} {live.width} × {live.height} 像素{asset && ` · 原文件 ${fileSize(asset.bytes)}`}</p>
   </>}</Preview>}>
     <ImagePicker label={asset ? `更换图片（${asset.name}）` : '选择图片'} onImage={chooseAsset} />
     {asset && <>
@@ -104,7 +106,7 @@ export function ImageEdit({ storageKey }: { storageKey: string }) {
       </Details>
     </>}
     <ImageExport design={design} format={format} setFormat={(value) => preset.setValue({ ...preset.value, format: value })}
-      defaultName={asset ? `${asset.name.replace(/\.[^.]+$/, '')}-编辑` : '图片'} originalBytes={asset?.bytes} />
+      defaultName={asset ? `${asset.name.replace(/\.[^.]+$/, '')}-编辑` : '图片'} />
     <Details title="默认设置">
       <NumberField label="新选图片最长边上限（像素）" value={maxEdge} min={64} max={4096} onChange={(value) => preset.setValue({ ...preset.value, maxEdge: value })} />
       <button type="button" className={mediaButton} onClick={preset.save}>保存格式、比例和适配</button>
@@ -161,8 +163,8 @@ export function ImageStitch() {
       }
     } };
   }, [assets, mode, edge, gap, columns, labels, background, gridFit]);
-  return <Workspace preview={<Preview title="拼接预览" empty="选择多张截图或照片，查看合成后的效果。">
-    {design && <CanvasPreview design={design} label="拼接效果" />}
+  return <Workspace widePreview preview={<Preview title="拼接预览" empty="选择多张截图或照片，查看合成后的效果。">
+    {design && <><CanvasPreview design={design} label="拼接效果" /><p className="media-hint">{assets.length} 张 · {design.width} × {design.height} 像素</p></>}
   </Preview>}>
     <ImagePicker label="选择要拼接的图片（可多选，重选替换）" onImages={setAssets} />
     <AssetList assets={assets} setAssets={setAssets} />
@@ -290,20 +292,22 @@ export function ImageLayout({ storageKey }: { storageKey: string }) {
       }
     },
   }), [width, height, background, layers, qr]);
-  return <Workspace preview={<Preview title="排版预览">
+  return <Workspace widePreview preview={<Preview title="排版预览">
     <CanvasPreview design={design} label="图片排版效果" onPlace={place && active ? (x, y) => {
       change(active.id, { x, y }); setPlace(false);
     } : undefined} />
+    <p className="media-hint">画布 {width} × {height} 像素</p>
     <button type="button" className={mediaButton} disabled={!active} aria-pressed={place && Boolean(active)} onClick={() => setPlace(!place)}>
       {place && active ? '取消设置位置' : '在预览中放置所选图层'}
     </button>
     {place && active && <p className="media-hint" role="status">点预览画面，设置所选图层的左上角。</p>}
   </Preview>}>
-    <div className="media-fields">
+    <Details title="画布尺寸与背景">
       <NumberField label="整张图的宽度（像素）" value={width} min={160} max={3840} onChange={setWidth} />
       <NumberField label="整张图的高度（像素）" value={height} min={160} max={3840} onChange={setHeight} />
       <ColorField label="整张图的背景色" value={background} onChange={setBackground} />
-    </div>
+    </Details>
+    <h3 className="font-semibold">图层</h3>
     <div className="media-actions">{(Object.keys(layerNames) as Layer['kind'][]).map((kind) => <button type="button" className={mediaButton}
       key={kind} disabled={layers.length >= 12} onClick={() => { const layer = makeLayer(kind); setLayers([...layers, layer]); setSelected(layer.id); }}>添加{layerNames[kind]}</button>)}</div>
     <ol className="media-file-list" aria-label="图层顺序">{layers.map((layer, index) => <li key={layer.id}>
@@ -339,11 +343,13 @@ export function ImageLayout({ storageKey }: { storageKey: string }) {
     <Details title="保存排版模板">
       <p className="media-hint">模板保存在当前设备，包含画布和图层样式。再次打开时可以填入新文字和图片。</p>
       <button type="button" className={mediaButton} onClick={() => {
+        const report = localAction('tools', 'save_preset', 'tools', { toolId: 'image-layout' });
         try {
           const styles = layers.map(({ asset: _asset, text: _text, ...layer }) => layer);
           localStorage.setItem(key, JSON.stringify({ width, height, background, layers: styles }));
           setNotice('已保存模板。');
-        } catch { setNotice('浏览器暂时无法保存模板。'); }
+          report(true);
+        } catch { setNotice('浏览器暂时无法保存模板。'); report(false); }
       }}>保存为默认模板</button>
       <span className="media-hint" role="status">{notice}</span>
     </Details>

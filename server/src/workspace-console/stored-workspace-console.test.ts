@@ -10,6 +10,7 @@ import { StoredWorkspaceConsole } from './stored-workspace-console.js';
 import { createStoredWorkspaceConsoleRouter } from '../routes/stored-workspace-console.js';
 import { buildWorkspaceDashboard,WORKSPACE_DASHBOARD_MAX_BYTES } from './dashboard-projection.js';
 import { FIXED_WORKSPACE_PATH } from './workspace-snapshot.js';
+import { projectRunRecord } from './run-projection.js';
 import type { TaskRegistryProjection } from './task-registry-reader.js';
 import { hashSessionToken } from '../auth/session.js';
 import { WorkspaceConsoleDashboardDtoSchema } from '../contracts/index.js';
@@ -232,6 +233,33 @@ test('failed external refresh preserves snapshot task data but refreshes current
     p.hooks.registry=async()=>{throw new Error('private external path');};const result=await service.getDashboard(principal(),true);assert.equal(result.tasks.length,1);assert.deepEqual(result.tasks[0]!.sessionIds,[]);assert.equal(result.sourceMeta!.state,'failed_snapshot');assert.ok(!JSON.stringify(result).includes('private external'));
     assert.equal((await service.getDashboard(principal())).sourceMeta!.state,'failed_snapshot');
   }finally{await p.cleanup();}
+});
+
+test('rebuilds legacy Run times and hides unverified starts while an old snapshot is all that is available',async()=>{
+  const p=await prepared();
+  try {
+    const record=projectRunRecord({created_at:'2026-11-26 13:20:00',finished_at:'2026-11-26 13:21:00'},'legacy-run',null,[]);
+    const {createdAt:_created,...oldRun}=record;
+    const legacy={...oldRun,startedAt:'2026-11-26 13:20:00',durationSeconds:60,summary:'退出码 0 · 用时 1 分'};
+    const ticket=await p.ok({name:'workspace.beginSnapshot',input:{}});
+    const {runTimeVersion:_version,...oldSnapshot}=p.snapshot();
+    const value={...oldSnapshot,runs:[legacy],unmatchedRuns:[legacy]};
+    await p.ok({name:'workspace.saveSnapshot',input:{version:ticket.version,value}});
+    let available=false;
+    const service=p.make({listRuns:async()=>{if(!available)throw new Error('run source unavailable');return [record];}});
+    const fallback=await service.getDashboard(principal());
+    assert.equal(fallback.sourceMeta?.state,'failed_snapshot');
+    assert.equal(fallback.runs[0]?.startedAt,null);
+    assert.equal(fallback.unmatchedRuns[0]?.startedAt,null);
+    assert.equal(fallback.runs[0]?.durationSeconds,null);
+    assert.equal(fallback.runs[0]?.summary,'退出码 0');
+    assert.equal(fallback.runs[0]?.finishedAt,record.finishedAt);
+    available=true;
+    const current=await service.getDashboard(principal(),true);
+    assert.equal(current.runTimeVersion,1);
+    assert.equal(current.runs[0]?.createdAt,'2026-11-26T13:20:00+08:00');
+    assert.equal(current.runs[0]?.startedAt,null);
+  } finally { await p.cleanup(); }
 });
 test('role changes and shutdown during registry I/O prevent a queued association write',async()=>{
   for(const mode of ['role','close']){const p=await prepared(),entered=gate(),release=gate();try{const service=p.make({registry:async()=>{entered.resolve();await release.promise;return registry();}}),run=service.link(principal(),'task-one',session,randomUUID(),true);await entered.promise;

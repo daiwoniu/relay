@@ -20,18 +20,38 @@ test('轮询允许短暂网络失败并在后端健康且协议一致时成功',
   assert.equal(calls, 3);
 });
 
-test('轮询 30 秒后停止且不形成无限重试', async () => {
+test('后端启动超过 30 秒仍继续等待并确认新实例', async () => {
+  let clock = 0;
+  const result = await pollForRecovery({
+    target: 'backend',
+    clientProtocolVersion: 35,
+    intervalMs: 1_000,
+    requireExplicitRestartObserved: true,
+    now: () => clock,
+    wait: async (milliseconds) => { clock += milliseconds; },
+    probe: async () => {
+      if (clock < 49_500) throw new Error('backend restarting');
+      return { healthy: true, serverProtocolVersion: 35, restartObserved: true };
+    },
+  });
+  assert.equal(result.status, 'ready');
+  assert.equal(clock, 50_000);
+});
+
+test('后端轮询覆盖启动器的 10 分钟预算并在期限结束后停止', async () => {
   let now = 0;
   let calls = 0;
   const result = await pollForRecovery({
     target: 'backend',
     clientProtocolVersion: 11,
+    intervalMs: 1_000,
     probe: async () => { calls += 1; return { healthy: false, serverProtocolVersion: null }; },
     wait: async (milliseconds) => { now += milliseconds; },
     now: () => now,
   });
   assert.equal(result.status, 'timeout');
-  assert.ok(calls <= 61);
+  assert.equal(now, 630_000);
+  assert.equal(calls, 630);
 });
 
 test('前端未观察到中断或实例切换时不能误判恢复', async () => {

@@ -77,6 +77,11 @@ test('输入按钮使用当前会话状态，后台运行会话不会锁定其�
     isStopping: true,
     isQueued: false,
   });
+  assert.deepEqual(getSessionInputState('stopping', runningA, 'session-a'), {
+    isRunning: true,
+    isStopping: true,
+    isQueued: false,
+  });
   assert.deepEqual(getSessionInputState('queued', runningA, 'session-b'), {
     isRunning: false,
     isStopping: false,

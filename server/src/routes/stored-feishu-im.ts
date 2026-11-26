@@ -4,7 +4,8 @@ import { z } from 'zod';
 import type { RelayEnv } from '../auth/authorization.js';
 import { createRequireStoredUserSession } from '../auth/stored-session.js';
 import { presentApiError } from '../contracts/index.js';
-import { feishuConcurrencySchema, feishuIdentity, feishuManualDecisions, feishuPolicyKey, type FeishuBotConfig } from '../integrations/feishu-im/inbound.js';
+import { feishuBindingId, feishuConcurrencySchema, feishuConversationFilters, feishuIdentity, feishuManualDecisions, feishuPolicyKey,
+  feishuStatsBuckets, feishuStatsDimensions, feishuStatsMetrics, type FeishuBotConfig } from '../integrations/feishu-im/inbound.js';
 import { resolveFeishuScope } from '../integrations/feishu-im/config.js';
 import { FeishuImConnectionError, feishuSettingsRequest, type ManagedFeishuIm } from '../integrations/feishu-im/managed-config.js';
 import type { CoreStoragePort } from '../storage/contracts.js';
@@ -18,10 +19,21 @@ import { restoreOperationReferences } from '../process-timeline.js';
 const querySchema = z.object({ bot: z.string().max(128).optional(), chatId: z.string().max(128).optional(),
   before: z.coerce.number().int().positive().optional(), days: z.coerce.number().int().min(1).max(90).default(7),
   conversations: z.literal('1').optional(), conversationId: z.string().max(260).optional(), matterId: z.string().uuid().optional(), stats: z.literal('1').optional(),
-  directory: z.literal('1').optional(), focusMatter: z.string().uuid().optional(),
+  directory: z.literal('1').optional(), focusMatter: z.string().uuid().optional(), requestsOnly: z.literal('1').optional(),
+  from: z.coerce.number().int().nonnegative().safe().optional(), to: z.coerce.number().int().positive().safe().optional(),
+  bucket: feishuStatsBuckets.optional(), dimension: feishuStatsDimensions.optional(), metric: feishuStatsMetrics.optional(),
+  ...feishuConversationFilters,
 }).strict().refine(query => Number(Boolean(query.conversations)) + Number(Boolean(query.conversationId)) + Number(Boolean(query.matterId)) <= 1
   && (!query.conversationId || !!query.chatId)
-  && (!(query.stats || query.focusMatter) || !(query.conversations || query.conversationId || query.matterId)));
+  && (!query.stats || !(query.conversations || query.conversationId || query.matterId || query.focusMatter))
+  && (!query.focusMatter || !(query.conversationId || query.matterId))
+  && (!(query.q || query.attention || query.requestsOnly) || Boolean(query.conversations))
+  && (!query.chatType || Boolean(query.conversations || query.stats))
+  && (!(query.bucket || query.dimension || query.metric) || Boolean(query.stats))
+  && (query.dimension !== 'model' || query.metric === 'tokens')
+  && ((query.from === undefined && query.to === undefined) ||
+    (query.from !== undefined && query.to !== undefined && query.to <= 253402300800000 && query.to > query.from && query.to - query.from <= 93 * 86400_000))
+  && (query.bot !== 'all' || (!query.chatId && !query.conversationId && !query.matterId && (query.directory || query.conversations || query.stats))));
 const mutation = z.object({ bot: z.string().max(128), id: z.string().max(128), action: z.enum(['retry', 'archive', 'restore']) }).strict();
 const matterAction = z.discriminatedUnion('action', [
   z.object({ action: z.literal('convert'), bot: z.string().max(128), chatId: z.string().max(128), sequence: z.number().int().positive() }).strict(),
@@ -63,6 +75,18 @@ export function createStoredFeishuImRouter(options: {
 }) {
   const router = new Hono<RelayEnv>();
   const { management } = options;
+  async function readTargets(bots: FeishuBotConfig[]) {
+    return (await Promise.all(bots.map(async bot => {
+      const scope = await resolveFeishuScope(options.port, bot);
+      return scope && { bot, scope };
+    }))).filter(target => target !== null);
+  }
+  function presentOwners(targets: Awaited<ReturnType<typeof readTargets>>) {
+    const owners = new Map(targets.map(({ bot, scope }) => [scope.botId, bot.id]));
+    return <T extends Record<string, unknown>>(rows?: T[]) => rows?.map(({ bindingId, tenantKey: _tenantKey, ...row }) => ({
+      ...row, ...(typeof bindingId === 'string' ? { botId: owners.get(bindingId) } : {}),
+    }));
+  }
   async function requireScope(bot: FeishuBotConfig) {
     const scope = await resolveFeishuScope(options.port, bot);
     if (!scope) throw new StorageContractError('CONFLICT');
@@ -160,14 +184,18 @@ export function createStoredFeishuImRouter(options: {
   router.get('/users', async c => {
     const parsed = accessQuery.safeParse(c.req.query());
     if (!parsed.success) return c.json(presentApiError('用户筛选条件无效'), 400);
-    const bot = management.bots().find(item => item.id === parsed.data.bot);
-    if (!bot) throw new StorageContractError('CONFLICT');
-    const scope = await resolveFeishuScope(options.port, bot);
-    if (!scope) return c.json({ userAccess: [], nextUser: null });
-    return c.json(await options.port.runFeishuAdmin({ principal: c.get('relayStoragePrincipal')!, request: {
-      ...scope, projectId: bot.projectId, action: 'listUserAccess',
+    const configured = management.bots();
+    const all = parsed.data.bot === 'all';
+    const bot = configured.find(item => item.id === parsed.data.bot);
+    if (!all && !bot) throw new StorageContractError('CONFLICT');
+    const targets = await readTargets(bot ? [bot] : configured);
+    const scopes = targets.map(target => ({ ...target.scope, projectId: target.bot.projectId }));
+    if (!scopes.length) return c.json({ userAccess: [], nextUser: null });
+    const data = await options.port.runFeishuAdmin({ principal: c.get('relayStoragePrincipal')!, request: {
+      ...scopes[0], action: 'listUserAccess', ...(all ? { scopes } : {}),
       ...(parsed.data.before ? { before: parsed.data.before } : {}),
-    } }));
+    } });
+    return c.json({ ...data, userAccess: presentOwners(targets)(data.userAccess) });
   });
   router.put('/users', c => observeFeishuMutation(c, 'set_user_access', async commit => {
     const parsed = accessMutation.safeParse(await c.req.json().catch(() => null));
@@ -189,29 +217,45 @@ export function createStoredFeishuImRouter(options: {
     const bots = configured.map(bot => ({ id: bot.id, name: management.name(bot.id), workspace: bot.workspaceName,
       groups: [] as { id: string; name: string; chatType: 'group' | 'p2p' }[], connection: management.status(bot.id), active: management.active(bot.id),
       enabled: management.enabled(bot.id) }));
-    const bot = query.bot ? configured.find(item => item.id === query.bot) : configured[0];
-    if (!bot || query.directory) return c.json({ bots, selected: bot?.id ?? null, data: null });
-    const scope = await resolveFeishuScope(options.port, bot);
-    if (!scope) return c.json({ bots, selected: bot.id, data: null });
-    const to = Date.now() + 1;
-    let from = to - query.days * 86400_000;
-    if (query.stats) {
+    const all = query.bot === 'all' && configured.length > 1;
+    const bot = query.bot === 'all' || !query.bot ? configured[0] : configured.find(item => item.id === query.bot);
+    const selectedId = bot ? all ? 'all' : bot.id : null;
+    if (!bot || query.directory) return c.json({ bots, selected: selectedId, data: null });
+    const targets = await readTargets(all ? configured : [bot]);
+    const scopes = targets.map(target => target.scope);
+    const scope = scopes[0];
+    const overview = query.stats && (query.bucket || query.dimension || query.metric || query.bot === 'all' || query.chatType) ? {
+      bucket: query.bucket ?? (query.days === 1 ? 'hour' : query.days === 90 ? 'week' : 'day'),
+      dimension: query.dimension ?? 'robot', metric: query.metric ?? 'received',
+    } as const : undefined;
+    if (!scope && !overview) return c.json({ bots, selected: selectedId, data: null });
+    const to = query.to ?? Date.now() + 1;
+    let from = query.from ?? to - query.days * 86400_000;
+    if (query.from === undefined && query.stats && overview?.bucket !== 'hour') {
       const firstDay = new Date(to - 1);
       firstDay.setDate(firstDay.getDate() - (query.days - 1));
       from = firstDay.setHours(0, 0, 0, 0);
     }
     const data = await options.port.runFeishuAdmin({ principal: c.get('relayStoragePrincipal')!, request: { action: 'inspect',
-      ...scope, from, to,
+      ...(scope ?? { botId: feishuBindingId(bot), tenantKey: 'unbound' }), from, to,
+      ...(all || !scope ? { scopes } : {}),
       ...(query.chatId ? { chatId: query.chatId } : {}), ...(query.before ? { before: query.before } : {}),
       ...(query.conversations ? { conversationList: true } : {}),
+      ...(query.requestsOnly ? { requestsOnly: true } : {}),
       ...(query.conversationId ? { conversationId: query.conversationId } : {}),
       ...(query.matterId ? { matterId: query.matterId } : {}),
       ...(query.focusMatter ? { focusMatter: query.focusMatter } : {}),
-      ...(query.stats ? { usageTrend: true } : {}),
+      ...(overview ? { overview } : query.stats ? { usageTrend: true } : {}),
+      ...(query.q ? { q: query.q } : {}), ...(query.chatType ? { chatType: query.chatType } : {}),
+      ...(query.attention ? { attention: query.attention } : {}),
     } });
-    const selected = bots.find(item => item.id === bot.id);
-    if (selected && 'chats' in data && data.chats) selected.groups = data.chats;
-    return c.json({ bots, selected: bot.id, data });
+    const selected = bots.find(item => item.id === selectedId);
+    if (selected && data.chats) selected.groups = data.chats;
+    const owned = presentOwners(targets);
+    return c.json({ bots, selected: selectedId, data: { ...data, conversations: owned(data.conversations),
+      notices: owned(data.notices), matters: owned(data.matters),
+      ...(data.overview ? { overview: { ...data.overview, ranking: owned(data.overview.ranking) } } : {}),
+    } });
   });
   router.post('/', async c => {
     const parsed = mutation.safeParse(await c.req.json().catch(() => null));

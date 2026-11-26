@@ -73,5 +73,6 @@ export function getPendingActionKind(runtime: Pick<SessionRuntime, 'pendingInter
 
 export function presentRuntimeSession(session: SessionDto, runtime?: SessionRuntime): SessionDto {
   return { ...session, pending_action_kind: runtime && session.status === 'awaiting_action' ? getPendingActionKind(runtime) : null,
-    execution_stage: runtime?.isRunning ? getRuntimeExecutionStage(runtime) : null };
+    execution_stage: runtime?.isRunning ? getRuntimeExecutionStage(runtime) : null,
+    active_attempt_id: runtime?.isRunning && runtime.engineConnection ? runtime.attemptId : null };
 }

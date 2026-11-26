@@ -6,11 +6,12 @@ import { hasBlockingFollowups, useSessionFollowupStore } from '../../stores/sess
 import { useSessionOperationErrorStore } from '../../stores/session-operation-errors';
 import { SessionFollowupStatus } from './SessionFollowupStatus';
 import { useRelayWebSocket } from '../../hooks/useRelayWebSocket';
-import { getSessionInputState, isSessionRunning } from '../../hooks/session-streaming';
+import { getSessionInputState, isActiveTurnStatus, isSessionRunning } from '../../hooks/session-streaming';
 import { generateUUID } from '../../utils/uuid';
 import { createSession, deleteSession, forkSession, getMessageDetails, getMessagePage, getSession, getSessionDeletionImpact, MESSAGE_PAGE_SIZE, searchSessionMessages, unarchiveSession, updateSession as updateSessionRequest } from '../../api/sessions';
 import { ApiError } from '../../api/client';
-import {featureAction,localAction} from '../../analytics/features';
+import {featureAction,localAction,remoteIntent} from '../../analytics/features';
+import type { StopReplyPlacement } from '../messages/AssistantMessage';
 import { copyToClipboard } from '../../utils/clipboard';
 import { createSessionMenuItems } from './session-menu-items';
 import { isSessionActionInProgress } from './session-action-state';
@@ -20,6 +21,7 @@ import { getSelectableMessageIds, normalizeSelectedMessageIds } from '../sharing
 import SessionDetailsContent from '../layout/SessionDetailsContent';
 import { getDisplayedSessionStatus } from '../layout/session-status';
 import { getSidebarAccountInteractionPolicy } from '../layout/sidebar-account-interactions';
+import ConfirmDialog from '../ui/ConfirmDialog';
 import { getChatInitializationState } from './chat-initialization-state';
 import { selectRecentSessions } from './empty-state-shortcuts';
 import { useSessionSearchStore } from '../../stores/session-search';
@@ -889,9 +891,12 @@ export default function ChatView() {
   // 只有当前会话就是发起流式的会话时，才显示流式内容（防止切换会话后串台）
   const isStreamingThisSession = streaming.streamingSessionId === activeSessionId;
   const latestReplyMissing = isLatestMessageReplyMissing(currentMessages);
-  const allowSessionStatusRunningBubble = latestReplyMissing;
+  const activeAttemptId = currentSession?.active_attempt_id;
+  const status = currentSession?.status;
+  const activeTurnStatus = isActiveTurnStatus(status);
+  const allowSessionStatusRunningBubble = latestReplyMissing || Boolean(activeAttemptId && activeTurnStatus);
   const inputState = getSessionInputState(
-    latestReplyMissing ? currentSession?.status : undefined,
+    allowSessionStatusRunningBubble ? status : undefined,
     streaming,
     activeSessionId,
   );
@@ -913,7 +918,62 @@ export default function ChatView() {
       setError(error instanceof Error ? error.message : '取消排队失败', sessionId);
     }
   }, [activeSessionId, isCancellingQueuedTurn, setError]);
-  const isCurrentSessionRunning = isSessionRunning(streaming, activeSessionId) || inputState.isRunning;
+  const { isRunning: isCurrentSessionRunning, isStopping } = inputState;
+  const isAwaitingAction = allowSessionStatusRunningBubble && currentSession?.status === 'awaiting_action';
+  const canStop = Boolean(activeSessionId && activeAttemptId && activeTurnStatus && user
+    && (currentSession?.owner?.id === user.id || user.role === 'admin') && !shareSelectionMode);
+  const localWaitingStage = isStreamingThisSession ? streaming.waitingStage : 'submitted';
+  const waitingStage = status === 'processing' || status === 'recovering' ? 'started'
+    : activeAttemptId && status === 'pending' && localWaitingStage !== 'started' ? 'forwarded' : localWaitingStage;
+  const stopTargetKey = canStop ? `${activeSessionId}:${activeAttemptId}` : null;
+  const [stopConfirmation, setStopConfirmation] = useState<{ target: string; placement: StopReplyPlacement } | null>(null);
+  const [pendingStop, setPendingStop] = useState<string | null>(null);
+  const pendingStopRef = useRef<string | null>(null);
+  const stopError = activeSessionId ? operationErrorsBySession[activeSessionId] : undefined;
+  const stopConfirmOpen = Boolean(stopTargetKey && stopConfirmation?.target === stopTargetKey && !isStopping);
+
+  useEffect(() => {
+    if (stopConfirmation && !stopConfirmOpen) setStopConfirmation(null);
+  }, [stopConfirmation, stopConfirmOpen]);
+
+  useEffect(() => {
+    if (!pendingStop) return;
+    const clearPending = () => {
+      if (pendingStopRef.current !== pendingStop) return;
+      pendingStopRef.current = null;
+      setPendingStop(null);
+    };
+    if (pendingStop !== stopTargetKey || isStopping || stopError) {
+      clearPending();
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      clearPending();
+      if (activeSessionId) useSessionOperationErrorStore.getState().set(activeSessionId, '停止结果暂时无法确认，请同步状态后核对');
+    }, 8000);
+    return () => window.clearTimeout(timer);
+  }, [activeSessionId, isStopping, pendingStop, stopError, stopTargetKey]);
+
+  const canRequestStop = () => Boolean(stopTargetKey && !isStopping && pendingStopRef.current !== stopTargetKey);
+  const handleStop = (placement: StopReplyPlacement) => {
+    if (!stopTargetKey || !activeSessionId || !activeAttemptId || !canRequestStop()) return;
+    const errors = useSessionOperationErrorStore.getState();
+    errors.clear(activeSessionId);
+    const operationId = remoteIntent('composer', 'stop', placement);
+    try {
+      cancel(activeSessionId, activeAttemptId, operationId);
+    } catch (error) {
+      errors.set(activeSessionId, error instanceof Error ? error.message : '停止请求未能发送');
+      return;
+    }
+    pendingStopRef.current = stopTargetKey;
+    setPendingStop(stopTargetKey);
+    if (!isMobile) requestComposerFocus('stop-finished');
+  };
+  const requestStop = (placement: StopReplyPlacement) => {
+    if (!isMobile) handleStop(placement);
+    else if (stopTargetKey && canRequestStop()) setStopConfirmation({ target: stopTargetKey, placement });
+  };
   const suggestedReply = useMemo(
     () => selectSuggestedReplyCandidate(currentMessages, isCurrentSessionRunning),
     [currentMessages, isCurrentSessionRunning],
@@ -1200,12 +1260,11 @@ export default function ChatView() {
           hasOlderMessages: activeSessionId ? Boolean(messageLoadBySession[activeSessionId]?.hasMore) : false,
           onLoadOlder: handleLoadOlderMessages,
           isWaiting: (isStreamingThisSession && streaming.isWaiting) || (allowSessionStatusRunningBubble && currentSession?.status === 'pending'),
-          waitingStage: isStreamingThisSession
-            ? streaming.waitingStage
-            : (currentSession?.status === 'processing' || currentSession?.status === 'recovering' ? 'started' : 'submitted'),
+          waitingStage,
           isStreaming: (isStreamingThisSession && streaming.isStreaming) || (allowSessionStatusRunningBubble && (currentSession?.status === 'processing' || currentSession?.status === 'recovering' || currentSession?.status === 'awaiting_action' || currentSession?.status === 'stopping')),
-          isStopping: (isStreamingThisSession && streaming.isStopping) || (allowSessionStatusRunningBubble && currentSession?.status === 'stopping'),
-          isAwaitingAction: allowSessionStatusRunningBubble && currentSession?.status === 'awaiting_action',
+          isStopping,
+          stopControl: stopTargetKey ? { request: requestStop, pending: pendingStop === stopTargetKey } : undefined,
+          isAwaitingAction,
           pendingActionKind: currentSession?.pending_action_kind,
           isRecovering: allowSessionStatusRunningBubble && currentSession?.status === 'recovering',
           errorMessage: isStreamingThisSession ? streaming.errorMessage : null,
@@ -1268,12 +1327,10 @@ export default function ChatView() {
         chatInputProps={{
           onSend: handleSend,
           onEnsureProject: () => ensureProjectForInput(false),
-          onStop: () => { if (activeSessionId) cancel(activeSessionId); },
           onCancelQueued: () => { void handleCancelQueuedTurn(); },
           sessionId: activeSessionId,
           isStreaming: isCurrentSessionRunning,
-          isStopping: inputState.isStopping,
-          isAwaitingAction: latestReplyMissing && currentSession?.status === 'awaiting_action',
+          isAwaitingAction,
           canRespondToInteraction: currentSession?.owner?.id === user?.id,
           isQueued: queuedTurnUi.isQueued,
           isQueueWaiting: queuedTurnUi.isWaiting,
@@ -1326,6 +1383,23 @@ export default function ChatView() {
         onConfirmCreateSession={confirmCreateSessionFromContext}
       />
       <TrashProjectRecoveryDialog recovery={trashProjectRecovery} />
+      <ConfirmDialog
+        open={stopConfirmOpen}
+        title={isAwaitingAction ? '停止等待？' : '停止生成？'}
+        tone="warning"
+        description={isAwaitingAction ? '确定不再等待当前操作吗？' : '确定停止继续生成这条回复吗？'}
+        impacts={[isAwaitingAction ? '当前等待中的操作将不再继续' : '当前回复将停止继续生成']}
+        notice={{ tone: 'info', title: '已有内容不会丢失', description: '已经生成的内容会保留。' }}
+        confirmLabel={isAwaitingAction ? '停止等待' : '停止生成'}
+        onCancel={() => {
+          featureAction('composer', 'cancel_stop', 'mobile_sheet');
+          setStopConfirmation(null);
+        }}
+        onConfirm={() => {
+          if (stopConfirmOpen && stopConfirmation) handleStop(stopConfirmation.placement);
+          setStopConfirmation(null);
+        }}
+      />
     </div>
   );
 }

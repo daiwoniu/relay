@@ -12,7 +12,7 @@ import type { AnalyticsFeatureProperties } from './registry.js';
 
 const requests=new AsyncLocalStorage<{context:Context;service:AnalyticsService}>();
 const services=new WeakMap<object,AnalyticsService>();
-export function recordTrustedResult(port:object,actor:{userId:string;role:'member'|'admin'},feature:AnalyticsFeatureProperties['feature'],action:string,key:string,operationId?:string,result:AnalyticsFeatureProperties['result']='success',attributes:Pick<AnalyticsFeatureProperties,'engine'|'durationMs'|'reasonCode'>={},page:AnalyticsRecord['event']['page']='chat'){
+export function recordTrustedResult(port:object,actor:{userId:string;role:'member'|'admin'}|{userId:null;role:'guest'},feature:AnalyticsFeatureProperties['feature'],action:string,key:string,operationId?:string,result:AnalyticsFeatureProperties['result']='success',attributes:Pick<AnalyticsFeatureProperties,'engine'|'durationMs'|'reasonCode'>={},page:AnalyticsRecord['event']['page']='chat'){
   if(process.env.RELAY_ANALYTICS_EXTENDED_ENABLED==='0')return;
   try{
     const service=services.get(port);if(!service)return;

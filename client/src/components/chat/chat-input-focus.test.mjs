@@ -34,8 +34,8 @@ test('明确输入动作支持在原始用户手势内同步聚焦', () => {
 });
 
 test('停止与附件流程复用统一输入框聚焦调度', () => {
-  assert.match(inputSource, /pendingStopFocusSourceRef\.current = sourceElement;\s*onStop\?\.\(\);\s*if \(!tryFocusInput\('stop-finished', sourceElement\)\) requestInputFocus\('stop-finished', sourceElement\)/);
-  assert.match(inputSource, /if \(!sourceElement \|\| isStopping \|\| isAwaitingAction\) return;[\s\S]*?requestInputFocus\('stop-finished', sourceElement\)/);
+  const chatSource = readFileSync(new URL('./ChatView.tsx', import.meta.url), 'utf8');
+  assert.match(chatSource, /if \(!isMobile\) requestComposerFocus\('stop-finished'\)/);
   assert.match(inputSource, /requestInputFocus\('attachment-selected', sourceElement\)/);
   assert.match(inputSource, /requestInputFocus\('attachment-cancelled', sourceElement\)/);
   assert.match(inputSource, /requestInputFocus\('project-selected', sourceElement\)/);

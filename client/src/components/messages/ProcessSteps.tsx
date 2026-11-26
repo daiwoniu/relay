@@ -247,6 +247,7 @@ interface Props {
   renderNarrativeDetail?: (content: string) => ReactNode;
   defaultCollapsed?: boolean;
   preserveExpandedOnSettle?: boolean;
+  expandRunningOperations?: boolean;
   settled?: boolean;
   narrativeStatus?: 'in_progress' | 'completed' | 'stopped';
   onInteractionRespond?: InteractionResponseHandler;
@@ -407,9 +408,10 @@ function ProcessNarrativeRow({ content, detail, status, defaultExpanded, itemId,
   );
 }
 
-function ProcessOperationGroup({ steps, searchTargetItemId, full }: { steps: ProcessStep[]; searchTargetItemId?: string; full?: boolean }) {
+function ProcessOperationGroup({ steps, searchTargetItemId, full, expandRunningOperations }: { steps: ProcessStep[]; searchTargetItemId?: string; full?: boolean; expandRunningOperations?: boolean }) {
   const state = getProcessOperationGroupState(steps);
-  const [expanded, setExpanded] = useState(false);
+  const [manualExpansion, setExpanded] = useState<boolean | null>(null);
+  const expanded = manualExpansion ?? Boolean(expandRunningOperations && state.tone === 'processing');
   const containsSearchTarget = Boolean(searchTargetItemId && steps.some((step) => step.id === searchTargetItemId));
   const effectiveExpanded = full || getEffectiveProcessOperationGroupExpanded(expanded, containsSearchTarget);
 
@@ -421,7 +423,7 @@ function ProcessOperationGroup({ steps, searchTargetItemId, full }: { steps: Pro
     <section className={`process-group process-group--${state.tone} overflow-hidden rounded-lg border border-[var(--color-border-light)] bg-transparent`}>
       <button
         type="button"
-        onClick={() => {featureAction('message',expanded?'close':'expand_details','message');setExpanded((value) => !value);}}
+        onClick={() => {featureAction('message',expanded?'close':'expand_details','message');setExpanded(!expanded);}}
         aria-expanded={effectiveExpanded}
         className="process-group__main flex w-full min-w-0 items-center gap-1.5 text-left text-xs text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--color-surface-hover)]"
       >
@@ -458,7 +460,8 @@ function ProcessSubtaskBlock({ step, searchTarget = false, full, report }: { ste
   );
 }
 
-function ProcessExecutionGroup({ sections, sessionId, onInteractionRespond, onAsyncQuestionAnswer, answeredAsyncQuestionIds, asyncQuestionAnswers, canAnswerAsyncQuestion, searchTargetItemId, full, renderReadOnlyInteraction, renderSubtaskReport }: {
+function ProcessExecutionGroup({ sections, sessionId, onInteractionRespond, onAsyncQuestionAnswer, answeredAsyncQuestionIds, asyncQuestionAnswers, canAnswerAsyncQuestion, searchTargetItemId, full, renderReadOnlyInteraction, renderSubtaskReport, expandRunningOperations }: {
+  expandRunningOperations?: boolean;
   renderSubtaskReport?: (step: ProcessStep) => ReactNode;
   renderReadOnlyInteraction?: (step: ProcessStep, key?: string) => ReactNode;
   sections: ProcessExecutionSection[];
@@ -483,7 +486,7 @@ function ProcessExecutionGroup({ sections, sessionId, onInteractionRespond, onAs
         if (section.type === 'subtask') {
           return <ProcessSubtaskBlock key={section.key} step={section.step} searchTarget={section.step.id === searchTargetItemId} full={full} report={renderSubtaskReport?.(section.step)} />;
         }
-        return <ProcessOperationGroup key={section.key} steps={section.steps} searchTargetItemId={searchTargetItemId} full={full} />;
+        return <ProcessOperationGroup key={section.key} steps={section.steps} searchTargetItemId={searchTargetItemId} full={full} expandRunningOperations={expandRunningOperations} />;
       })}
     </div>
   );
@@ -581,7 +584,7 @@ function FlowRawRecord({ step }: { step: ProcessStep }) {
   return <details className="flow-raw" onToggle={event => {if(event.currentTarget.open!==open)featureAction('message',event.currentTarget.open?'expand_details':'close','message');setOpen(event.currentTarget.open);}}><summary>原始记录</summary>{open && <pre>{JSON.stringify(step, null, 2)}</pre>}</details>;
 }
 
-function ProcessStepsComponent({ steps, sessionId, messageId, processContent, processContentDetail, processTimeline, renderNarrativeDetail, defaultCollapsed = true, preserveExpandedOnSettle = false, settled = true, narrativeStatus = 'completed', onInteractionRespond, onAsyncQuestionAnswer, answeredAsyncQuestionIds, asyncQuestionAnswers, canAnswerAsyncQuestion, searchTargetScope, searchTargetItemId, full, historicalRecords, historicalRecordCount = 0, flowContext, flowFinalContent, flowFinalRecordedAt, flowOutcome, flowRuntimeStatus, flowDetailsPending, onLoadFlowDetails, readOnly = false, renderReadOnlyInteractionActions }: Props) {
+function ProcessStepsComponent({ steps, sessionId, messageId, processContent, processContentDetail, processTimeline, renderNarrativeDetail, defaultCollapsed = true, preserveExpandedOnSettle = false, expandRunningOperations = false, settled = true, narrativeStatus = 'completed', onInteractionRespond, onAsyncQuestionAnswer, answeredAsyncQuestionIds, asyncQuestionAnswers, canAnswerAsyncQuestion, searchTargetScope, searchTargetItemId, full, historicalRecords, historicalRecordCount = 0, flowContext, flowFinalContent, flowFinalRecordedAt, flowOutcome, flowRuntimeStatus, flowDetailsPending, onLoadFlowDetails, readOnly = false, renderReadOnlyInteractionActions }: Props) {
   const renderReadOnlyInteraction = readOnly ? (step: ProcessStep, key?: string) => <ReadOnlyInteraction key={key}
     step={step} settled={settled} actions={renderReadOnlyInteractionActions?.(step)} /> : undefined;
   const reportAvailable = Boolean(sessionId && messageId && !readOnly);
@@ -706,10 +709,10 @@ function ProcessStepsComponent({ steps, sessionId, messageId, processContent, pr
                 const status = getProcessNarrativeStatus(processTimeline || EMPTY_FLOW_TIMELINE, section.itemId, settled, narrativeStatus);
                 return <ProcessNarrativeRow key={section.key} content={section.content} detail={status === 'completed' ? renderNarrativeDetail?.(section.content) : undefined} status={status} defaultExpanded={section.itemId === defaultExpandedNarrativeItemId} itemId={section.itemId} searchTarget={searchTargetScope === 'process' && section.itemId === searchTargetItemId} full={full} />;
               }
-              return <ProcessExecutionGroup key={section.key} sections={section.sections} sessionId={sessionId} onInteractionRespond={onInteractionRespond} onAsyncQuestionAnswer={onAsyncQuestionAnswer} answeredAsyncQuestionIds={answeredAsyncQuestionIds} asyncQuestionAnswers={asyncQuestionAnswers} canAnswerAsyncQuestion={canAnswerAsyncQuestion} searchTargetItemId={searchTargetScope === 'operation' ? searchTargetItemId : undefined} full={full} renderReadOnlyInteraction={renderReadOnlyInteraction} renderSubtaskReport={renderSubtaskReport} />;
+              return <ProcessExecutionGroup key={section.key} sections={section.sections} sessionId={sessionId} onInteractionRespond={onInteractionRespond} onAsyncQuestionAnswer={onAsyncQuestionAnswer} answeredAsyncQuestionIds={answeredAsyncQuestionIds} asyncQuestionAnswers={asyncQuestionAnswers} canAnswerAsyncQuestion={canAnswerAsyncQuestion} searchTargetItemId={searchTargetScope === 'operation' ? searchTargetItemId : undefined} full={full} renderReadOnlyInteraction={renderReadOnlyInteraction} renderSubtaskReport={renderSubtaskReport} expandRunningOperations={expandRunningOperations} />;
             }) : <>
               {normalizedProcessContent && <ProcessNarrativeRow content={normalizedProcessContent} detail={processContentDetail} status={narrativeStatus} defaultExpanded={settled} searchTarget={searchTargetScope === 'process'} full={full} />}
-              {fallbackExecutionSection && <ProcessExecutionGroup sections={fallbackExecutionSection.sections} sessionId={sessionId} onInteractionRespond={onInteractionRespond} onAsyncQuestionAnswer={onAsyncQuestionAnswer} answeredAsyncQuestionIds={answeredAsyncQuestionIds} asyncQuestionAnswers={asyncQuestionAnswers} canAnswerAsyncQuestion={canAnswerAsyncQuestion} searchTargetItemId={searchTargetScope === 'operation' ? searchTargetItemId : undefined} full={full} renderReadOnlyInteraction={renderReadOnlyInteraction} renderSubtaskReport={renderSubtaskReport} />}
+              {fallbackExecutionSection && <ProcessExecutionGroup sections={fallbackExecutionSection.sections} sessionId={sessionId} onInteractionRespond={onInteractionRespond} onAsyncQuestionAnswer={onAsyncQuestionAnswer} answeredAsyncQuestionIds={answeredAsyncQuestionIds} asyncQuestionAnswers={asyncQuestionAnswers} canAnswerAsyncQuestion={canAnswerAsyncQuestion} searchTargetItemId={searchTargetScope === 'operation' ? searchTargetItemId : undefined} full={full} renderReadOnlyInteraction={renderReadOnlyInteraction} renderSubtaskReport={renderSubtaskReport} expandRunningOperations={expandRunningOperations} />}
             </>}
             {historicalRecords}
   </>;

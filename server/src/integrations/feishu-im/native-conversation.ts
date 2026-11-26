@@ -71,7 +71,7 @@ export function feishuApprovalWaitBody(interactions: readonly NormalizedInteract
     ? `${purposes.join('、')}${missing ? `。另有 ${missing} 项请在对应授权记录查看详情` : ''}`
     : '请在 Relay 处理过程的授权记录中查看具体用途和操作详情。';
   return [
-    '任务正在等待 Relay 人工审核。',
+    '等待管理员审核。',
     `申请授权：${operations.join('、')}`,
     `申请说明：${explanation}`,
     requests.every(request => request.availableActions.includes('accept_once'))
@@ -222,9 +222,10 @@ export class NativeFeishuConversation {
     }
     if (state?.kind !== 'relayTurnResult' || state.state !== 'completed') return null;
     const catalog = replyCatalog?.engineId === turn.engineId ? replyCatalog : await this.catalog(turn.engineId).catch(() => undefined);
+    const actualModel = feishuModelIdSchema.safeParse(state.modelInfo?.effective.id).data;
     return { body: state.body, usage: state.usage,
-        model: (state.modelInfo?.effective.id && feishuModelIdSchema.safeParse(state.modelInfo.effective.id).success
-          ? state.modelInfo.effective.id : turn.preferences?.modelId) ?? turn.engineId,
+        model: actualModel ?? turn.preferences?.modelId ?? turn.engineId,
+        ...(actualModel ? { actualModel } : {}),
         executionLine: feishuEngineReplyLine(turn.engineId, turn.preferences, state.contextCompactionCount, state.modelInfo, catalog),
         taskId: turn.taskId, taskTitle: turn.taskTitle };
   }

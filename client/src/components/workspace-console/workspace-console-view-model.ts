@@ -2,6 +2,7 @@ import type { WorkspaceConsoleDashboardDto, WorkspaceConsoleResponsibilityDto } 
 import { taskStatusPresentation } from './task-status.ts';
 import { primaryFeishuWorkItemId } from './workspace-task-identity.ts';
 import { hasTaskStarted, taskProgressAt, progressRecency, withDashboardProgress, type ProgressTask } from './workspace-task-progress.ts';
+import { compareRunRecency } from '../../../../scripts/lib/workbench-run-time.mjs';
 
 type DashboardTask = ProgressTask;
 type ResponsibilityItem = WorkspaceConsoleResponsibilityDto['items'][number];
@@ -10,7 +11,7 @@ type WorkbenchSubtask = WorkbenchItem['mySubtasks'][number];
 type LocalAssociatedItem = WorkspaceConsoleResponsibilityDto['localAssociated'][number];
 type Linked<T> = T & { tasks: DashboardTask[]; needsRecheck: boolean; personalCompleted?: boolean };
 export type DeliveryFeishuParent = { workItemId: string; title: string; typeName: string | null; url: string | null; nodeNames: string[]; finished: boolean };
-export type DeliveryFeishuItem = { key: string; title: string; pending: boolean; statusLabel?: string; statusOnlyLabel?: string | null; nodeLabel?: '当前节点' | '所属节点'; nodeName?: string | null; nodeNames?: string[]; parent?: DeliveryFeishuParent; updatedAt?: string | null; kind?: 'workItem' | 'subtask'; typeName?: string | null; workItemId?: string; url?: string | null; finished?: boolean | null; associationVerified?: boolean };
+export type DeliveryFeishuItem = { key: string; title: string; pending: boolean; statusLabel?: string; statusOnlyLabel?: string | null; nodeLabel?: '当前节点' | '所属节点'; nodeName?: string | null; nodeNames?: string[]; parent?: DeliveryFeishuParent; updatedAt?: string | null; finishedAt?: string | null; kind?: 'workItem' | 'subtask'; typeName?: string | null; workItemId?: string; url?: string | null; finished?: boolean | null; associationVerified?: boolean };
 export type TaskEntry = { kind: 'local'; key: string; task: DashboardTask; linkedFeishu?: DeliveryFeishuItem[] } | { kind: 'project'; key: string; item: Linked<ResponsibilityItem> }
   | { kind: 'parent'; key: string; item: WorkbenchItem; personalState?: PersonalResponsibilityState }
   | { kind: 'subtask'; key: string; parent: WorkbenchItem; subtask: WorkbenchSubtask; localTasks: DashboardTask[] };
@@ -229,16 +230,18 @@ export function taskFeishuContext(task: DashboardTask, report: WorkspaceConsoleR
     if(!item&&!parent&&children.length===1){
       const {parent,child}=children[0];
       return {key:`subtask:${parent.workItemId}:${id}`,kind:'subtask',typeName:'子任务',workItemId:id,title:child.title,
-        pending:!uncertain&&!child.passed,finished:uncertain?null:child.passed,url:feishuSubtaskUrl(parent,child),updatedAt:null,associationVerified:!uncertain,
+        pending:!uncertain&&!child.passed,finished:uncertain?null:child.passed,url:feishuSubtaskUrl(parent,child),
+        updatedAt:uncertain?null:child.updatedAt,finishedAt:uncertain?null:child.finishedAt,associationVerified:!uncertain,
         nodeLabel:'所属节点',nodeName:child.nodeName,parent:uncertain?undefined:deliveryParentContext(parent),statusOnlyLabel:uncertain?'本地关联尚未核实':workbenchSubtaskStatusLabel(child),
         statusLabel:uncertain?'本地关联尚未核实':`飞书子任务：${workbenchSubtaskStatusLabel(child)} · ${workbenchSubtaskNodeLabel(child)}`};
     }
     const source=item?.statusName?item:parent??item;
-    const finished=item ? isFinishedProjectIssue(item)?true:item.nativeCompleted===false?false:null
-      : parent ? workbenchFlowEnded(parent) : null;
+    const finished=item&&isFinishedProjectIssue(item) ? true
+      : parent ? workbenchFlowEnded(parent) : item?.nativeCompleted ?? null;
     return {key:`workItem:${id}`,kind:'workItem',typeName:source?.typeName,workItemId:id,title:source?.title??associated?.title??'关联工作项',
       pending:!uncertain&&finished===false,finished:uncertain?null:finished,associationVerified:!uncertain,
-      url:links.find(link=>link.workItemId===id)?.url??source?.url??task.feishuWorkItemUrls?.[id]??null,updatedAt:source?.updatedAt,
+      url:links.find(link=>link.workItemId===id)?.url??source?.url??task.feishuWorkItemUrls?.[id]??null,
+      updatedAt:uncertain?null:source?.updatedAt ?? parent?.updatedAt,finishedAt:uncertain?null:source?.finishedAt ?? parent?.finishedAt,
       nodeLabel:finished===true?undefined:'当前节点',nodeNames:source&&!uncertain?workItemCurrentNodeLines(source):[],
       statusOnlyLabel:uncertain?'本地关联尚未核实':finished===true?'流程已结束':source&&'statusName' in source?source.statusName||null:!source?'飞书状态未读取':null,
       statusLabel:uncertain?'本地关联尚未核实':source?feishuWorkItemStatusLabel(source):'飞书状态未读取'};
@@ -294,23 +297,39 @@ export function localTaskStatusLabel(task: DashboardTask): string {
 export function taskEntryProgressAt(entry: TaskDisplayEntry): number | null {
   const tasks = entry.kind === 'group' ? entry.members.filter((member): member is Extract<TaskEntry, { kind: 'local' }> => member.kind === 'local').map((member) => member.task)
     : entry.kind === 'local' ? [entry.task] : [];
+  const doing = taskEntryLane(entry) === 'doing';
   const times = tasks.filter((task) => localTaskLane(task) === 'doing'
-    || ['waiting', 'paused'].includes(task.status ?? '') && hasTaskStarted(task))
+    || !doing && ['waiting', 'paused'].includes(task.status ?? '') && hasTaskStarted(task))
     .map(taskProgressAt).filter((at): at is number => at !== null);
   return times.length ? Math.max(...times) : null;
 }
 
+export function latestTaskRecord(task: DashboardTask) {
+  const records = [
+    { at: task.lastVerifiedAt, label: '核验' },
+    { at: task.completedAt, label: ['cancelled', 'canceled'].includes(task.status ?? '') ? '取消' : '完成' },
+    { at: task.startedAt, label: '开始' },
+  ];
+  return records.filter(record => detailTime(record.at) > 0)
+    .sort((a,b) => detailTime(b.at) - detailTime(a.at))[0] ?? null;
+}
+
 export function latestTaskRecordAt(task: DashboardTask): string | null {
-  return [task.lastVerifiedAt, task.completedAt, task.startedAt]
-    .filter((value): value is string => Boolean(value && Number.isFinite(Date.parse(value))))
-    .sort((a, b) => Date.parse(b) - Date.parse(a))[0] ?? null;
+  return latestTaskRecord(task)?.at ?? null;
+}
+
+export function localLedgerTime(task: DashboardTask) {
+  if (isDone(task)) return { label: '本地结束', at: task.completedAt };
+  const record = latestTaskRecord(task);
+  return { label: record ? `本地最近记录（${record.label}）` : '本地最近记录', at: record?.at ?? null };
 }
 
 const detailTime = (value: string | null | undefined) => Date.parse(value ?? '') || 0;
 
-export function sortDetailLocalTasks(tasks: DashboardTask[]): DashboardTask[] {
-  return [...tasks].sort((a, b) => Number(isDone(a)) - Number(isDone(b))
-    || detailTime(latestTaskRecordAt(b)) - detailTime(latestTaskRecordAt(a)));
+export function sortDetailLocalTasks(tasks: readonly DashboardTask[]): DashboardTask[] {
+  return tasks.map(task => ({task, ended: isDone(task), at: detailTime(localLedgerTime(task).at)}))
+    .sort((a, b) => Number(a.ended) - Number(b.ended) || b.at - a.at || a.task.id.localeCompare(b.task.id))
+    .map(({task}) => task);
 }
 
 export function splitDetailLocalTasks(tasks: DashboardTask[]): { visible: DashboardTask[]; hidden: DashboardTask[] } {
@@ -320,24 +339,34 @@ export function splitDetailLocalTasks(tasks: DashboardTask[]): { visible: Dashbo
   return { visible: sorted.slice(0, visibleCount), hidden: sorted.slice(visibleCount) };
 }
 
-export function sortDetailSubtasks(parent: WorkbenchItem, localTasks: DashboardTask[], operationTimes: ReadonlyMap<string, string> = new Map()): WorkbenchSubtask[] {
-  const updatedAt = (child: WorkbenchSubtask) => {
-    const localTime = Math.max(0, ...localTasks.filter((task) => child.localTaskIds?.includes(task.id))
-      .map((task) => detailTime(latestTaskRecordAt(task))));
-    return Math.max(localTime, detailTime(child.finishedAt), detailTime(operationTimes.get(child.id)));
-  };
-  return [...parent.mySubtasks].sort((a, b) => Number(a.passed) - Number(b.passed)
-    || updatedAt(b) - updatedAt(a));
+type FeishuTimes = { updatedAt?: string | null; finishedAt?: string | null };
+export function feishuListTime(item: FeishuTimes | undefined, ended: boolean) {
+  return ended ? { label: '飞书结束', at: item?.finishedAt } : { label: '飞书更新', at: item?.updatedAt };
 }
 
-export function localLedgersForParent(parent: WorkbenchItem, tasks: DashboardTask[]): DashboardTask[] {
+export function compareFeishuListTimes<T>(
+  isEnded: (item: T) => boolean,
+  times: (item: T) => FeishuTimes | undefined,
+  endedFirst = false,
+) {
+  const at = (item: T) => detailTime(feishuListTime(times(item), isEnded(item)).at);
+  const statusOrder = endedFirst ? -1 : 1;
+  return (a: T, b: T) => statusOrder * (Number(isEnded(a)) - Number(isEnded(b))) || at(b) - at(a);
+}
+
+export function sortDetailSubtasks(parent: WorkbenchItem): WorkbenchSubtask[] {
+  const compare = compareFeishuListTimes<WorkbenchSubtask>(child => child.passed, child => child);
+  return [...parent.mySubtasks].sort((a, b) => compare(a, b) || a.id.localeCompare(b.id));
+}
+
+export function localLedgersForParent(parent: WorkbenchItem, tasks: readonly DashboardTask[]): DashboardTask[] {
   const ids = new Set([...(parent.localTaskIds ?? []), ...parent.mySubtasks.flatMap((child) => child.localTaskIds ?? [])]);
-  return sortDetailLocalTasks(tasks.filter((task) => ids.has(task.id)));
+  return tasks.filter(task => ids.has(task.id));
 }
 
 export function taskEntryUpdatedAt(entry: TaskEntry): number {
   const value = entry.kind === 'local' ? latestTaskRecordAt(entry.task)
-    : entry.kind === 'project' || entry.kind === 'parent' ? entry.item.updatedAt : entry.subtask.finishedAt;
+    : entry.kind === 'project' || entry.kind === 'parent' ? entry.item.updatedAt : entry.subtask.updatedAt;
   return Date.parse(value ?? '') || 0;
 }
 
@@ -345,16 +374,13 @@ export function taskDisplayEntryUpdatedAt(entry: TaskDisplayEntry): number {
   return entry.kind === 'group' ? Math.max(0, ...entry.members.map(taskEntryUpdatedAt)) : taskEntryUpdatedAt(entry);
 }
 
-export function taskEntryFinishedAt(entry: TaskEntry): number {
-  const value = entry.kind === 'local' ? entry.task.completedAt
-    : entry.kind === 'parent' ? entry.item.finishedAt
-      : entry.kind === 'subtask' ? entry.subtask.finishedAt : entry.item.finishedAt;
-  return Date.parse(value ?? '') || 0;
+export function pendingTaskUpdatedAt(entry: TaskDisplayEntry): number {
+  if (entry.kind === 'group') {
+    return Math.max(0, ...entry.members.filter(member => taskEntryLane(member) !== 'completed').map(taskEntryUpdatedAt));
+  }
+  return taskEntryUpdatedAt(entry);
 }
 
-export function taskDisplayEntryFinishedAt(entry: TaskDisplayEntry): number {
-  return entry.kind === 'group' ? Math.max(0, ...entry.members.map(taskEntryFinishedAt)) : taskEntryFinishedAt(entry);
-}
 
 export function taskEntryLane(entry: TaskDisplayEntry): TaskLane {
   if (entry.kind === 'group') {
@@ -385,7 +411,7 @@ export function selectGroupPrimaryEntry(group: TaskGroup): TaskEntry | null {
   const activeLocals = candidates.filter((entry): entry is Extract<TaskEntry, { kind: 'local' }> =>
     entry.kind === 'local' && !isDone(entry.task));
   const executing = activeLocals.filter((entry) => activeStatuses.has(entry.task.status ?? ''));
-  const recentLocal = (entries: typeof activeLocals) => [...entries].sort((a,b) => (latestTaskRecordAt(b.task) ?? '').localeCompare(latestTaskRecordAt(a.task) ?? ''))[0];
+  const recentLocal = (entries: typeof activeLocals) => [...entries].sort((a,b) => taskEntryUpdatedAt(b) - taskEntryUpdatedAt(a) || a.key.localeCompare(b.key))[0];
   if (executing.length) return recentLocal(executing);
   const readyLocal = activeLocals.filter((entry) => !['waiting','blocked','paused'].includes(entry.task.status ?? ''));
   if (readyLocal.length) return recentLocal(readyLocal);
@@ -405,7 +431,6 @@ export function selectGroupPrimaryEntry(group: TaskGroup): TaskEntry | null {
 export function groupTaskEntriesByLane<T extends TaskDisplayEntry>(entries: T[]): Record<TaskLane, T[]> {
   const lanes: Record<TaskLane, T[]> = { unstarted: [], doing: [], completed: [] };
   for (const entry of entries) lanes[taskEntryLane(entry)].push(entry);
-  lanes.completed.sort((a,b)=>taskDisplayEntryFinishedAt(b)-taskDisplayEntryFinishedAt(a)||a.key.localeCompare(b.key));
   return lanes;
 }
 
@@ -500,12 +525,12 @@ export function workbenchChildNeedsAttention(subtask: WorkbenchSubtask, localTas
 }
 
 export function formatSessionActivity(updatedAt: number | null | undefined, now: number): string {
-  if (!updatedAt || !Number.isFinite(updatedAt)) return '活跃时间未记录';
+  if (!updatedAt || !Number.isFinite(updatedAt)) return '更新时间未记录';
   const elapsed = Math.max(0, now - updatedAt);
-  if (elapsed < 60_000) return '刚刚活跃';
-  if (elapsed < 3_600_000) return `${Math.floor(elapsed / 60_000)} 分钟前活跃`;
-  if (elapsed < 86_400_000) return `${Math.floor(elapsed / 3_600_000)} 小时前活跃`;
-  return `${Math.floor(elapsed / 86_400_000)} 天前活跃`;
+  if (elapsed < 60_000) return '刚刚更新';
+  if (elapsed < 3_600_000) return `${Math.floor(elapsed / 60_000)} 分钟前更新`;
+  if (elapsed < 86_400_000) return `${Math.floor(elapsed / 3_600_000)} 小时前更新`;
+  return `${Math.floor(elapsed / 86_400_000)} 天前更新`;
 }
 
 export function filterTaskLanesByStatus<T extends TaskDisplayEntry>(lanes: Record<TaskLane, T[]>, selected: Record<TaskLane, string>): Record<TaskLane, T[]> {
@@ -545,7 +570,7 @@ export function selectFocusTasks(tasks: DashboardTask[]): DashboardTask[] {
   const sorted = tasks.filter((task) => !terminal.has(task.status ?? ''))
     .sort((a, b) => rank(a.status) - rank(b.status)
       || Number(b.horizon === 'immediate') - Number(a.horizon === 'immediate')
-      || (b.lastVerifiedAt ?? '').localeCompare(a.lastVerifiedAt ?? '')
+       || detailTime(b.lastVerifiedAt) - detailTime(a.lastVerifiedAt)
     || (a.title ?? a.id).localeCompare(b.title ?? b.id));
   return sorted.slice(0, 6);
 }
@@ -554,7 +579,7 @@ export function focusGroupLocalTasks(group: TaskGroup): DashboardTask[] {
   return group.members.filter((entry): entry is Extract<TaskEntry, { kind: 'local' }> => entry.kind === 'local')
     .map((entry) => entry.task).filter((task) => !isDone(task))
     .sort((a, b) => Number(activeStatuses.has(b.status ?? '')) - Number(activeStatuses.has(a.status ?? ''))
-      || (latestTaskRecordAt(b) ?? '').localeCompare(latestTaskRecordAt(a) ?? ''));
+       || detailTime(latestTaskRecordAt(b)) - detailTime(latestTaskRecordAt(a)));
 }
 
 export function selectFocusEntries<T extends TaskDisplayEntry>(entries: T[], now = Date.now()): T[] {
@@ -588,7 +613,8 @@ export function selectFocusEntries<T extends TaskDisplayEntry>(entries: T[], now
     return 2;
   };
   return active.sort((a, b) => rank(a) - rank(b)
-    || (taskEntryProgressAt(b) ?? 0) - (taskEntryProgressAt(a) ?? 0))
+     || (taskEntryProgressAt(b) ?? 0) - (taskEntryProgressAt(a) ?? 0)
+     || pendingTaskUpdatedAt(b) - pendingTaskUpdatedAt(a))
     .slice(0, 6);
 }
 
@@ -608,14 +634,8 @@ export function distributeFocusEntries<T>(entries: readonly T[], columnCount: nu
   return columns;
 }
 
-export function selectRecentRuns<T extends { taskId: string | null; startedAt?: string | null; runId?: string }>(runs: T[], limit: number): T[] {
-  const time = (run: T) => {
-    const encoded = /^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})/.exec(run.runId ?? '');
-    const value = run.startedAt ?? (encoded ? `${encoded[1]}-${encoded[2]}-${encoded[3]}T${encoded[4]}:${encoded[5]}:${encoded[6]}` : null);
-    const parsed = value ? Date.parse(value.replace(' ', 'T')) : NaN;
-    return Number.isFinite(parsed) ? parsed : 0;
-  };
-  return [...runs].sort((a, b) => time(b) - time(a)).slice(0, limit);
+export function selectRecentRuns<T extends { taskId: string | null; startedAt?: string | null; createdAt?: string | null; runId?: string }>(runs: T[], limit: number): T[] {
+  return [...runs].sort(compareRunRecency).slice(0, limit);
 }
 
 export function formatFocusCurrent(value: string): string {
@@ -650,7 +670,7 @@ export function buildWorkspaceSummary(
     focusTasks: selectFocusTasks(view.tasks),
     attentionTasks: view.tasks.filter((task) => ['waiting', 'blocked', 'paused'].includes(task.status ?? '') && !isDone(task))
       .sort((a, b) => ({ blocked: 0, waiting: 1, paused: 2 }[a.status ?? ''] ?? 3) - ({ blocked: 0, waiting: 1, paused: 2 }[b.status ?? ''] ?? 3)
-        || (latestTaskRecordAt(b) ?? '').localeCompare(latestTaskRecordAt(a) ?? '')
+         || detailTime(latestTaskRecordAt(b)) - detailTime(latestTaskRecordAt(a))
         || a.id.localeCompare(b.id)).slice(0, 4),
     recentRuns: selectRecentRuns(view.runs, 4),
     recentSessions: [...view.sessions].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 4),
@@ -794,10 +814,6 @@ export function retainNewTaskKeys(previous:ReadonlySet<string>,baseline:readonly
   return new Set([...previous].filter(key=>live.has(key)).concat(known?keys.filter(key=>!known.has(key)):[]));
 }
 
-export function prioritizeTaskEntries<T extends TaskDisplayEntry>(entries: T[], newKeys: ReadonlySet<string>): T[] {
-  if (newKeys.size === 0) return entries;
-  return [...entries.filter((entry) => taskDisplayEntryIsNew(entry, newKeys)), ...entries.filter((entry) => !taskDisplayEntryIsNew(entry, newKeys))];
-}
 
 export function filterTaskEntries<T extends TaskDisplayEntry>(entries: T[], filter: TaskEntryFilter, search: string, now = Date.now()): T[] {
   const query = search.trim().toLocaleLowerCase();

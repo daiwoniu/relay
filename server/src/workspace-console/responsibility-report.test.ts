@@ -153,10 +153,13 @@ test('projects a closed node-flow parent without relying on its opaque status ke
 test('preserves absolute child and parent timestamps already normalized by the collector', () => {
   const parent = { ...report.workbench_items[0], updated_at: 1792136734498,
     my_subtasks: [{ ...report.workbench_items[0].my_subtasks[0], passed: true,
+      created_at: Date.parse('2026-10-13T15:03:24.010Z'), updated_at: Date.parse('2026-10-16T07:45:00Z'),
       finished_at: Date.parse('2026-10-14T15:03:24.010Z') }] };
   const result = parseResponsibilityReport({ ...report, workbench_items: [parent] }, expected);
   assert.equal(result.workbenchItems[0]?.updatedAt, '2026-10-16T07:45:34.498Z');
   assert.equal(result.workbenchItems[0]?.mySubtasks[0]?.finishedAt, '2026-10-14T15:03:24.010Z');
+  assert.equal(result.workbenchItems[0]?.mySubtasks[0]?.createdAt, '2026-10-13T15:03:24.010Z');
+  assert.equal(result.workbenchItems[0]?.mySubtasks[0]?.updatedAt, '2026-10-16T07:45:00.000Z');
 });
 
 test('older workbench reports keep missing workflow and node names unknown', () => {

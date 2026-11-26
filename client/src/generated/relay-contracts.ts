@@ -462,6 +462,7 @@ export interface SessionDto {
   } | null;
   pending_action_kind?: 'approval' | 'input' | 'mixed' | null;
   execution_stage?: 'accepted' | 'started' | 'responding' | null;
+  active_attempt_id?: string | null;
   engine_preferences: EnginePreferencesDto;
   message_count?: number;
   assistant_message_count?: number;
@@ -496,6 +497,7 @@ export interface SessionDetailsDto {
   } | null;
   pending_action_kind?: 'approval' | 'input' | 'mixed' | null;
   execution_stage?: 'accepted' | 'started' | 'responding' | null;
+  active_attempt_id?: string | null;
   engine_preferences: EnginePreferencesDto;
   message_count?: number;
   assistant_message_count?: number;
@@ -1358,6 +1360,7 @@ export interface WorkspaceConsoleRunDto {
   source: string;
   mode: string | null;
   target: string | null;
+  createdAt?: string | null;
   startedAt: string | null;
   finishedAt: string | null;
   durationSeconds: number | null;
@@ -1458,6 +1461,8 @@ export interface WorkspaceConsoleResponsibilityDto {
       id: string;
       name: string;
       passed: boolean;
+      updatedAt?: string | null;
+      finishedAt?: string | null;
     }[];
     currentNodes: string[];
     version: string | null;
@@ -1597,6 +1602,7 @@ export interface WorkspaceOperationRecordsDto {
 
 export interface WorkspaceConsoleDashboardDto {
   workspaceId?: string;
+  runTimeVersion?: 1;
   workspacePath: string;
   capturedAt: number;
   registryGeneratedAt: string | null;
@@ -2102,6 +2108,8 @@ export interface SendCommand {
 export interface CancelCommand {
   type: 'cancel';
   sessionId?: string;
+  expectedAttemptId?: string;
+  analyticsOperationId?: string;
 }
 export interface CancelFollowupCommand {
   type: 'cancel_followup';

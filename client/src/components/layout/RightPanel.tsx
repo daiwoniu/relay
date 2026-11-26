@@ -17,7 +17,7 @@ import { ApiError } from '../../api/client';
 import { getFilePreviewView, type FilePreviewView } from './file-preview-view';
 import { filePreviewRequestManager } from './file-preview-request-manager';
 import { completePreviewOperation, currentPreviewOperationTab, type PreviewOperationState } from './preview-operation-state';
-import { buildForceAccessFailureUpdate } from './file-preview-failure';
+import { buildForceAccessFailureUpdate, filePreviewFailureReason } from './file-preview-failure';
 import { downloadPreviewFile } from './file-preview-download';
 import { useTheme } from '../../hooks/useTheme';
 import RightPanelContent, { getFileName } from './RightPanelContent';
@@ -300,7 +300,7 @@ export default function RightPanel({ tabs, activeTabId, panelVisible, width, onC
     // Tabs must retain their original absolute path, even after switching projects.
     const resolution = resolveCodexFileReferencePathResult(sourcePath);
     if (!resolution.ok) {
-      report('error');
+      report('error',{reasonCode:'INVALID_INPUT'});
       updateRightPanelTab(tab.id, {
         loading: false, previewError: resolution.reason,
         fileMetadataLoading: false, fileMetadataError: resolution.reason,
@@ -320,12 +320,15 @@ export default function RightPanel({ tabs, activeTabId, panelVisible, width, onC
       const update = await buildFilePreviewUpdate(data, sourcePath, tab.fileAccessToken, request.signal);
       if (!filePreviewRequestManager.isCurrent(tab.id, request.generation) || !updateRightPanelTab(tab.id, update)) {
         disposeFilePreviewUpdate(update);
+        report('cancelled');
         return;
       }
       filePreviewRequestManager.replaceObjectUrls(tab.id, request.generation, getFilePreviewObjectUrl(update));
-      report(update.previewError?'error':'success');
+      if(update.previewError)report('error',{reasonCode:'LOAD_FAILED'});
+      else report('success');
     } catch (error) {
-      report(request.signal.aborted?'cancelled':'error');
+      if(request.signal.aborted||!filePreviewRequestManager.isCurrent(tab.id,request.generation))report('cancelled');
+      else report('error',{reasonCode:filePreviewFailureReason(error)});
       if (!filePreviewRequestManager.isCurrent(tab.id, request.generation)) return;
       const message = error instanceof ApiError ? error.data?.error || '刷新文件失败' : '刷新文件失败，请重试';
       filePreviewRequestManager.replaceObjectUrls(tab.id, request.generation);

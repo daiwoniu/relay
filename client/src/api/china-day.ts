@@ -75,8 +75,11 @@ export interface ChinaWeatherHourlyData {
   hours: Array<{ time: string; temperatureC: number | null; precipitationProbabilityPercent: number | null; weatherCode: number | null }>;
 }
 
-export function getChinaWeatherHourly(city: string, signal?: AbortSignal, refresh = false): Promise<ChinaWeatherHourlyData> {
+export function getChinaWeatherHourly(city: string, signal?: AbortSignal, refresh = false, surface: 'tools' | 'workbench' = 'tools'): Promise<ChinaWeatherHourlyData> {
   const query = new URLSearchParams({ city });
   if (refresh) query.set('refresh', '1');
-  return requestJson<ChinaWeatherHourlyData>(`/api/public/tools/china-day/hourly?${query}`, { signal, timeoutMs: 30_000, cache: 'no-store', notifyUnauthorized: false });
+  return requestJson<ChinaWeatherHourlyData>(`/api/public/tools/china-day/hourly?${query}`, {
+    ...(refresh ? { analytics: { feature: 'tools', action: 'refresh_hourly_weather', surface, toolId: 'weather' } as const } : {}),
+    signal, timeoutMs: 30_000, cache: 'no-store', notifyUnauthorized: false,
+  });
 }

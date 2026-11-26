@@ -5,7 +5,7 @@ export type { AnalyticsFeatureProperties } from './feature-schema.js';
 export const ANALYTICS_SURFACES = [
   'unknown','sidebar','user_menu','header','button','keyboard','context_menu','mobile_sheet',
   'composer','add_content','device_picker','host_picker','drop','paste','message','message_file',
-  'message_menu','preview_toolbar','preview_tab','preview_content','settings','notification',
+  'message_menu','message_header','message_footer','preview_toolbar','preview_tab','preview_content','settings','notification',
   'share_page','tools','workbench','news','admin','system','session_details',
 ] as const;
 export const MEDIA_TOOL_IDS = [
@@ -43,6 +43,7 @@ export const ANALYTICS_ATTRIBUTE_VALUES = {
     'source','rendered','git_diff','compressed','original','light','dark','system',
     'all','following','frequent','project','session','single','selection','desktop','mobile',
     'create_bot','edit_bot','enable_bot','disable_bot',
+    'stamp','date','difference','shift','age','compare','discount','threshold','draw','groups',
   ],
   section: ['profile','security','project','appearance','notifications','preview',
     'feishu_settings','feishu_users','feishu_messages','feishu_matters','feishu_stats'],
@@ -51,6 +52,7 @@ export const ANALYTICS_ATTRIBUTE_VALUES = {
     'INVALID_INPUT','UNAVAILABLE','PERMISSION_DENIED','RATE_LIMITED','NETWORK_ERROR','TIMEOUT',
     'NOT_FOUND','EXPIRED','LIMIT_REACHED','UNSUPPORTED','EMPTY_FINAL','INTERRUPTED',
     'COPY_FAILED','EXPORT_FAILED','LOAD_FAILED','OPERATION_FAILED','UNKNOWN',
+    'DOCUMENT_INVALID','DOCUMENT_ENCRYPTED','DOCUMENT_CHANGED',
   ],
   toolId: ANALYTICS_TOOL_IDS,
 } as const;
@@ -72,7 +74,7 @@ export const ANALYTICS_FEATURES = {
   project_members: { label:'项目成员',surfaces:['sidebar','admin','settings'] },
   project_uploads: { label:'项目文件',surfaces:['sidebar','admin'] },
   session: { label:'会话',surfaces:['sidebar','header','context_menu','message_menu','keyboard','workbench','mobile_sheet'] },
-  composer: { label:'输入区',surfaces:['composer','button','keyboard','mobile_sheet','add_content'] },
+  composer: { label:'输入区',surfaces:['composer','button','keyboard','mobile_sheet','add_content','message_header','message_footer'] },
   attachments: { label:'附件',surfaces:['composer','add_content','device_picker','host_picker','drop','paste','message'] },
   notes: { label:'临时便签',surfaces:['composer','add_content','keyboard','mobile_sheet'] },
   message: { label:'消息与执行过程',surfaces:['message','message_menu','message_file','keyboard','header'] },
@@ -93,6 +95,7 @@ export const ANALYTICS_FEATURES = {
   connection: { label:'连接与故障恢复',surfaces:['system','notification','button'] },
   analytics: { label:'访问统计',surfaces:['admin','user_menu','keyboard'] },
   feishu_admin: { label:'飞书管理',surfaces:['admin','user_menu','session_details'] },
+  feishu_reply: { label:'飞书回复',surfaces:['system'] },
   conversation: { label:'回合运行',surfaces:['composer','button','keyboard','system'] },
 } as const satisfies Record<string,FeatureDefinition>;
 export type AnalyticsFeature = keyof typeof ANALYTICS_FEATURES;
@@ -113,10 +116,18 @@ export interface AnalyticsRegistration {
 }
 
 const entries: AnalyticsRegistration[] = [];
+const toolModes: Partial<Record<AnalyticsToolId, readonly string[]>> = {
+  timestamp: ['stamp', 'date'], dates: ['difference', 'shift', 'age'],
+  shopping: ['compare', 'discount', 'threshold'], random: ['draw', 'groups'],
+};
 const toolActions: Readonly<Partial<Record<string,readonly AnalyticsToolId[]>>> = {
   close:ANALYTICS_TOOL_IDS,pin:ANALYTICS_TOOL_IDS,unpin:ANALYTICS_TOOL_IDS,
   configure:['qr','units','pomodoro'],pause:['pomodoro'],select_day:['calendar'],change_month:['calendar'],
   change_city:['weather'],rotate_greeting:['greeting'],refresh_weather:['weather'],refresh_calendar:['calendar'],
+  hourly_weather:['weather'],refresh_hourly_weather:['weather'],
+  mode:Object.keys(toolModes) as AnalyticsToolId[],
+  generate_media:MEDIA_TOOL_IDS, extract_audio:['video-edit'], capture_frame:['video-edit'],
+  cancel_job:MEDIA_TOOL_IDS, download:MEDIA_TOOL_IDS, save_preset:['image-edit','image-layout','image-motion'],
 };
 const actionLabels: Readonly<Record<string,string>> = {
   open:'打开',close:'关闭',toggle_sidebar:'切换侧栏',toggle_wide:'切换宽屏',minimize:'最小化',restore:'恢复',resize:'调整宽度',
@@ -139,6 +150,8 @@ const actionLabels: Readonly<Record<string,string>> = {
   discard:'放弃更改',sound_preview:'试听',save:'保存',upload_asset:'上传素材',delete_asset:'删除素材',open_session:'进入会话',
   link_session:'关联会话',unlink_session:'解绑会话',reset_quota:'重置额度',select_day:'选择日期',change_month:'切换月份',
   change_city:'切换城市',rotate_greeting:'切换问候',save_settings:'保存设置',refresh_weather:'刷新天气',
+  hourly_weather:'展开逐小时天气',refresh_hourly_weather:'重试逐小时天气',change_theme:'切换主题',
+  generate_media:'生成媒体文件',extract_audio:'提取音轨',capture_frame:'保存视频截图',cancel_job:'取消媒体处理',save_preset:'保存本机预设或模板',
   show_rule_matches:'查看规则匹配',save_preferences:'保存偏好',verify_source:'验证来源',save_source:'保存来源',
   refresh_source:'刷新来源',add_item:'新增内容',correct_item:'纠正内容',save_category:'保存分类',preview_policy:'预览策略',
   save_policy:'保存策略',select_entry:'选择入口',import:'导入',inspect:'检查',publish:'发布',update:'更新',
@@ -157,7 +170,7 @@ const actionLabels: Readonly<Record<string,string>> = {
   retry_groups:'刷新群聊和联系人',retry_models:'重试读取模型',view_matter:'查看关联事项',
   save_bot:'保存机器人配置',save_concurrency:'保存飞书引擎并发',configuration_options:'展开机器人配置选项',pause_bot:'停用机器人',convert_matter:'转为事项',
   decide_approval:'审核飞书执行授权',set_user_access:'修改飞书用户使用权限',
-  handoff:'交接会话',archive:'归档',retry_queued:'补发已入队',retry_delivery:'补发投递结果',
+  handoff:'交接会话',archive:'归档',retry_queued:'补发已入队',retry_delivery:'补发投递结果',claim_file:'领取附件',
   return_list:'返回列表',connection_details:'展开连接详情',notice_details:'展开通知详情',diagnostics:'展开排查信息',
   open_retry:'打开补发确认',open_pause:'打开停用确认',cancel_retry:'取消补发',cancel_pause:'取消停用',cancel_edit:'取消机器人配置',
 };
@@ -206,9 +219,8 @@ local('session',['copy_id']);
 remote('session',['create','rename','pin','unpin','reorder','fork','unarchive','update'],['engine']);
 view('composer'); action('composer',['edit_start','clear','cancel_clear','cancel_stop','select_project','select_directory','select_engine','open_model_settings'],['engine']);
 remote('composer',['submit'],['engine','countBucket','queued']);
-remote('composer',['apply_model','cancel_queued'],['engine']);
+remote('composer',['apply_model','cancel_queued','stop'],['engine']);
 action('composer',['apply_model_draft'],['engine']);
-action('composer',['stop'],['engine']);
 view('attachments'); action('attachments',['select','cancel'],['fileKind','sizeBucket','countBucket']);
 action('attachments',['remove_local']);
 remote('attachments',['upload','remove','authorize','create_directory'],['fileKind','sizeBucket','countBucket']);
@@ -225,6 +237,7 @@ view('file_preview',['fileKind']); action('file_preview',[
   'activate','close','close_all','pin','unpin','maximize','minimize','restore','resize','details','mode','request_scripts',
   'cancel_scripts','enable_scripts','select_sheet','browse_archive','search_archive','play','pause',
 ],['fileKind','mode']);
+action('file_preview',['open_external']);
 register('file_preview','feature_action',['ended'],'client','none',['fileKind'],false,'system');
 local('file_preview',['copy_path','download'],['fileKind','sizeBucket']);
 remote('file_preview',['authorize'],['fileKind']);
@@ -244,8 +257,11 @@ local('workbench',['open_external']);
 local('workbench',['refresh','refresh_quota'],['mode']);
 remote('workbench',['link_session','unlink_session','reset_quota'],['mode']);
 // Existing tool_open/tool_action/news_click remain the only producers of their original operations.
-action('tools',['close','filter','search','configure','pause','select_day','change_month','change_city','rotate_greeting'],['mode']);
-remote('tools',['pin','unpin'],['mode']);local('tools',['refresh_weather','refresh_calendar'],['mode']);
+action('tools',['close','filter','search','configure','pause','select_day','change_month','change_city','rotate_greeting',
+  'hourly_weather','change_theme','mode','cancel_job','download'],['mode']);
+remote('tools',['pin','unpin'],['mode']);
+local('tools',['refresh_weather','refresh_calendar'],['mode']);
+local('tools',['refresh_hourly_weather','generate_media','extract_audio','capture_frame','save_preset']);
 action('news',['filter','search','load_more','mode','show_rule_matches'],['mode','countBucket']);
 local('news',['refresh']);remote('news',['save_preferences']);
 view('news_admin'); remote('news_admin',['verify_source','save_source','refresh_source','add_item','correct_item','save_category','preview_policy','save_policy']);
@@ -265,17 +281,20 @@ register('maintenance','feature_view',['open_service','open_engine'],'client','n
 action('feishu_admin',['open_feishu','select_bot','select_chat','range','refresh','paginate','details','view_matter','edit_bot','retry_groups','retry_models','open_session']);
 action('feishu_admin',['return_list','connection_details','notice_details','diagnostics','configuration_options','open_retry','open_pause','cancel_retry','cancel_pause','cancel_edit']);
 action('feishu_admin',['section'],['section']);
+action('feishu_admin',['search','filter']);
+local('feishu_admin',['copy_id']);
 remote('feishu_admin',['save_bot'],['mode']);
 remote('feishu_admin',['pause_bot','save_concurrency','decide_approval','set_user_access',...Object.values(FEISHU_ADMIN_MUTATION_ACTIONS)]);
 register('feishu_admin','operation_result',['retry_queued'],'server','required',[],true,'system');
 register('feishu_admin','operation_result',['retry_delivery'],'server','required',['reasonCode'],true);
+register('feishu_reply','operation_result',['claim_file'],'server','required',[],true);
 remote('maintenance',['recheck','install','upgrade','upgrade_and_restart','restart','apply_repair'],['engine']);
 local('maintenance',['check_version','preview_repair'],['engine']);action('maintenance',['abort'],['engine']);
 view('notifications'); action('notifications',['dismiss','activate','request_permission']);
 register('notifications','operation_result',['permission','deliver'],'client','required',['reasonCode'],true,'system');
 action('connection',['retry']);
 register('connection','operation_result',['initialize','disconnect','recover','page_error'],'client','required',['durationMs','reasonCode','trigger'],true,'system');
-action('analytics',['range','filter','expand','metric','select_day','details','refresh','retry','paginate']);
+action('analytics',['range','filter','expand','metric','mode','select_day','details','refresh','retry','paginate']);
 register('conversation','operation_result',['run'],'server','required',['durationMs','queueWaitMs','firstOutputMs','engine','reasonCode','trigger'],true);
 // Closing a mounted feature can also follow navigation or another action. Keep the observation,
 // but do not inflate explicit user-operation totals with lifecycle cleanup.
@@ -312,9 +331,15 @@ export function validateAnalyticsRegistration(
   if (props.result !== undefined && entry.outcome === 'required' && !entry.results.includes(props.result)) issue('结果不适用于该操作','result');
   if (entry.outcome === 'none' && props.result !== undefined) issue('意图或功能访问不能声明结果','result');
   if (props.result === 'success' && props.reasonCode !== undefined) issue('成功结果不能携带失败原因','reasonCode');
-  if (entry.correlated && !props.operationId) issue('此操作必须携带关联标识','operationId');
+  // Older chat builds report only the composer stop intent.
+  const legacyStop = entry.id === 'composer.stop' && (props.surface === 'composer' || props.surface === 'button');
+  if (entry.correlated && !props.operationId && !legacyStop) issue('此操作必须携带关联标识','operationId');
   if (!entry.correlated && props.operationId !== undefined) issue('此操作不需要关联标识','operationId');
   if (entry.toolIds && (!props.toolId || !entry.toolIds.includes(props.toolId))) issue('操作不适用于该工具或缺少工具标识','toolId');
+  if (props.feature === 'tools' && props.action === 'mode' &&
+      (!props.toolId || !props.mode || !toolModes[props.toolId]?.includes(props.mode))) issue('模式不适用于该工具','mode');
+  if (props.feature === 'tools' && props.action === 'change_theme' &&
+      !['light', 'dark', 'system'].some(mode => mode === props.mode)) issue('主题模式无效','mode');
   const allowed = new Set<string>(['feature','action','surface',...(entry.outcome === 'required' ? ['result'] : []),...(entry.correlated ? ['operationId'] : []),...entry.attributes]);
   for (const key of Object.keys(props)) if (!allowed.has(key)) issue('此事件不允许该属性',key);
   if (props.operationId !== undefined && (typeof props.operationId !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(props.operationId))) issue('关联标识必须为UUID','operationId');

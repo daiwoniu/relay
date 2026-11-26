@@ -17,7 +17,7 @@ test('独立预览使用完整视口，保留原样式且不注入主题和高�
   assert.doesNotMatch(document, /relay-preview-measure|postMessage|color-scheme|font-size-base/);
 });
 
-test('独立预览默认运行脚本，保留同源隔离和网络限制', () => {
+test('独立预览沿用文件脚本授权，保留同源隔离和网络限制', () => {
   const content = '<script>window.test = 1</script><meta http-equiv="refresh" content="0;url=https://example.com">';
   const wrapper = buildStandaloneHtmlPreview(content, 'x');
   const document = innerDocument(wrapper);
@@ -25,8 +25,13 @@ test('独立预览默认运行脚本，保留同源隔离和网络限制', () =>
   assert.doesNotMatch(wrapper, /allow-same-origin/);
   assert.match(document, /default-src 'none'/);
   assert.doesNotMatch(document, /http-equiv="refresh"/);
-  assert.match(document, /script-src 'unsafe-inline'/);
-  assert.doesNotMatch(document, /script-src 'nonce-/);
+  const nonce = document.match(/script-src 'nonce-([a-f0-9]+)'/)?.[1];
+  assert.ok(nonce);
+  assert.match(document, new RegExp(`<script nonce="${nonce}">[^<]+viz-carousel`));
+  assert.doesNotMatch(document, /script-src[^;]*'unsafe-inline'/);
+  const authorized = innerDocument(buildStandaloneHtmlPreview(content, 'x', true));
+  assert.match(authorized, /script-src 'unsafe-inline'/);
+  assert.doesNotMatch(authorized, /script-src 'nonce-/);
 });
 
 test('标题和 srcdoc 无法逃逸到外层文档', () => {

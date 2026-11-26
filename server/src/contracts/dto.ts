@@ -284,6 +284,7 @@ export const SessionDtoSchema = z.object({
   }).strict().nullable().optional(),
   pending_action_kind: z.enum(['approval', 'input', 'mixed']).nullable().optional(),
   execution_stage: z.enum(['accepted', 'started', 'responding']).nullable().optional(),
+  active_attempt_id: z.string().nullable().optional(),
   engine_preferences: EnginePreferencesDtoSchema,
   message_count: z.number().int().nonnegative().optional(),
   assistant_message_count: z.number().int().nonnegative().optional(),
@@ -1582,6 +1583,7 @@ export const WorkspaceConsoleTaskDtoSchema = z.object({
   id: z.string().min(1), title: z.string().nullable(), taskPath: z.string().nullable(), taskDocumentPath: z.string().nullable(), status: z.string().nullable(),
   description: z.string().max(240).nullable().optional(),
   taskPlanPath: z.string().nullable().optional(),
+  // Accept older persisted dashboard snapshots. Fresh projections no longer read directory mtime.
   taskDirectoryUpdatedAt:z.string().datetime({offset:true}).nullable().optional(),
   feishuPrimaryWorkItemId: z.string().regex(/^[1-9]\d*$/).nullable().optional(),
   canaryApplicationIds: z.array(z.string().regex(/^[1-9]\d*$/)).optional(),
@@ -1600,7 +1602,7 @@ export const WorkspaceConsoleRunDtoSchema = z.object({
     verified: z.boolean().nullable().optional(), preflightPassed: z.boolean().nullable().optional(), businessWrites: z.number().nonnegative().nullable().optional(), formalSpWrites: z.number().nonnegative().nullable().optional(), phase: z.string().nullable().optional(),
   }).strict().nullable().optional(),
   runId: z.string(), status: z.string(), taskId: z.string().nullable(), source: z.string(), mode: z.string().nullable(), target: z.string().nullable(),
-  startedAt: z.string().nullable(), finishedAt: z.string().nullable(), durationSeconds: z.number().nonnegative().nullable(), exitCode: z.number().int().nullable(),
+  createdAt: z.string().nullable().optional(), startedAt: z.string().nullable(), finishedAt: z.string().nullable(), durationSeconds: z.number().nonnegative().nullable(), exitCode: z.number().int().nullable(),
   committed: z.boolean().nullable(), insertedRows: z.number().int().nonnegative().nullable(), updatedRows: z.number().int().nonnegative().nullable(), summary: z.string(), evidenceFiles: z.array(z.string()),
   verification: z.object({ rowCount: z.number().int().nonnegative().nullable(), invalidDataStatusCount: z.number().int().nonnegative().nullable() }).strict().nullable(),
   executionLocation: z.enum(['local', 'remote']).nullable().optional(),
@@ -1635,7 +1637,8 @@ export const WorkspaceConsoleResponsibilityDtoSchema = z.object({
     myRoleKeys: z.array(z.string().min(1)).optional(), baseOwnerIsMe: z.boolean().optional(),
     fallbackContact: z.object({ role: z.enum(['reporter', 'creator']), names: z.array(z.string().min(1)).min(1) }).strict().optional(),
     updatedAt: z.string().datetime({ offset: true }).nullable().optional(),
-    personalSubtasks: z.array(z.object({ id: z.string(), name: z.string(), passed: z.boolean() }).strict()),
+    personalSubtasks: z.array(z.object({ id: z.string(), name: z.string(), passed: z.boolean(),
+      updatedAt: z.string().nullable().optional(), finishedAt: z.string().nullable().optional() }).strict()),
     currentNodes: z.array(z.string()), version: z.string().nullable(), url: z.string().url().nullable(), finishedAt:z.string().datetime({offset:true}).nullable().optional(),
     localTaskIds: z.array(z.string()), linkedStoryIds: z.array(z.string().regex(/^[1-9]\d*$/)).optional(),
   }).strict()),
@@ -1683,6 +1686,7 @@ export const WorkspaceConsoleSessionCandidateDtoSchema = z.object({
 }).strict();
 export const WorkspaceConsoleDashboardDtoSchema = z.object({
   workspaceId: z.string().min(1).max(128).optional(),
+  runTimeVersion: z.literal(1).optional(),
   workspacePath: z.string(), capturedAt: z.number().int().nonnegative(), registryGeneratedAt: z.string().nullable(),
   counts: z.object({ total: z.number().int().nonnegative(), completed: z.number().int().nonnegative(), active: z.number().int().nonnegative(), runs: z.number().int().nonnegative(), sessions: z.number().int().nonnegative() }).strict(),
   tasks: z.array(WorkspaceConsoleTaskDtoSchema.extend({ runIds: z.array(z.string()), sessionIds: z.array(z.string()), observedDurationSeconds: z.number().int().nonnegative().nullable(), activityEvidence: z.object({state:z.enum(['complete','active','uncertain','stale','unavailable']),incomplete:z.boolean()}).strict().optional() }).strict()),

@@ -54,13 +54,20 @@ export function source(db:DB,job:Pick<InteractionResponseJob,'sessionId'|'attemp
         AND o.scope_session_id=s.id AND json_extract(o.result_json,'$.attemptId')=s.active_attempt_id AND json_extract(o.result_json,'$.requested')=1)`,
     [job.sessionId,job.attemptId,job.engineId,job.leaseToken]);
 }
-export function prepareInteractionResponse(db:DB,actor:AccessActor,jobId:string,input:CoreCommandInputs['interaction.prepareResponse'],leaseToken:string):InteractionResponseJob{
+export function prepareInteractionResponse(db:DB,actor:AccessActor,jobId:string,input:CoreCommandInputs['interaction.prepareResponse'],leaseToken:string,
+  authorization:'manual-review'|'runtime-trust'):InteractionResponseJob{
   // A recovered request is not permission to retransmit a response whose transport outcome is unknown.
   if(db.get("SELECT 1 FROM _relay_interaction_responses WHERE session_id=? AND phase='prepared' LIMIT 1",[input.sessionId]))deny('CONFLICT');
   const session=db.get('SELECT engine FROM sessions WHERE id=?',[input.sessionId]);if(!session)deny('CONFLICT');
   const current=source(db,{...input,engineId:session.engine,leaseToken});if(!current)deny('CONFLICT');
   if(current.owner_user_id!==actor.id&&actor.role!=='admin')deny('FORBIDDEN');
-  if(isFeishuExecutionActor(current.owner_user_id)&&!canReviewFeishuRelayTurn(db,actor.id,current.owner_user_id,input.sessionId,input.attemptId))deny('FORBIDDEN');
+  if(isFeishuExecutionActor(current.owner_user_id)){
+    // Runtime trust was checked in this transaction. A Feishu bot can use its
+    // own trust policy, while a manual response still requires a project reviewer.
+    const allowed=authorization==='runtime-trust' ? actor.id===current.owner_user_id
+      : canReviewFeishuRelayTurn(db,actor.id,current.owner_user_id,input.sessionId,input.attemptId);
+    if(!allowed)deny('FORBIDDEN');
+  }
   if(db.get("SELECT 1 FROM _relay_interaction_responses WHERE session_id=? AND attempt_id=? AND connection_id=? AND runtime_version=? AND interaction_id=? AND phase<>'rejected'",
     [input.sessionId,input.attemptId,input.connectionId,input.runtimeVersion,input.interactionId]))deny('CONFLICT');
   const job:InteractionResponseJob={...input,jobId,actorUserId:actor.id,ownerUserId:current.owner_user_id,

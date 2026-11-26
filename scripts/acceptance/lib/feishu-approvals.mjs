@@ -20,7 +20,7 @@ export function installFeishuApprovalFixture() {
   const steps = requests.map(item => ({ id: item.id, type: 'interaction', status: 'in_progress',
     details: { interactionKind: 'command_approval', title: item.title, command: item.detail } }));
   const decisions = [];
-  window.__relayFeishuApprovalFixture = { decisions };
+  window.__relayFeishuApprovalFixture = { decisions, botName: bot.name };
   const json = (data, status = 200) => new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } });
   window.fetch = async (input, init) => {
     const url = new URL(typeof input === 'string' || input instanceof URL ? input : input.url, location.origin);
@@ -59,35 +59,23 @@ export async function inspectFeishuApprovalFixture(stage) {
   const buttons = label => [...document.querySelectorAll('.feishu-detail button')].filter(button =>
     button.textContent.trim() === label && button.getBoundingClientRect().width > 0);
   if (stage === 'layout') {
-    const overview = await wait(() => document.querySelector('.feishu-view-heading') && document.querySelector('.feishu-record-overview'));
-    let folding = null;
-    if (overview) {
-      overview.querySelector('summary').click();
-      const toolbar = overview.querySelector('.feishu-toolbar');
-      const counts = overview.querySelector('.feishu-counts');
-      const hidden = await wait(() => !overview.open && !toolbar.getBoundingClientRect().height && !counts.getBoundingClientRect().height) === true;
-      const tab = label => [...document.querySelectorAll('.feishu-nav button')].find(button => button.textContent.trim() === label);
-      tab('事项').click();
-      const matterFolding = await wait(() => tab('事项').getAttribute('aria-current') === 'page'
-        && document.querySelector('.feishu-record-overview:not([open])')) !== null;
-      tab('消息').click();
-      const restored = await wait(() => tab('消息').getAttribute('aria-current') === 'page'
-        && document.querySelector('.feishu-record-overview:not([open])'));
-      folding = { messagesHidden: hidden, mattersClosed: matterFolding, messagesRestored: Boolean(restored) };
-      restored?.querySelector('summary').click();
-    }
+    const navigation = Boolean(await wait(() => window.__relayFeishuApprovalFixture?.botName
+      && document.querySelector('.feishu-header-context strong')?.textContent.trim() === window.__relayFeishuApprovalFixture.botName
+      && !document.querySelector('.feishu-header-context .feishu-connection')
+      && document.querySelector('.feishu-list-search input') && document.querySelector('.feishu-list-filters select[aria-label="会话状态"]')
+      && [...document.querySelectorAll('.feishu-nav button')].filter(button => button.textContent.trim() === '消息' || button.textContent.trim() === '事项').length === 1));
     const row = await wait(() => document.querySelector('.feishu-message-list .feishu-row'));
     row?.click();
     const groups = await wait(() => {
       const found = [...document.querySelectorAll('.feishu-detail .process-timeline details[data-interaction-id]')];
       return found.length === 3 ? found : null;
     });
-    groups?.forEach(group => group.querySelector('summary').click());
+    groups?.forEach(group => { if (!group.open) group.querySelector('summary').click(); });
     const review = await wait(() => buttons('查看待审核操作')[0]);
     review?.click();
     if (!await wait(() => buttons('允许本次')[0])) return { ready: false };
     const detail = document.querySelector('.feishu-detail');
-    return { ready: true, allow: buttons('允许本次').length, decline: buttons('拒绝').length, cancel: buttons('取消请求').length, folding,
+    return { ready: true, allow: buttons('允许本次').length, decline: buttons('拒绝').length, cancel: buttons('取消请求').length, navigation,
       overflow: detail.scrollWidth > detail.clientWidth + 1,
       inline: [...buttons('允许本次'), ...buttons('拒绝'), ...buttons('取消请求')].every(button => button.closest('details[data-interaction-id]')) };
   }
@@ -130,7 +118,7 @@ async function runScenarios({ page, runtime, config, origin, built }) {
     }
     const interaction = layout.ready ? await page.inspectFeishuApprovalFixture('decisions') : {};
     const valid = layout.allow === 1 && layout.decline === 2 && layout.cancel === 1 && interaction.remaining === 0
-      && (!built || layout.inline && layout.folding && Object.values(layout.folding).every(Boolean))
+      && (!built || layout.inline && layout.navigation)
       && JSON.stringify(interaction.decisions) === JSON.stringify([{ id: 'sample-allow', action: 'accept' }, { id: 'sample-decline', action: 'decline' }, { id: 'sample-cancel', action: 'cancel' }]);
     results.push(createScenarioResult({ id: `feishu-approval-${id}`, status: valid && !layout.overflow ? 'passed' : 'failed',
       detail: valid && !layout.overflow ? '待审核按钮与模拟提交通过，无横向溢出' : '待审核界面或模拟提交不符合预期',

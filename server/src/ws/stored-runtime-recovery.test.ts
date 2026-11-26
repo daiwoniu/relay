@@ -7,13 +7,15 @@ import { StoredRuntimeGraph } from './stored-runtime-graph.js';
 import { EngineRegistry } from '../engine/registry.js';
 import type { EngineAdapter,EngineConnectionOptions,EngineEvent } from '../engine/adapter.js';
 import { buildEngineTurnFact } from '../engine/turn-fact-builder.js';
+import { codexInteractionAdapter } from '../codex/adapter.js';
 const until=async(check:()=>boolean)=>{for(let n=0;n<400&&!check();n++)await new Promise(r=>setTimeout(r,5));assert.ok(check(),'recovery stage timed out');};
 
-for(const mode of ['running','suspended','completed','lost-terminal-projection','interrupt','stopping','stopping-completed','image-realtime','image-recovery'] as const)test(`Native cold recovery ${mode} never resends the original input`,async()=>{
+for(const mode of ['running','suspended','completed','lost-terminal-projection','interrupt','stopping','stopping-completed','image-realtime','image-recovery','early-auto-approval','waiting-request'] as const)test(`Native cold recovery ${mode} never resends the original input`,async()=>{
   const f=fixture(),sessionId=randomUUID(),attemptId=randomUUID();
   f.mutate('DELETE FROM engine_resource_leases;DELETE FROM messages;DELETE FROM sessions');
   let port=await StorageWorkerClient.open({filename:f.filename,storeId:'store',generation:1,initialize:true,defaultConcurrency:{'codex:default':1}});
-  let graph:StoredRuntimeGraph|undefined,connections=0,sends=0,cancels=0,options:EngineConnectionOptions|undefined,sequence=0;
+  let graph:StoredRuntimeGraph|undefined,connections=0,sends=0,cancels=0,responses=0,options:EngineConnectionOptions|undefined,sequence=0;
+  const live=['running','suspended','stopping','image-realtime','early-auto-approval','waiting-request'].includes(mode);
   const diagnostics:string[]=[];
   const images=()=>Array.from({length:3},(_,n)=>({id:`image-${n}`,type:'imageGeneration',status:'completed',result:'A'.repeat(4*1024*1024),savedPath:`image-${n}.png`}));
   const emit=(payload:EngineEvent,source:'recovery'|'realtime')=>options!.onEvent({engineId:'codex',payload,meta:{source,sequence:++sequence,observedAt:Date.now(),externalSessionId:'external',externalTurnId:'turn'}});
@@ -35,18 +37,28 @@ for(const mode of ['running','suspended','completed','lost-terminal-projection',
     if(mode==='stopping'||mode==='stopping-completed'){
       const stop=await port.execute({...markRead(),operationId:'stop-before-restart',command:{name:'turn.requestStop',input:{sessionId,expectedAttemptId:attemptId}}});assert.equal(stop.state,'committed');
     }
+    if(mode==='early-auto-approval'){
+      const trust=await port.execute({...markRead(),operationId:'trust',command:{name:'approvalTrust.set',input:{scope:'session',scopeId:sessionId,mode:'trusted',duration:'one_hour'}}});
+      assert.equal(trust.state,'committed');
+    }
     await port.close();port=await StorageWorkerClient.open({filename:f.filename,storeId:'store',generation:2,defaultConcurrency:{'codex:default':1}});
     const execute=port.execute.bind(port);port.execute=(async request=>{const result=await execute(request);if(result.state==='rejected')throw Error(`${request.command.name}: ${result.code}`);return result;}) as typeof port.execute;
-    const registry=new EngineRegistry([{id:'codex',availability:{getCurrent:()=>({available:true})},recovery:{restartMode:mode==='interrupt'?'interrupt':'resume'},runtime:{connect:(input:EngineConnectionOptions)=>{
+    const registry=new EngineRegistry([{id:'codex',availability:{getCurrent:()=>({available:true})},interactions:codexInteractionAdapter,recovery:{restartMode:mode==='interrupt'?'interrupt':'resume'},runtime:{connect:(input:EngineConnectionOptions)=>{
       connections++;options=input;
       assert.equal(input.recoverTurnId,'turn');assert.equal(input.externalSessionId,'external');
-      void Promise.resolve().then(async()=>{await input.onSessionReady('external');emit({type:'recovery_snapshot',turnId:'turn',status:mode==='running'||mode==='suspended'||mode==='stopping'||mode==='image-realtime'?'inProgress':'completed',content:mode==='running'||mode==='suspended'||mode==='stopping'||mode==='image-realtime'?'':'recovered answer',items:mode==='image-recovery'?images():[],waitingOnInteraction:false},'recovery');});
-      return{send:()=>{sends++;throw Error('recovery sent input');},cancel:async()=>{cancels++;emit({type:'error',diagnostic:{code:'CODEX_TURN_INTERRUPTED',phase:'send',retryable:false,userMessage:'synthetic interruption'}},'realtime');},respondToInteraction:()=>{},close:()=>input.onClosed()};
+      void Promise.resolve().then(async()=>{
+        await input.onSessionReady('external');
+        if(mode==='early-auto-approval')emit({type:'server_request',requestId:1,method:'execCommandApproval',params:{}},'realtime');
+        emit({type:'recovery_snapshot',turnId:'turn',status:live?'inProgress':'completed',content:live?'':'recovered answer',
+          items:mode==='image-recovery'?images():[],waitingOnInteraction:mode==='early-auto-approval'||mode==='waiting-request'},'recovery');
+      });
+      return{send:()=>{sends++;throw Error('recovery sent input');},cancel:async()=>{cancels++;emit({type:'error',diagnostic:{code:'CODEX_TURN_INTERRUPTED',phase:'send',retryable:false,userMessage:'synthetic interruption'}},'realtime');},respondToInteraction:()=>{responses++;},close:()=>input.onClosed()};
     }}} as unknown as EngineAdapter]);
     graph=new StoredRuntimeGraph({port,storeId:'store',generation:2,registry,assertExclusiveWriter:async()=>{},collectFileChanges:async()=>mode.startsWith('image-')?{changedFiles:[{path:'image-0.png',changeType:'added'}]}:{},attachmentAvailability:()=>false,resolveResource:()=>({label:'Synthetic',defaultMaxActiveTurns:1}),diagnostic:code=>diagnostics.push(code)});
     const result=await graph.restoreStartup();assert.equal(result.restored,1);assert.equal(sends,0);
-    if(mode==='running'||mode==='suspended'||mode==='image-realtime'){
-      assert.equal(f.scalar(`SELECT status FROM sessions WHERE id='${sessionId}'`),'processing');
+    if(live&&mode!=='stopping'){
+      assert.equal(f.scalar(`SELECT status FROM sessions WHERE id='${sessionId}'`),mode==='waiting-request'?'awaiting_action':'processing');
+      assert.equal(responses,mode==='early-auto-approval'?1:0);
       assert.equal(graph.runtimes.get(sessionId)!.isRecovering,false);assert.equal(f.scalar(`SELECT count(*) FROM engine_resource_leases WHERE session_id='${sessionId}'`),1);
       if(mode==='suspended'){
         const previous=options!;await graph.suspend();

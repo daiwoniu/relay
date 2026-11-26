@@ -4,9 +4,14 @@ const VISUALIZATION_CDN_ORIGINS = [
   'https://cdn.jsdelivr.net',
 ].join(' ');
 
+const VISUALIZE_COMPONENT_SCRIPTS = [
+  'https://persistent.oaistatic.com/plugins/visualize/charts/',
+  'https://persistent.oaistatic.com/plugins/visualize/widgets/',
+].join(' ');
+
 const TRUSTED_VISUALIZATION_CSP = [
   "default-src 'none'",
-  `script-src 'unsafe-inline' 'unsafe-eval' ${VISUALIZATION_CDN_ORIGINS}`,
+  `script-src 'unsafe-inline' 'unsafe-eval' ${VISUALIZATION_CDN_ORIGINS} ${VISUALIZE_COMPONENT_SCRIPTS}`,
   `style-src 'unsafe-inline' ${VISUALIZATION_CDN_ORIGINS}`,
   `img-src data: blob: ${VISUALIZATION_CDN_ORIGINS}`,
   `font-src data: ${VISUALIZATION_CDN_ORIGINS}`,
@@ -110,18 +115,61 @@ function buildPreviewCsp(nonce: string, allowUserScripts: boolean): string {
   ].join('; ');
 }
 
-function buildSecurityHead(
+function installPreviewCarousels() {
+  for (const carousel of document.querySelectorAll<HTMLElement>('.viz-carousel')) {
+    if (carousel.querySelector(':scope > .viz-carousel-controls')) continue;
+    const panels = Array.from(carousel.querySelectorAll<HTMLElement>(':scope > [data-variant]'));
+    if (!panels.length) continue;
+
+    let index = panels.findIndex((panel) => !panel.hidden);
+    if (index < 0) index = 0;
+    const status = document.createElement('span');
+    status.setAttribute('aria-live', 'polite');
+    const select = (position: number) => {
+      index = (position + panels.length) % panels.length;
+      panels.forEach((panel, panelIndex) => {
+        panel.hidden = panelIndex !== index;
+      });
+      const variant = panels[index].dataset.variant ?? '';
+      carousel.dataset.activeVariant = variant;
+      status.textContent = `${index + 1} / ${panels.length}${variant ? ` · ${variant}` : ''}`;
+    };
+    select(index);
+    if (panels.length === 1) continue;
+
+    const previous = document.createElement('button');
+    previous.type = 'button';
+    previous.textContent = carousel.dataset.previousLabel || '上一个方案';
+    previous.addEventListener('click', () => select(index - 1));
+    const next = document.createElement('button');
+    next.type = 'button';
+    next.textContent = carousel.dataset.nextLabel || '下一个方案';
+    next.addEventListener('click', () => select(index + 1));
+
+    const controls = document.createElement('div');
+    controls.className = 'viz-carousel-controls';
+    controls.setAttribute('data-relay-carousel-controls', '');
+    controls.append(previous, status, next);
+    carousel.prepend(controls);
+  }
+}
+
+function buildPanelPreviewBridge(
   themeVariables: VisualizationThemeVariables,
-  nonce: string,
   allowUserScripts: boolean,
-): string {
+) {
   const themeCss = serializeThemeVariables(themeVariables);
   const hostCss = `:root{${themeCss};color-scheme:light dark}html,body{margin:0;min-width:0;background:transparent;color:var(--foreground);font-size:var(--font-size-base);overflow-x:hidden}*{box-sizing:border-box}body{width:100%}`;
   const nonAnchorClick = allowUserScripts ? 'return' : 'event.preventDefault();return';
   const anchorBridge = `document.addEventListener('click',(event)=>{const anchor=event.target instanceof Element?event.target.closest('a[href]'):null;if(!anchor)return;const href=anchor.getAttribute('href')||'';if(!href.startsWith('#')){${nonAnchorClick}}queueMicrotask(()=>{if(event.defaultPrevented)return;let fragment='';try{fragment=decodeURIComponent(href.slice(1))}catch{fragment=href.slice(1)}const target=fragment?(document.getElementById(fragment)||document.getElementsByName(fragment)[0]):document.body;if(!target)return;const top=Math.max(0,Math.ceil(target.getBoundingClientRect().top+window.scrollY));parent.postMessage({type:${JSON.stringify(HTML_PREVIEW_ANCHOR_MESSAGE)},top},'*')})},true);`;
   const bridge = `(()=>{const type=${JSON.stringify(HTML_PREVIEW_HEIGHT_MESSAGE)};let last=0;const measure=document.createElement('div');measure.id='relay-preview-measure';measure.setAttribute('aria-hidden','true');measure.style.cssText='clear:both;width:0;height:0;margin:0;padding:0;border:0';const start=()=>{const body=document.body;if(!body)return;if(!measure.isConnected)body.appendChild(measure);const report=()=>{let bottom=Math.max(body.offsetHeight,measure.offsetTop+measure.offsetHeight);for(const element of body.querySelectorAll('*')){if(element===measure)continue;const rect=element.getBoundingClientRect();if(Number.isFinite(rect.bottom))bottom=Math.max(bottom,rect.bottom+window.scrollY)}const height=Math.ceil(bottom);if(height>0&&height!==last){last=height;parent.postMessage({type,height},'*')}};const schedule=()=>requestAnimationFrame(report);const resize=new ResizeObserver(schedule);resize.observe(body);const mutations=new MutationObserver(schedule);mutations.observe(body,{subtree:true,childList:true,attributes:true,characterData:true});addEventListener('load',schedule,true);schedule()};if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start,{once:true});else start();${anchorBridge}})();`;
-  return `<meta http-equiv="Content-Security-Policy" content="${buildPreviewCsp(nonce, allowUserScripts)}"><meta name="referrer" content="no-referrer"><style>${hostCss}</style><script nonce="${nonce}">${bridge}</script>`;
+  return { hostCss, bridge };
 }
+
+const PREVIEW_CAROUSEL_CSS = `
+  .viz-carousel>[data-variant][hidden]{display:none!important}
+  [data-relay-carousel-controls]{display:flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:.5rem;padding:.5rem}
+  [data-relay-carousel-controls]>button{font:inherit;color:inherit;background:var(--card,Canvas);border:1px solid var(--border,currentColor);border-radius:.375rem;padding:.25rem .5rem;cursor:pointer}`;
 
 function removeDocumentNavigationMetadata(content: string): string {
   return content.replace(/<meta\b(?=[^>]*\bhttp-equiv\s*=\s*(["'])?refresh\1?)[^>]*>/gi, '');
@@ -135,9 +183,11 @@ export function buildSandboxedHtmlDocument(
   const nonce = normalizeNonce(options.nonce);
   const allowUserScripts = options.allowUserScripts === true;
   const sanitizedContent = removeDocumentNavigationMetadata(content);
-  const securityHead = options.standalone
-    ? `<meta http-equiv="Content-Security-Policy" content="${buildPreviewCsp(nonce, allowUserScripts)}"><meta name="referrer" content="no-referrer">`
-    : buildSecurityHead(themeVariables, nonce, allowUserScripts);
+  const { hostCss, bridge } = options.standalone
+    ? { hostCss: '', bridge: '' }
+    : buildPanelPreviewBridge(themeVariables, allowUserScripts);
+  const carousels = `document.addEventListener('DOMContentLoaded',(${installPreviewCarousels.toString()}),{once:true});`;
+  const securityHead = `<meta http-equiv="Content-Security-Policy" content="${buildPreviewCsp(nonce, allowUserScripts)}"><meta name="referrer" content="no-referrer"><style>${hostCss}${PREVIEW_CAROUSEL_CSS}</style><script nonce="${nonce}">${bridge}${carousels}</script>`;
   if (/<head(?:\s[^>]*)?>/i.test(sanitizedContent)) {
     return sanitizedContent.replace(/<head(?:\s[^>]*)?>/i, (head) => `${head}${securityHead}`);
   }
@@ -153,7 +203,7 @@ function escapeHtmlAttribute(value: string): string {
 
 // Keep untrusted HTML in an opaque origin even when opened outside Relay.
 // A viewport-sized frame preserves vh/vw, media queries and native scrolling.
-export function buildStandaloneHtmlPreview(content: string, title: string): string {
-  const document = buildSandboxedHtmlDocument(content, {}, { standalone: true, allowUserScripts: true });
+export function buildStandaloneHtmlPreview(content: string, title: string, allowUserScripts = false): string {
+  const document = buildSandboxedHtmlDocument(content, {}, { standalone: true, allowUserScripts });
   return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="referrer" content="no-referrer"><title>${escapeHtmlAttribute(title)}</title><style>html,body{margin:0;width:100%;height:100%;overflow:hidden}iframe{display:block;width:100%;height:100%;border:0}</style></head><body><iframe title="HTML 预览" sandbox="allow-scripts" referrerpolicy="no-referrer" srcdoc="${escapeHtmlAttribute(document)}"></iframe></body></html>`;
 }

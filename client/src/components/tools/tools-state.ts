@@ -39,12 +39,8 @@ export function toggleToolPin(state: ToolsState, id: ToolId): ToolsState {
   return { ...state, pinned: state.pinned.includes(id) ? state.pinned.filter((value) => value !== id) : [...state.pinned, id] };
 }
 
-export function frequentTools(state: ToolsState): ToolId[] {
-  return TOOL_IDS.filter((id) => (state.usage[id]?.count ?? 0) > 0).sort((a, b) =>
-    (state.usage[b]?.count ?? 0) - (state.usage[a]?.count ?? 0)
-    || (state.usage[b]?.lastUsed ?? 0) - (state.usage[a]?.lastUsed ?? 0));
-}
-
-export function toolOrder(filter: 'all' | 'frequent', usageAtLoad: ToolsState['usage']): ToolId[] {
-  return filter === 'all' ? [...TOOL_IDS] : frequentTools({ pinned: [], usage: usageAtLoad });
+export function frequentTools(usage: ToolsState['usage']): ToolId[] {
+  return TOOL_IDS.filter((id) => (usage[id]?.count ?? 0) > 0).sort((a, b) =>
+    (usage[b]?.count ?? 0) - (usage[a]?.count ?? 0)
+    || (usage[b]?.lastUsed ?? 0) - (usage[a]?.lastUsed ?? 0));
 }

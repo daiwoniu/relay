@@ -1,9 +1,9 @@
 import { basename, dirname, join, normalize } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { feishuApprovalSetting, feishuConcurrencySchema, feishuContextTaskIdsSchema, feishuContextTaskLimit, feishuConversationOverride,
+import { feishuApprovalSetting, feishuConcurrencySchema, feishuContextTaskIdsSchema, feishuContextTaskLimit, feishuConversationFilters, feishuConversationOverride,
   feishuBindingId, feishuDefaultConcurrency, feishuEnginePreferences, feishuInboundSchema, feishuModelIdSchema, feishuTaskIdSchema,
-  feishuOverrideFor, privateContextCommand } from '../integrations/feishu-im/inbound.js';
+  feishuOverrideFor, feishuStatsBuckets, feishuStatsDimensions, feishuStatsMetrics, privateContextCommand } from '../integrations/feishu-im/inbound.js';
 import { canonicalJson, StorageContractError } from './command-boundary.js';
 import type { nativeQueries } from './native-queries.js';
 import { executeResourceWrite } from './native-resource-writes.js';
@@ -18,6 +18,15 @@ import { uploadMessageDirectory } from '../uploads/upload-promotion-contract.js'
 import { feishuHistoryExcerptSize, feishuHistoryPageSize, feishuSummaryFactsSchema } from '../integrations/feishu-im/history-summary.js';
 import { feishuSummaryReplyLine } from '../integrations/feishu-im/reply-execution.js';
 import { clarificationCandidate, clarificationLabels, feishuCardChoice, feishuClarificationCard, feishuContextCard, splitFeishuReplyBody, type FeishuContextCard } from '../integrations/feishu-im/context-card.js';
+import { feishuReplyFile, maxFeishuReplyFiles } from '../integrations/feishu-im/reply-files.js';
+
+export const FEISHU_IM_REPLY_FILES_SQL = `CREATE TABLE IF NOT EXISTS feishu_im_reply_files (
+  id TEXT PRIMARY KEY, outbox_id TEXT NOT NULL REFERENCES feishu_im_outbox(id) ON DELETE CASCADE,
+  file_json TEXT NOT NULL, message_id TEXT, submit_started INTEGER NOT NULL DEFAULT 0, state TEXT NOT NULL DEFAULT 'ready'
+    CHECK(state IN ('ready','queued','sending','sent','failed','unknown','unavailable')), updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS feishu_im_reply_files_pending ON feishu_im_reply_files(updated_at) WHERE state='queued';
+CREATE INDEX IF NOT EXISTS feishu_im_reply_files_parent ON feishu_im_reply_files(outbox_id);`;
 
 export const FEISHU_IM_BINDINGS_SQL = `CREATE TABLE feishu_im_bindings (
   bot_id TEXT PRIMARY KEY, tenant_key TEXT NOT NULL
@@ -84,6 +93,7 @@ CREATE TABLE feishu_im_outbox (
   created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, attempts INTEGER NOT NULL DEFAULT 0,
   message_id TEXT, error_code TEXT, retry_analytics_operation TEXT, retry_analytics_actor TEXT
 );
+${FEISHU_IM_REPLY_FILES_SQL}
 CREATE TABLE feishu_im_admin_actions (
   sequence INTEGER PRIMARY KEY, user_id TEXT NOT NULL, action TEXT NOT NULL, target_id TEXT NOT NULL, created_at INTEGER NOT NULL
 );`;
@@ -191,7 +201,8 @@ const storedInbound = feishuInboundSchema.extend({
   relayTurn: relayTurnSchema.optional(),
   conversationReset: relayTurnSchema.pick({ sessionId: true, conversation: true, conversationOwnerId: true, conversationThreadId: true }).optional(),
   conversationHandoff: z.string().max(3000).optional(),
-  conversation: z.object({ model: feishuModelIdSchema, called: z.boolean(), usage: feishuConversationUsage }).strict().optional(),
+  conversation: z.object({ model: feishuModelIdSchema, actualModel: feishuModelIdSchema.optional(),
+    called: z.boolean(), usage: feishuConversationUsage }).strict().optional(),
 });
 
 function feishuReplyTarget(inbound: Pick<z.output<typeof storedInbound>, 'messageId' | 'cardAction' | 'threadId'>) {
@@ -452,14 +463,15 @@ export function canDispatchFeishuRelayTurn(db: Db, claim: QueueClaim): boolean {
 function activeRelayConfiguration(db: Db, actorId: string, sessionId: string, attemptId: string) {
   const botId = feishuExecutionBinding(actorId);
   if (!botId) return null;
-  const row = db.get(`SELECT i.data_json,i.project_id,m.id AS messageId FROM feishu_im_inbox i
+  const row = db.get(`SELECT i.data_json,i.project_id,i.tenant_key,m.id AS messageId FROM feishu_im_inbox i
     JOIN messages m ON m.id=json_extract(i.data_json,'$.relayTurn.messageId')
     WHERE i.bot_id=? AND i.handled_at IS NULL AND m.session_id=? AND m.turn_id=? AND m.role='user'`,
   [botId, sessionId, attemptId]);
   if (!row) return null;
   const inbound = storedInbound.parse(JSON.parse(row.data_json));
   const turn = inbound.relayTurn;
-  if (!turn?.configurationId || turn.actorId !== actorId || turn.sessionId !== sessionId || turn.messageId !== row.messageId
+  if (inbound.botId !== botId || inbound.tenantKey !== row.tenant_key || inbound.projectId !== row.project_id
+    || !turn?.configurationId || turn.actorId !== actorId || turn.sessionId !== sessionId || turn.messageId !== row.messageId
     || !matchesProject(db, row.project_id, turn.workspacePath)) return null;
   const config = enabledRelayBinding(db, turn.configurationId, botId, row.project_id, turn.workspacePath);
   return config ? { inbound, config } : null;
@@ -644,6 +656,13 @@ const workSchema = z.discriminatedUnion('action', [
     drafts: relayTurnSchema.shape.attachmentDrafts.unwrap() }).strict(),
   z.object({ action: z.literal('cardAction'), ...scope, workspacePath, projectId: id, id,
     choice: feishuCardChoice, chatId: id, messageId: id, senderId: id }).strict(),
+  z.object({ action: z.literal('stageReplyFiles'), ...scope, id, files: z.array(feishuReplyFile).min(1).max(maxFeishuReplyFiles) }).strict(),
+  z.object({ action: z.literal('requestReplyFile'), ...scope, workspacePath, projectId: id, id: z.string().uuid(),
+    chatId: id, messageId: id, senderId: id }).strict(),
+  z.object({ action: z.literal('claimReplyFile'), ...scope, workspacePath, projectId: id }).strict(),
+  z.object({ action: z.literal('beginReplyFileSend'), ...scope, workspacePath, projectId: id, id: z.string().uuid() }).strict(),
+  z.object({ action: z.literal('settleReplyFile'), ...scope, id: z.string().uuid(),
+    state: z.enum(['sent', 'failed', 'unknown', 'unavailable']), messageId: id.nullable() }).strict(),
   z.object({ action: z.literal('prepare'), ...scope, sequence, workspacePath: z.string().min(1).max(2048),
     response: z.object({ body: z.string().min(1).max(12000), category: id, taskId: feishuTaskIdSchema.optional(),
       executionLine: executionLineSchema.optional(),
@@ -681,6 +700,9 @@ function retryDeliveries(rows: Array<Record<string, unknown>>, state: RetryDeliv
   return deliveries.length ? { kind: 'retryDeliveries', deliveries } : null;
 }
 export type FeishuWorkResult = FeishuPending | FeishuOutgoing | { kind: 'summaryStarted' }
+  | { kind: 'replyFilesStaged' } | { kind: 'replyFileSendStarted' }
+  | { kind: 'replyFileRequest'; state: 'queued' | 'sending' | 'sent' | 'unknown' | 'unavailable' }
+  | { kind: 'replyFileDelivery'; file: z.output<typeof feishuReplyFile>; replyTo: string; inThread: boolean }
   | { kind: 'receiptCompletion'; messageId: string }
   | { kind: 'approvalNotice'; id: string; chatId: string; replyTo: string; inThread: boolean }
   | { kind: 'summaryReplies'; replies: { messageId: string; text: string }[] }
@@ -843,6 +865,68 @@ export function runFeishuWork(db: Db, raw: FeishuWork): FeishuWorkResult {
         contextCompactionCount: Number(answer.context_compaction_count),
         ...(modelInfo?.engineId === turn.engineId ? { modelInfo } : {}),
         usage: tokens ? { input_tokens: tokens.inputTokens, output_tokens: tokens.outputTokens, total_tokens: tokens.totalTokens } : null };
+    }
+    case 'stageReplyFiles': {
+      if (!db.get(`SELECT 1 FROM feishu_im_outbox WHERE bot_id=? AND tenant_key=? AND id=? AND state='sending'`, [...key, input.id])) return null;
+      db.run(`DELETE FROM feishu_im_reply_files WHERE outbox_id=? AND state='ready'`, [input.id]);
+      for (const file of input.files) db.run(`INSERT INTO feishu_im_reply_files(id,outbox_id,file_json,updated_at) VALUES(?,?,?,?)`,
+        [file.id, input.id, JSON.stringify(file), now]);
+      return { kind: 'replyFilesStaged' };
+    }
+    case 'requestReplyFile': {
+      const row = db.get(`SELECT f.state,i.data_json FROM feishu_im_reply_files f
+        JOIN feishu_im_outbox o ON o.id=f.outbox_id JOIN feishu_im_inbox i ON i.sequence=o.inbox_sequence
+        WHERE o.bot_id=? AND o.tenant_key=? AND f.id=? AND o.chat_id=? AND o.message_id=? AND o.state='sent' AND i.project_id=?
+        AND NOT EXISTS (SELECT 1 FROM feishu_im_groups g
+          WHERE g.bot_id=o.bot_id AND g.tenant_key=o.tenant_key AND g.chat_id=o.chat_id AND g.joined=0)`,
+      [...key, input.id, input.chatId, input.messageId, input.projectId]);
+      if (!row || !matchesProject(db, input.projectId, input.workspacePath)) return null;
+      const inbound = storedInbound.parse(JSON.parse(row.data_json));
+      if (inbound.chatType === 'p2p' && (inbound.senderId !== input.senderId || !senderCanUseBot(db, inbound))) return null;
+      const state = row.state;
+      if (state === 'queued' || state === 'sending' || state === 'sent' || state === 'unknown' || state === 'unavailable') {
+        return { kind: 'replyFileRequest', state };
+      }
+      db.run(`UPDATE feishu_im_reply_files SET state='queued',updated_at=? WHERE id=? AND state IN ('ready','failed')`, [now, input.id]);
+      return { kind: 'replyFileRequest', state: 'queued' };
+    }
+    case 'claimReplyFile': {
+      if (!matchesProject(db, input.projectId, input.workspacePath)) return null;
+      const row = db.get(`SELECT f.id,f.file_json,o.message_id,o.in_thread,i.data_json,
+          EXISTS (SELECT 1 FROM feishu_im_groups g WHERE g.bot_id=o.bot_id AND g.tenant_key=o.tenant_key
+            AND g.chat_id=o.chat_id AND g.joined=0) AS left_chat
+        FROM feishu_im_reply_files f JOIN feishu_im_outbox o ON o.id=f.outbox_id JOIN feishu_im_inbox i ON i.sequence=o.inbox_sequence
+        WHERE o.bot_id=? AND o.tenant_key=? AND i.project_id=? AND o.state='sent' AND o.message_id IS NOT NULL
+        AND f.state='queued' ORDER BY f.updated_at,f.id LIMIT 1`, [...key, input.projectId]);
+      if (!row) return null;
+      const inbound = storedInbound.parse(JSON.parse(row.data_json));
+      if (row.left_chat || (inbound.chatType === 'p2p' && !senderCanUseBot(db, inbound))) {
+        db.run(`UPDATE feishu_im_reply_files SET state='unavailable',updated_at=? WHERE id=?`, [now, row.id]);
+        return null;
+      }
+      db.run(`UPDATE feishu_im_reply_files SET state='sending',submit_started=0,updated_at=? WHERE id=?`, [now, row.id]);
+      return { kind: 'replyFileDelivery', file: feishuReplyFile.parse(JSON.parse(row.file_json)), replyTo: row.message_id, inThread: row.in_thread === 1 };
+    }
+    case 'beginReplyFileSend': {
+      const row = db.get(`SELECT i.data_json,EXISTS (SELECT 1 FROM feishu_im_groups g
+          WHERE g.bot_id=o.bot_id AND g.tenant_key=o.tenant_key AND g.chat_id=o.chat_id AND g.joined=0) AS left_chat
+        FROM feishu_im_reply_files f JOIN feishu_im_outbox o ON o.id=f.outbox_id JOIN feishu_im_inbox i ON i.sequence=o.inbox_sequence
+        WHERE o.bot_id=? AND o.tenant_key=? AND i.project_id=? AND o.state='sent' AND f.id=? AND f.state='sending' AND f.submit_started=0`,
+      [...key, input.projectId, input.id]);
+      if (!row) return null;
+      const inbound = storedInbound.parse(JSON.parse(row.data_json));
+      if (!matchesProject(db, input.projectId, input.workspacePath) || row.left_chat
+        || (inbound.chatType === 'p2p' && !senderCanUseBot(db, inbound))) {
+        db.run(`UPDATE feishu_im_reply_files SET state='unavailable',updated_at=? WHERE id=?`, [now, input.id]);
+        return null;
+      }
+      db.run(`UPDATE feishu_im_reply_files SET submit_started=1,updated_at=? WHERE id=?`, [now, input.id]);
+      return { kind: 'replyFileSendStarted' };
+    }
+    case 'settleReplyFile': {
+      db.run(`UPDATE feishu_im_reply_files SET state=?,message_id=?,updated_at=? WHERE id=? AND state='sending' AND outbox_id IN (
+        SELECT id FROM feishu_im_outbox WHERE bot_id=? AND tenant_key=?)`, [input.state, input.messageId, now, input.id, ...key]);
+      return null;
     }
     case 'cardAction': {
       const row = db.get(`SELECT i.sequence,i.data_json,o.updated_at FROM feishu_im_outbox o JOIN feishu_im_inbox i ON i.sequence=o.inbox_sequence
@@ -1019,6 +1103,8 @@ export function runFeishuWork(db: Db, raw: FeishuWork): FeishuWorkResult {
       return null;
     }
     case 'recover':
+      db.run(`UPDATE feishu_im_reply_files SET state=CASE submit_started WHEN 0 THEN 'queued' ELSE 'unknown' END,updated_at=? WHERE state='sending' AND outbox_id IN (
+        SELECT id FROM feishu_im_outbox WHERE bot_id=? AND tenant_key=?)`, [now, ...key]);
       return retryDeliveries(db.all(`UPDATE feishu_im_outbox SET state='unknown',updated_at=?,error_code='restart'
         WHERE bot_id=? AND tenant_key=? AND state='sending' RETURNING retry_analytics_operation,retry_analytics_actor`, [now, ...key]), 'unknown');
     case 'startSummary': {
@@ -1074,12 +1160,16 @@ export const feishuAdminSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('settingsList') }).strict(),
   z.object({ action: z.literal('settingsSave'), settings: settingsSchema }).strict(),
   z.object({ action: z.literal('settingsPause'), id: z.string().uuid(), revision: sequence }).strict(),
-  z.object({ action: z.literal('listUserAccess'), ...scope, projectId: id, before: sequence.optional() }).strict(),
+  z.object({ action: z.literal('listUserAccess'), ...scope, projectId: id, before: sequence.optional(),
+    scopes: z.array(z.object({ ...scope, projectId: id }).strict()).optional() }).strict(),
   z.object({ action: z.literal('setUserAccess'), ...scope, projectId: id, senderId: id, allowed: z.boolean() }).strict(),
   z.object({ action: z.literal('inspect'), ...scope, chatId: id.optional(), before: sequence.optional(),
-    conversationList: z.boolean().optional(),
+    scopes: z.array(z.object(scope).strict()).optional(),
+    overview: z.object({ bucket: feishuStatsBuckets, dimension: feishuStatsDimensions, metric: feishuStatsMetrics }).strict().optional(),
+    conversationList: z.boolean().optional(), requestsOnly: z.literal(true).optional(),
     conversationId: z.string().regex(/^(?:group|private:[A-Za-z0-9_-]+:\d+|(?:task|thread):[A-Za-z0-9_.-]+|native:[a-f0-9-]{36})$/).max(260).optional(),
     matterId: z.string().uuid().optional(), focusMatter: z.string().uuid().optional(), usageTrend: z.literal(true).optional(),
+    ...feishuConversationFilters,
     from: z.number().int().nonnegative(), to: z.number().int().positive() }).strict(),
   z.object({ action: z.literal('session'), ...scope, sessionId: z.string().uuid() }).strict(),
   z.object({ action: z.literal('reviewTurn'), ...scope, sequence }).strict(),
@@ -1109,7 +1199,7 @@ export interface FeishuUsageTrend {
 
 export interface FeishuAdminResult {
   projects?: { id: string; name: string }[];
-  userAccess?: { id: string; name: string | null; allowed: boolean }[];
+  userAccess?: { id: string; name: string | null; allowed: boolean; bindingId?: string }[];
   nextUser?: number | null;
   updated?: boolean;
   association?: Record<string, any> | null;
@@ -1133,6 +1223,7 @@ export interface FeishuAdminResult {
   byCategory?: Record<string, any>[];
   byDay?: Record<string, any>[];
   usageTrend?: FeishuUsageTrend;
+  overview?: ReturnType<typeof feishuOverview>;
   notices?: Record<string, any>[];
 }
 
@@ -1142,15 +1233,96 @@ const summaryTokens = "json_extract(i.summary_json,'$.usage.total_tokens')";
 const conversationUnknown = `json_extract(i.data_json,'$.conversation.called')=1 AND ${conversationTokens} IS NULL`;
 const summaryUnknown = `i.summary_started_at IS NOT NULL AND (i.summary_json IS NULL
   OR (json_extract(i.summary_json,'$.modelCalled')=1 AND ${summaryTokens} IS NULL))`;
-const inboxRangeFilter = 'i.bot_id=? AND i.tenant_key=? AND (? IS NULL OR i.chat_id=?) AND i.received_at>=? AND i.received_at<?';
 
-function usageTrend(db: Db, params: (string | number | null)[], input: { from: number; to: number }): FeishuUsageTrend {
+const scopedRows = (alias: string, fields: readonly string[]) =>
+  `(${fields.map(field => `${alias}.${field}`).join(',')}) IN (SELECT ${fields.map((_, index) =>
+    `json_extract(value,'$[${index}]')`).join(',')} FROM json_each(?))`;
+const bindingFields = ['bot_id', 'tenant_key'];
+
+type OverviewInput = NonNullable<Extract<FeishuAdminRequest, { action: 'inspect' }>['overview']>;
+type OverviewCounts = { received: number; group: number; p2p: number; failed: number; unknown: number; tokens: number; missing: number };
+
+function feishuOverview(db: Db, filter: string, params: (string | number | null)[],
+  { from, to }: { from: number; to: number }, { bucket, dimension, metric }: OverviewInput) {
+  const hourMs = 3600_000;
+  const start = new Date(bucket === 'hour' ? Math.floor(from / hourMs) * hourMs : from);
+  if (bucket !== 'hour') start.setHours(0, 0, 0, 0);
+  if (bucket === 'week') {
+    start.setDate(start.getDate() - (start.getDay() + 6) % 7);
+    start.setHours(0, 0, 0, 0);
+  }
+  const windows: [number, number][] = [];
+  while (start.getTime() < to) {
+    const at = start.getTime();
+    if (bucket === 'hour') start.setTime(at + hourMs);
+    else {
+      start.setDate(start.getDate() + (bucket === 'day' ? 1 : 7));
+      start.setHours(0, 0, 0, 0);
+    }
+    windows.push([Math.max(from, at), Math.min(to, start.getTime())]);
+  }
+  const facts = `SELECT i.received_at AS receivedAt,i.bot_id AS bindingId,i.tenant_key AS tenantKey,i.chat_id AS chatId,
+    ${chatType} AS kind,COALESCE(o.state='failed',0) AS failed,COALESCE(o.state='unknown',0) AS unknown,
+    COALESCE(${conversationTokens},0)+COALESCE(${summaryTokens},0) AS tokens,
+    (${conversationTokens} IS NOT NULL)+(${summaryTokens} IS NOT NULL) AS usageReports,
+    COALESCE((${conversationUnknown}),0)+COALESCE((${summaryUnknown}),0) AS missing
+    FROM feishu_im_inbox i LEFT JOIN feishu_im_outbox o ON o.inbox_sequence=i.sequence WHERE ${filter}`;
+  const counts = `COUNT(*) AS received,SUM(kind='group') AS "group",SUM(kind='p2p') AS p2p,
+    SUM(failed) AS failed,SUM(unknown) AS unknown,SUM(tokens) AS tokens,SUM(missing) AS missing,SUM(usageReports) AS usageReports`;
+  // Use the same time boundaries for the query, visible buckets and drilldown, including when Node's TZ differs from the host.
+  const rows = new Map(db.all(`WITH buckets AS (
+    SELECT json_extract(value,'$[0]') AS start,json_extract(value,'$[1]') AS stop FROM json_each(?)
+    ), facts AS (${facts})
+    SELECT b.start,${counts} FROM buckets b JOIN facts f ON f.receivedAt>=b.start AND f.receivedAt<b.stop GROUP BY b.start`,
+  [JSON.stringify(windows), ...params]).map(({ start, ...row }) => [Number(start), row as OverviewCounts & { usageReports: number }]));
+  const zero: OverviewCounts = { received: 0, group: 0, p2p: 0, failed: 0, unknown: 0, tokens: 0, missing: 0 };
+  const total = { ...zero };
+  const points = windows.map(([from, to]) => {
+    const point = rows.get(from) ?? zero;
+    for (const key of Object.keys(total) as (keyof OverviewCounts)[]) total[key] += point[key];
+    return { from, to, usageReports: 0, ...point };
+  });
+  const value = metric === 'anomalies' ? 'SUM(failed+unknown)' : metric === 'tokens' ? 'SUM(tokens)' : 'COUNT(*)';
+  // Prefer the actual model recorded with the reply. Older replies can still use final-answer metadata.
+  const model = `COALESCE(json_extract(i.data_json,'$.relayTurn.engineId') || ' / ' ||
+    json_extract(i.data_json,'$.conversation.actualModel'), (SELECT CASE WHEN json_extract(a.metadata,'$.modelInfo.engineId')=d.engine
+      THEN d.engine || ' / ' || json_extract(a.metadata,'$.modelInfo.effective.id') END
+    FROM messages u JOIN engine_terminal_decisions d ON d.session_id=u.session_id AND d.attempt_id=u.turn_id
+      AND d.engine=json_extract(i.data_json,'$.relayTurn.engineId') AND d.outcome='completed' AND d.projected_at IS NOT NULL
+    JOIN messages a ON a.session_id=d.session_id AND a.turn_id=COALESCE(d.external_turn_id,u.turn_id)
+      AND a.role='assistant' AND a.phase='final_answer' AND COALESCE(a.stopped,0)=0
+    WHERE u.id=json_extract(i.data_json,'$.relayTurn.messageId') AND u.session_id=json_extract(i.data_json,'$.relayTurn.sessionId')
+      AND u.role='user' ORDER BY a.created_at DESC,a.id DESC LIMIT 1))`;
+  const ranking = dimension === 'model' ? db.all(`WITH usage AS (
+    SELECT ${model} AS label,${conversationTokens} AS tokens,COALESCE((${conversationUnknown}),0) AS missing
+      FROM feishu_im_inbox i WHERE ${filter} AND (json_extract(i.data_json,'$.conversation.called')=1 OR ${conversationTokens} IS NOT NULL)
+    UNION ALL
+    SELECT 'OpenAI / ' || json_extract(i.summary_json,'$.actualModel'),${summaryTokens},COALESCE((${summaryUnknown}),0)
+      FROM feishu_im_inbox i WHERE ${filter} AND ((${summaryUnknown}) OR ${summaryTokens} IS NOT NULL)
+    ) SELECT label,COALESCE(SUM(tokens),0) AS value,SUM(missing) AS missing
+    FROM usage GROUP BY label ORDER BY value DESC,label LIMIT 15`, [...params, ...params])
+    : db.all(`WITH facts AS (${facts}), ranking AS (
+      SELECT bindingId,tenantKey,${dimension === 'robot' ? 'NULL' : 'chatId'} AS target,
+        ${value} AS value,SUM(missing) AS missing FROM facts
+      ${dimension === 'robot' ? '' : 'WHERE kind=?'} GROUP BY bindingId,tenantKey,target
+      HAVING value>0 OR (?='tokens' AND SUM(missing)>0)
+      ORDER BY value DESC,bindingId,target LIMIT 15)
+      SELECT bindingId,target AS chatId,value,missing,
+        ${dimension === 'group' ? '(SELECT name FROM feishu_im_groups g WHERE g.bot_id=ranking.bindingId AND g.tenant_key=ranking.tenantKey AND g.chat_id=ranking.target)'
+          : dimension === 'p2p' ? "(SELECT json_extract(p.data_json,'$.senderName') FROM feishu_im_inbox p WHERE p.bot_id=ranking.bindingId AND p.tenant_key=ranking.tenantKey AND p.chat_id=ranking.target AND json_type(p.data_json,'$.senderName')='text' ORDER BY p.sequence DESC LIMIT 1)"
+            : 'NULL'} AS label FROM ranking ORDER BY value DESC,bindingId,target`,
+      [...params, ...(dimension === 'robot' ? [] : [dimension]), metric]);
+  const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  return { from, to, timeZone, total, points, ranking };
+}
+
+function usageTrend(db: Db, filter: string, params: (string | number | null)[], input: { from: number; to: number }): FeishuUsageTrend {
   const bounds = db.get(`SELECT date(?/1000,'unixepoch','localtime') AS firstDay,
     date(?/1000,'unixepoch','localtime') AS lastDay`, [input.from, input.to - 1]);
   const days = db.all(`WITH usage AS (
     SELECT ${receivedDay} AS day, i.chat_id AS chat, ${conversationTokens} AS conversation_tokens,
       ${summaryTokens} AS summary_tokens, (${conversationUnknown}) AS conversation_unknown, (${summaryUnknown}) AS summary_unknown
-    FROM feishu_im_inbox i WHERE ${inboxRangeFilter}
+    FROM feishu_im_inbox i WHERE ${filter}
   ) SELECT day, chat, COALESCE(sum(conversation_tokens),0) AS conversationTokens, COALESCE(sum(summary_tokens),0) AS summaryTokens,
     count(*) FILTER (WHERE conversation_unknown) AS conversationUnknown, count(*) FILTER (WHERE summary_unknown) AS summaryUnknown
     FROM usage GROUP BY day, chat ORDER BY day, chat`, params);
@@ -1217,17 +1389,22 @@ export function runFeishuAdmin(db: Db, raw: FeishuAdminRequest, actorId: string)
   }
   const key = [input.botId, input.tenantKey];
   if (input.action === 'listUserAccess' || input.action === 'setUserAccess') {
-    if (!managesProject(db, input.projectId, actorId)) throw new StorageContractError('FORBIDDEN');
+    if (!(input.action === 'listUserAccess' && input.scopes) && !managesProject(db, input.projectId, actorId)) {
+      throw new StorageContractError('FORBIDDEN');
+    }
     const binding = [...key, input.projectId];
     if (input.action === 'listUserAccess') {
       const pageSize = 50;
-      const rows = db.all(`SELECT i.sender_id AS id,${knownSenderName} AS name,u.sender_id IS NOT NULL AS allowed,MIN(i.sequence) AS firstSequence
+      const accessScopes = input.scopes?.filter(target => managesProject(db, target.projectId, actorId));
+      const rows = db.all(`SELECT i.bot_id AS bindingId,i.sender_id AS id,${knownSenderName} AS name,u.sender_id IS NOT NULL AS allowed,MIN(i.sequence) AS firstSequence
         FROM feishu_im_inbox i LEFT JOIN feishu_im_user_access u
           ON u.bot_id=i.bot_id AND u.tenant_key=i.tenant_key AND u.project_id=i.project_id AND u.sender_id=i.sender_id
-        WHERE i.bot_id=? AND i.tenant_key=? AND i.project_id=?
-        GROUP BY i.sender_id HAVING MIN(i.sequence)<?
-        ORDER BY firstSequence DESC LIMIT ?`, [...binding, input.before ?? Number.MAX_SAFE_INTEGER, pageSize + 1]);
-      const userAccess = rows.slice(0, pageSize).map(row => ({ id: String(row.id), name: row.name ?? null, allowed: row.allowed === 1 }));
+        WHERE ${accessScopes ? scopedRows('i', [...bindingFields, 'project_id']) : 'i.bot_id=? AND i.tenant_key=? AND i.project_id=?'}
+        GROUP BY i.bot_id,i.tenant_key,i.project_id,i.sender_id HAVING MIN(i.sequence)<?
+        ORDER BY firstSequence DESC LIMIT ?`, [...(accessScopes ? [JSON.stringify(accessScopes.map(target =>
+        [target.botId, target.tenantKey, target.projectId]))] : binding), input.before ?? Number.MAX_SAFE_INTEGER, pageSize + 1]);
+      const userAccess = rows.slice(0, pageSize).map(row => ({ id: String(row.id), name: row.name ?? null, allowed: row.allowed === 1,
+        ...(accessScopes ? { bindingId: String(row.bindingId) } : {}) }));
       return { userAccess, nextUser: rows.length > pageSize ? Number(rows[pageSize - 1].firstSequence) : null };
     }
     if (!db.get('SELECT 1 FROM feishu_im_inbox WHERE bot_id=? AND tenant_key=? AND project_id=? AND sender_id=?',
@@ -1284,9 +1461,10 @@ export function runFeishuAdmin(db: Db, raw: FeishuAdminRequest, actorId: string)
     if (!row) return { reviewTurn: null };
     if (!managesProject(db, row.project_id, actorId)) throw new StorageContractError('FORBIDDEN');
     const turn = storedInbound.parse(JSON.parse(row.data_json)).relayTurn;
-    if (!turn?.configurationId || !matchesProject(db, row.project_id, turn.workspacePath)
-      || !enabledRelayBinding(db, turn.configurationId, input.botId, row.project_id, turn.workspacePath)) return { reviewTurn: null };
+    if (!turn || turn.actorId !== feishuExecutionActorId(input.botId)) return { reviewTurn: null };
     const attemptId = feishuExecutionId([turn.messageId, 'attempt']);
+    const context = activeRelayConfiguration(db, turn.actorId, turn.sessionId, attemptId);
+    if (!context || context.inbound.tenantKey !== input.tenantKey || context.inbound.projectId !== row.project_id) return { reviewTurn: null };
     const current = isFeishuTurnAwaitingReview(db, turn, row.project_id, attemptId);
     return { reviewTurn: current ? { sessionId: turn.sessionId, attemptId } : null };
   }
@@ -1364,8 +1542,19 @@ export function runFeishuAdmin(db: Db, raw: FeishuAdminRequest, actorId: string)
   }
 
   if (input.to <= input.from || input.to - input.from > 93 * 86400_000) throw new StorageContractError('INVALID_ARGUMENT');
-  const filter = inboxRangeFilter;
-  const params = [...key, input.chatId ?? null, input.chatId ?? null, input.from, input.to];
+  if ((input.q || input.attention || input.requestsOnly) && !input.conversationList || input.chatType && !(input.conversationList || input.overview)) {
+    throw new StorageContractError('INVALID_ARGUMENT');
+  }
+  if (input.scopes && (!(input.overview || input.conversationList) || input.scopes.length > 0 && input.chatId || input.conversationId || input.matterId || input.usageTrend)) {
+    throw new StorageContractError('INVALID_ARGUMENT');
+  }
+  const bindingFilter = (alias: string) => input.scopes ? scopedRows(alias, bindingFields) : `${alias}.bot_id=? AND ${alias}.tenant_key=?`;
+  const bindingArgs = input.scopes ? [JSON.stringify(input.scopes.map(target => [target.botId, target.tenantKey]))] : key;
+  const rangeArgs = [...bindingArgs, input.chatId ?? null, input.chatId ?? null, input.from, input.to];
+  const filter = `${bindingFilter('i')} AND (? IS NULL OR i.chat_id=?) AND i.received_at>=? AND i.received_at<?${input.chatType ? ` AND ${chatType}=?` : ''}`;
+  const params = input.chatType ? [...rangeArgs, input.chatType] : rangeArgs;
+  if (input.overview) return { overview: feishuOverview(db, filter, params, input, input.overview),
+    chats: input.scopes ? [] : [...observedChats(db, key, 'group'), ...observedChats(db, key, 'p2p')] };
   // Use the same private reset boundary and group priority as the conversation worker.
   const privateBoundary = `COALESCE((SELECT max(r.sequence) FROM feishu_im_inbox r WHERE r.bot_id=i.bot_id AND r.tenant_key=i.tenant_key
       AND r.chat_id=i.chat_id AND r.sender_id=i.sender_id AND r.sequence<=i.sequence
@@ -1403,8 +1592,21 @@ export function runFeishuAdmin(db: Db, raw: FeishuAdminRequest, actorId: string)
     AND ((${matter}.session_id IS NOT NULL AND ${matter}.session_id=COALESCE(${mappedSessionId('i')},(${pendingSessionId})))
       OR ${matter}.task_id=json_extract(i.data_json,'$.relayTurn.taskId'))))`;
   const statusOrder = ['awaiting_action', 'stopping', 'processing', 'recovering', 'pending', 'queued'];
+  const chatName = (row: string) => `(SELECT g.name FROM feishu_im_groups g WHERE g.bot_id=${row}.bot_id AND g.tenant_key=${row}.tenant_key AND g.chat_id=${row}.chat_id)`;
+  const requestText = `json_extract(i.data_json,'$.text')`;
+  const hasTerm = (value: string) => `instr(lower(COALESCE(${value},'')), term)`;
+  const excerpt = (value: string) => `substr(${value}, MAX(1, ${hasTerm(value)}-24), length(term)+64)`;
+  const deliveryIssue = (state: 'failed' | 'unknown') => `(o.state IS '${state}' OR EXISTS (
+    SELECT 1 FROM feishu_im_reply_files f WHERE f.outbox_id=o.id AND f.state='${state}'))`;
+  const attentionRow = input.attention === 'approval' ? "relayStatus='awaiting_action'"
+    : input.attention === 'failed' ? 'failed=1' : input.attention === 'unknown' ? 'unknown=1'
+      : input.attention === 'reply_failed' ? "replyState='failed'" : input.attention === 'reply_unknown' ? "replyState='unknown'"
+        : input.attention === 'reply_anomaly' ? "replyState IN ('failed','unknown')" : '';
+  const cursorTime = input.conversationList && input.before
+    ? db.get(`SELECT i.received_at FROM feishu_im_inbox i WHERE ${bindingFilter('i')} AND i.sequence=?`, [...bindingArgs, input.before])?.received_at
+    : undefined;
   const conversations = input.conversationList ? db.all(`WITH conversation_rows AS (
-      SELECT i.sequence,i.chat_id AS chatId,${chatType} AS chatType,${conversationId} AS conversationId,i.task_id AS taskId,
+      SELECT i.sequence,i.bot_id AS bindingId,i.tenant_key AS tenantKey,i.chat_id AS chatId,${chatType} AS chatType,${conversationId} AS conversationId,i.task_id AS taskId,
         COALESCE(json_extract(i.data_json,'$.senderName'),${knownSenderName}) AS senderName,
         COALESCE(json_extract(i.data_json,'$.conversationReset.conversationThreadId'),
           json_extract(i.data_json,'$.relayTurn.conversationThreadId'),json_extract(i.data_json,'$.threadId')) AS threadId,
@@ -1412,18 +1614,34 @@ export function runFeishuAdmin(db: Db, raw: FeishuAdminRequest, actorId: string)
         (SELECT json_extract(owner_row.data_json,'$.senderName') FROM feishu_im_inbox owner_row
           WHERE owner_row.bot_id=i.bot_id AND owner_row.tenant_key=i.tenant_key AND owner_row.sender_id=${conversationOwnerId}
           AND json_type(owner_row.data_json,'$.senderName')='text' ORDER BY owner_row.sequence DESC LIMIT 1) AS conversationOwnerName,
-        json_extract(i.data_json,'$.text') AS text,i.received_at AS receivedAt,${relayStatus} AS relayStatus FROM feishu_im_inbox i WHERE ${filter}
+        ${requestText} AS text,i.received_at AS receivedAt,${relayStatus} AS relayStatus,
+        ${chatName('i')} AS groupName,
+        ${deliveryIssue('failed')} AS failed,${deliveryIssue('unknown')} AS unknown,o.state AS replyState
+        ${input.q ? `, CASE WHEN ${hasTerm(requestText)}>0 THEN ${excerpt(requestText)} WHEN ${hasTerm('o.body')}>0 THEN ${excerpt('o.body')} END AS matchText,
+          (${hasTerm(chatName('i'))}>0 OR ${hasTerm(`COALESCE(json_extract(i.data_json,'$.senderName'),${knownSenderName})`)}>0
+            OR ${hasTerm(`(SELECT m.title FROM feishu_im_matters m WHERE m.bot_id=i.bot_id AND m.tenant_key=i.tenant_key
+              AND m.chat_id=i.chat_id AND m.task_id=i.task_id)`)}>0) AS nameMatch` : ''}
+      FROM feishu_im_inbox i LEFT JOIN feishu_im_outbox o ON o.inbox_sequence=i.sequence
+      ${input.q ? 'CROSS JOIN (SELECT lower(?) AS term)' : ''} WHERE ${filter}
     ), ranked AS (
-      SELECT chatId,chatType,conversationId,senderName,text,receivedAt,taskId,threadId,sequence,
+      SELECT bindingId,tenantKey,chatId,chatType,conversationId,senderName,text,receivedAt,taskId,threadId,sequence,groupName,
         max(conversationOwnerId) OVER grouped AS conversationOwnerId,
         max(conversationOwnerName) OVER grouped AS conversationOwnerName,
         CASE ${statusOrder.map(status => `WHEN max(relayStatus='${status}') OVER grouped THEN '${status}'`).join(' ')} END AS relayStatus,
-        count(*) OVER grouped AS total, row_number() OVER (PARTITION BY chatId,conversationId ORDER BY sequence DESC) AS rowNumber
-      FROM conversation_rows WINDOW grouped AS (PARTITION BY chatId,conversationId)
-    ) SELECT chatId,chatType,conversationId,senderName,text,receivedAt,taskId,threadId,sequence,
-      conversationOwnerId,conversationOwnerName,relayStatus,total FROM ranked
-      WHERE rowNumber=1 AND sequence < ? ORDER BY sequence DESC LIMIT 31`,
-  [...params, input.before ?? Number.MAX_SAFE_INTEGER]) : null;
+        max(failed) OVER grouped AS deliveryFailed,max(unknown) OVER grouped AS deliveryUnknown,
+        ${attentionRow ? `max(CASE WHEN ${attentionRow} THEN sequence END) OVER grouped AS attentionSequence,` : ''}
+        ${input.q ? 'max(nameMatch) OVER grouped AS nameMatched,max(CASE WHEN matchText IS NOT NULL THEN sequence END) OVER grouped AS matchSequence,' : ''}
+        count(*) OVER grouped AS total, row_number() OVER (PARTITION BY bindingId,tenantKey,chatId,conversationId ORDER BY receivedAt DESC,sequence DESC) AS rowNumber
+      FROM conversation_rows WINDOW grouped AS (PARTITION BY bindingId,tenantKey,chatId,conversationId)
+    ) SELECT bindingId,tenantKey,chatId,chatType,conversationId,senderName,text,receivedAt,taskId,threadId,sequence,groupName,
+      conversationOwnerId,conversationOwnerName,relayStatus,total,deliveryFailed,deliveryUnknown
+      ${attentionRow ? ', attentionSequence' : ''}
+      ${input.q ? ', matchSequence,(SELECT matchText FROM conversation_rows hit WHERE hit.sequence=ranked.matchSequence) AS matchPreview' : ''}
+      FROM ranked WHERE rowNumber=1 AND (receivedAt,sequence) < (?,?)${attentionRow ? ' AND attentionSequence IS NOT NULL' : ''}
+      ${input.q ? 'AND (nameMatched OR matchSequence IS NOT NULL)' : ''}
+      ORDER BY receivedAt DESC,sequence DESC LIMIT 31`,
+  [...(input.q ? [input.q] : []), ...params,
+    cursorTime ?? (input.before ? 0 : Number.MAX_SAFE_INTEGER), input.before ?? Number.MAX_SAFE_INTEGER]) : null;
   const detailFilter = input.conversationId ? `AND (${conversationId})=?` : input.matterId
     ? `AND EXISTS(SELECT 1 FROM feishu_im_matters mat WHERE mat.id=? AND ${matchingMatter('mat')})` : '';
   const detailParams = input.conversationId ? [input.conversationId] : input.matterId ? [input.matterId] : [];
@@ -1437,6 +1655,10 @@ export function runFeishuAdmin(db: Db, raw: FeishuAdminRequest, actorId: string)
     json_extract(i.data_json,'$.executionLine') AS storedExecutionLine,
     ${relayStatus} AS relayStatus,
     json_extract(i.data_json,'$.attachments') AS attachmentRefs,i.project_id AS attachmentProject,
+    json_extract(i.data_json,'$.relayTurn.workspacePath') AS replyWorkspacePath,
+    (SELECT json_group_array(json_object('id',f.id,'name',json_extract(f.file_json,'$.name'),'state',f.state,
+      'messageId',f.message_id,'updatedAt',f.updated_at) ORDER BY f.updated_at,f.id)
+      FROM feishu_im_reply_files f WHERE f.outbox_id=o.id AND f.state<>'ready') AS replyFileReceipts,
     CASE WHEN EXISTS(SELECT 1 FROM messages m WHERE m.id=json_extract(i.data_json,'$.relayTurn.messageId')
       AND m.session_id=json_extract(i.data_json,'$.relayTurn.sessionId'))
       THEN json_extract(i.data_json,'$.relayTurn') END AS attachmentTurn,
@@ -1445,21 +1667,26 @@ export function runFeishuAdmin(db: Db, raw: FeishuAdminRequest, actorId: string)
     WHERE ${filter} ${detailFilter} AND i.sequence<? ORDER BY i.sequence DESC LIMIT 31`,
   [...params, ...detailParams, input.before ?? Number.MAX_SAFE_INTEGER]);
   const page = { messages: messages.slice(0, 30).map(({ summaryJson, clarificationCandidates, conversationJson, storedExecutionLine, reply,
-    attachmentRefs, attachmentProject, attachmentTurn, ...message }) => {
+    attachmentRefs, attachmentProject, attachmentTurn, replyFileReceipts, replyWorkspacePath, ...message }) => {
     const summary = summaryJson ? JSON.parse(summaryJson) : null;
     const executionLine = typeof storedExecutionLine === 'string' ? storedExecutionLine : undefined;
     const note = executionLine ?? (summary?.modelCalled === true && typeof summary.model === 'string'
       ? feishuSummaryReplyLine(summary.model) : undefined);
     const body = typeof reply === 'string' ? splitFeishuReplyBody(reply, note) : null;
+    const replyFiles = replyFileReceipts ? JSON.parse(replyFileReceipts) : [];
     const parsedTurn = attachmentRefs && attachmentTurn ? relayTurnSchema.safeParse(JSON.parse(attachmentTurn)) : null;
     const turn = parsedTurn?.success ? parsedTurn.data : null;
-    const project = turn && managesProject(db, attachmentProject, actorId) && activeProject(db, attachmentProject);
+    const project = (turn || executionLine) && managesProject(db, attachmentProject, actorId) && activeProject(db, attachmentProject);
+    const previewProjectPath = executionLine && project
+      && (!replyWorkspacePath || pathIdentity(replyWorkspacePath) === pathIdentity(project.path)) ? project.path : undefined;
     const attachments = (turn ? feishuRelayAttachments(turn) : undefined)?.map(item => {
       if (turn && project && pathIdentity(turn.workspacePath) === pathIdentity(project.path)) return item;
       const { path: _path, ...attachment } = item;
       return attachment;
     });
     return { ...message, reply: body?.text ?? null, summary,
+      ...(previewProjectPath ? { previewProjectPath } : {}),
+      ...(replyFiles.length ? { replyFiles } : {}),
       ...(attachments?.length ? { attachments } : attachmentRefs ? {
         pendingAttachments: JSON.parse(attachmentRefs).map((item: { name?: string; type: string }, index: number) =>
           item.name ?? (item.type === 'image' ? `图片 ${index + 1}` : `附件 ${index + 1}`)),
@@ -1470,17 +1697,41 @@ export function runFeishuAdmin(db: Db, raw: FeishuAdminRequest, actorId: string)
     };
   }), next: messages.length > 30 ? messages[29].sequence : null };
   if (detailParams.length) return page;
-  const matterProjection = `SELECT id,title,chat_id AS chatId,task_id AS taskId,sender_id AS sender,${senderNameLookup('mat')} AS senderName,
+  const matterProjection = `SELECT id,mat.bot_id AS bindingId,mat.tenant_key AS tenantKey,title,chat_id AS chatId,task_id AS taskId,
+    sender_id AS sender,${senderNameLookup('mat')} AS senderName,${chatName('mat')} AS groupName,
     (SELECT relayStatus FROM (SELECT ${relayStatus} AS relayStatus FROM feishu_im_inbox i
       WHERE i.bot_id=mat.bot_id AND i.tenant_key=mat.tenant_key AND i.chat_id=mat.chat_id AND i.handled_at IS NULL AND ${matchingMatter('mat')})
       ORDER BY CASE relayStatus ${statusOrder.map((status, index) => `WHEN '${status}' THEN ${index}`).join(' ')} ELSE ${statusOrder.length} END LIMIT 1) AS relayStatus,
     session_id AS sessionId,updated_at AS updatedAt,archived_at AS archivedAt
-    FROM feishu_im_matters mat WHERE bot_id=? AND tenant_key=? AND (? IS NULL OR chat_id=?)`;
-  const matterArgs = [...key, input.chatId ?? null, input.chatId ?? null];
-  const matters = db.all(`${matterProjection} ORDER BY updated_at DESC,id LIMIT 100`, matterArgs);
+    FROM feishu_im_matters mat WHERE ${bindingFilter('mat')} AND (? IS NULL OR chat_id=?)`;
+  const matterArgs = [...bindingArgs, input.chatId ?? null, input.chatId ?? null];
+  const browseMatters = !conversations || !input.before && !input.q && !input.attention && input.chatType !== 'p2p' && !input.requestsOnly;
+  const matters = browseMatters ? db.all(`${matterProjection} ORDER BY updated_at DESC,id LIMIT 100`, matterArgs) : [];
+  const taskKey = (row: Record<string, unknown>) => JSON.stringify([row.bindingId, row.tenantKey, row.chatId, row.taskId]);
+  const knownTasks = new Set(matters.map(taskKey));
+  const listedTasks = conversations?.slice(0, 30)
+    .filter(row => row.taskId && !knownTasks.has(taskKey(row)))
+    .map(row => [row.bindingId, row.tenantKey, row.chatId, row.taskId]) ?? [];
+  if (listedTasks.length) {
+    matters.push(...db.all(`${matterProjection} AND ${scopedRows('mat', [...bindingFields, 'chat_id', 'task_id'])}`, [...matterArgs, JSON.stringify(listedTasks)]));
+  }
   if (input.focusMatter && !matters.some(matter => matter.id === input.focusMatter)) {
     const focused = db.get(`${matterProjection} AND id=?`, [...matterArgs, input.focusMatter]);
     if (focused) matters.push(focused);
+  }
+  const noticeState = input.attention === 'failed' || input.attention === 'unknown' ? input.attention : undefined;
+  const notices = input.requestsOnly || input.chatType === 'p2p' || input.attention === 'approval' || input.attention?.startsWith('reply_') ? [] : db.all(`SELECT id,o.bot_id AS bindingId,chat_id AS chatId,body,state,message_id AS sentId,created_at AS createdAt,error_code AS errorCode,${chatName('o')} AS groupName
+    FROM feishu_im_outbox o ${input.q ? 'CROSS JOIN (SELECT lower(?) AS term)' : ''} WHERE ${bindingFilter('o')} AND inbox_sequence IS NULL
+    AND (? IS NULL OR chat_id=?) AND created_at>=? AND created_at<?${noticeState ? ' AND state=?' : ''}
+    ${input.q ? `AND (${hasTerm('o.body')}>0 OR ${hasTerm(chatName('o'))}>0)` : ''} ORDER BY created_at DESC,id LIMIT 30`,
+  [...(input.q ? [input.q] : []), ...rangeArgs, ...(noticeState ? [noticeState] : [])]);
+  const chats = input.scopes ? [] : [...observedChats(db, key, 'group'), ...observedChats(db, key, 'p2p')];
+  if (conversations) {
+    const pending = Number(db.get(`SELECT EXISTS(SELECT 1 FROM feishu_im_inbox i
+      LEFT JOIN feishu_im_outbox o ON o.inbox_sequence=i.sequence WHERE ${filter}
+      AND (i.handled_at IS NULL OR o.state IN ('queued','sending'))) AS pending`, params)?.pending ?? 0);
+    return { ...page, conversations: conversations.slice(0, 30), next: conversations.length > 30 ? conversations[29].sequence : null,
+      chats, matters, notices, tally: { pending } };
   }
   const tally = db.get(`SELECT count(*) AS received, count(DISTINCT i.chat_id) FILTER (WHERE ${chatType}='group') AS groups,
     count(DISTINCT i.chat_id) FILTER (WHERE ${chatType}='p2p') AS privateChats,count(DISTINCT i.sender_id) AS users,
@@ -1501,13 +1752,8 @@ export function runFeishuAdmin(db: Db, raw: FeishuAdminRequest, actorId: string)
     WHERE ${filter} GROUP BY i.category ORDER BY total DESC`, params);
   const byDay = db.all(`SELECT ${receivedDay} AS name,count(*) AS total
     FROM feishu_im_inbox i WHERE ${filter} GROUP BY name ORDER BY name DESC`, params);
-  const notices = db.all(`SELECT id,chat_id AS chatId,body,state,message_id AS sentId,created_at AS createdAt,error_code AS errorCode
-    FROM feishu_im_outbox WHERE bot_id=? AND tenant_key=? AND inbox_sequence IS NULL
-    AND (? IS NULL OR chat_id=?) AND created_at>=? AND created_at<? ORDER BY created_at DESC,id LIMIT 30`, params);
-  const proactiveSent = Number(db.get(`SELECT count(*) AS total FROM feishu_im_outbox WHERE bot_id=? AND tenant_key=?
+  const proactiveSent = Number(db.get(`SELECT count(*) AS total FROM feishu_im_outbox o WHERE ${bindingFilter('o')}
     AND inbox_sequence IS NULL AND state='sent' AND (? IS NULL OR chat_id=?) AND created_at>=? AND created_at<?`, params)?.total ?? 0);
-  const chats = [...observedChats(db, key, 'group'), ...observedChats(db, key, 'p2p')];
-  return { ...page, ...(conversations ? { conversations: conversations.slice(0, 30), next: conversations.length > 30 ? conversations[29].sequence : null } : {}),
-    chats, matters, tally: { ...tally, proactiveSent }, byGroup, byUser, byCategory, byDay, notices,
-    ...(input.usageTrend ? { usageTrend: usageTrend(db, params, input) } : {}) };
+  return { ...page, chats, matters, tally: { ...tally, proactiveSent }, byGroup, byUser, byCategory, byDay, notices,
+    ...(input.usageTrend ? { usageTrend: usageTrend(db, filter, params, input) } : {}) };
 }

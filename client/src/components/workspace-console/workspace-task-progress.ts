@@ -1,4 +1,5 @@
 import type { WorkspaceConsoleDashboardDto } from '../../generated/relay-contracts';
+import { runTimestamp } from '../../../../scripts/lib/workbench-run-time.mjs';
 
 type Task = WorkspaceConsoleDashboardDto['tasks'][number];
 type Run = WorkspaceConsoleDashboardDto['runs'][number];
@@ -6,7 +7,7 @@ export type ProgressTask = Task & { workProgress?: { started: boolean; at: numbe
 export type ProgressDashboard = Omit<WorkspaceConsoleDashboardDto, 'tasks'> & { tasks: ProgressTask[] };
 const day = 86_400_000;
 const timestamp = (value: string | null | undefined, now: number): number | null => {
-  const at = Date.parse((value ?? '').replace(/^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2}(?:\.\d+)?)$/, '$1T$2+08:00'));
+  const at = runTimestamp(value) || Date.parse(value ?? '');
   return Number.isFinite(at) && at <= now ? at : null;
 };
 
@@ -16,8 +17,10 @@ export function withTaskProgress(task: Task, runs: readonly Run[], now = Date.no
   let started = times[0] !== null || (typeof duration === 'number' && Number.isFinite(duration) && duration > 0);
   for (const run of runs) {
     if (run.taskId !== task.id) continue;
-    const start = timestamp(run.startedAt, now);
-    const finish = timestamp(run.finishedAt, now);
+    const startedAt = runTimestamp(run.startedAt);
+    const finishedAt = runTimestamp(run.finishedAt);
+    const start = startedAt > 0 && startedAt <= now ? startedAt : null;
+    const finish = finishedAt > 0 && finishedAt <= now ? finishedAt : null;
     started ||= start !== null || finish !== null;
     times.push(start, finish);
   }

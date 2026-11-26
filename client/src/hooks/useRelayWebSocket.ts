@@ -756,12 +756,10 @@ export function useRelayWebSocket() {
     }
   }, []);
 
-  const cancel = useCallback((requestedSessionId?: string) => {
-    const state = useChatStore.getState();
-    const sessionId = requestedSessionId || state.streaming.streamingSessionId || state.activeSessionId;
-    if (sessionId && wsRef.current?.readyState === WebSocket.OPEN) {
-      sendFrontendCommand(wsRef.current, { type: 'cancel', sessionId });
-    }
+  const cancel = useCallback((sessionId: string, expectedAttemptId: string, analyticsOperationId?: string) => {
+    const ws = wsRef.current;
+    if (ws?.readyState !== WebSocket.OPEN) throw new Error('未连接到服务器，请重连后重试');
+    sendFrontendCommand(ws, { type: 'cancel', sessionId, expectedAttemptId, analyticsOperationId });
   }, []);
 
   const cancelFollowup = useCallback((sessionId: string, messageId: string) => {

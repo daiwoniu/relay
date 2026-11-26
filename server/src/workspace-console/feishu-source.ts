@@ -17,7 +17,7 @@ export function projectFeishuSnapshot(report: FeishuResponsibility, userKey: str
     actionability: (fact.actionability==='archived'?'state_responsibility':fact.actionability) as 'current' | 'state_responsibility' | 'upcoming', statusName: fact.statusName,
     ...(fact.linkedStoryIds?{linkedStoryIds:fact.linkedStoryIds}:{}), finishedAt:fact.finishedAt,
     myRoleKeys: fact.myRoles, baseOwnerIsMe: fact.baseOwnerIsMe, createdAt:fact.createdAt??null,updatedAt: fact.updatedAt,
-    personalSubtasks: fact.mySubtasks.filter(task => !task.passed).map(task => ({ id: task.id, name: task.title, passed: task.passed })),
+    personalSubtasks: fact.mySubtasks.filter(task => !task.passed).map(task => ({ id: task.id, name: task.title, passed: task.passed, updatedAt: task.updatedAt, finishedAt: task.finishedAt })),
     currentNodes: fact.currentNodes.map(node => node.name), version: null, url: fact.url, localTaskIds: [] }));
   return { reportKind: 'project_responsibility', sourceUserKey: userKey, ...(projectKey ? { sourceProjectKey: projectKey } : {}), relationCoverage: report.relationCoverage, todoEquivalent: false,
     generatedAt: report.generatedAt, fetchedAt: report.fetchedAt, servedFromCache: false,

@@ -4,7 +4,7 @@ import { WorkspaceConsoleDashboardDtoSchema,WorkspaceTaskSessionLinkResponseDtoS
 import { canonicalJson,parseStoragePrincipal,StorageContractError } from '../storage/command-boundary.js';
 import { executeStoredCommand } from '../storage/command-outcome.js';
 import type { CoreCommandName,CoreCommandInputs,CoreStoragePort,StorageCommandEnvelope,StoragePrincipal,StoredWorkspaceDashboard } from '../storage/contracts.js';
-import { buildWorkspaceDashboard,WORKSPACE_DASHBOARD_MAX_BYTES } from './dashboard-projection.js';
+import { buildWorkspaceDashboard, hasCurrentRunTimes, withoutLegacyRunTiming, WORKSPACE_DASHBOARD_MAX_BYTES } from './dashboard-projection.js';
 import type { TaskRegistryProjection } from './task-registry-reader.js';
 import type { WorkspaceRunProjection } from './run-projection.js';
 import { FIXED_WORKSPACE_PATH } from './workspace-snapshot.js';
@@ -60,7 +60,7 @@ export class StoredWorkspaceConsole{
     const actor=this.actor(principal);return this.track(async()=>{
       const previous=await this.options.port.readWorkspaceDashboard({principal:actor});
       const failure=this.cacheStatus.get(actor.userId)?.failure;
-      if(previous&&!force)return{...previous.value,...(failure?{errors:[...new Set([...previous.value.errors,failure.error])],sourceAvailable:failure.available}:{}),
+      if(previous&&!force&&(failure||hasCurrentRunTimes(previous.value)))return{...withoutLegacyRunTiming(previous.value),...(failure?{errors:[...new Set([...previous.value.errors,failure.error])],sourceAvailable:failure.available}:{}),
         sourceMeta:{state:failure?'failed_snapshot':'snapshot',lastSuccessAt:previous.savedAt,lastAttemptAt:failure?.at??null,error:failure?.error??null}};
       const key=randomUUID(),ticket=await this.command(actor,key+':begin','workspace.beginSnapshot',{});
       if(ticket.state!=='committed')throw new StorageContractError(ticket.state==='rejected'?ticket.code:'STORAGE_UNAVAILABLE');
@@ -83,7 +83,7 @@ export class StoredWorkspaceConsole{
       if(errors.length){
         if(status.version===ticket.value.version)status.failure={at:capturedAt,error:errors.join('；'),available:value.sourceAvailable};
         const current=await this.options.port.readWorkspaceDashboard({principal:actor});
-        return current?{...current.value,errors:[...current.value.errors,...errors],sourceAvailable:{...current.value.sourceAvailable,...value.sourceAvailable},
+        return current?{...withoutLegacyRunTiming(current.value),errors:[...current.value.errors,...errors],sourceAvailable:{...current.value.sourceAvailable,...value.sourceAvailable},
           sourceMeta:{state:'failed_snapshot',lastSuccessAt:current.savedAt,lastAttemptAt:capturedAt,error:errors.join('；')}}:value;
       }
       const saved=await this.command(actor,key+':save','workspace.saveSnapshot',{version:ticket.value.version,value});

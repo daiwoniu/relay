@@ -4,7 +4,7 @@ import { AssetList, ImagePicker } from './image-ui';
 import { canvasBlob, canvasContext, sizeOf, type Size, type Fit, type ImageAsset } from './image-render';
 import { fileSize, outputName, seekMedia } from './media-files';
 import { importSubtitles, type Cue } from './subtitles';
-import { Choice, ColorField, Details, Download, Field, FilePicker, JobStatus, NumberField, Preview, Timeline, Workspace, mediaButton, mediaInput, mediaPrimary, useMediaJob, useMediaPreset, useObjectUrl, type MediaResult } from './media-ui';
+import { Choice, ColorField, Details, Download, Field, FilePicker, JobStatus, NumberField, Preview, Timeline, TimeRangeControls, Workspace, mediaButton, mediaInput, mediaPrimary, useMediaJob, useMediaOutput, useMediaPreset, useObjectUrl, type MediaResult } from './media-ui';
 import { detachedVideo, paintMotion, paintVideo, recordCanvas, videoDimensions, videoFormats, type MotionEffect, type MotionStyle } from './video-render';
 
 const FPS = 24;
@@ -59,7 +59,7 @@ export function ImageMotion({ storageKey }: { storageKey: string }) {
   const [audio, setAudio] = useState<{ file: File; audio: AudioBuffer } | null>(null);
   const [time, setTime] = useState(0);
   const [playing, setPlaying] = useState(false);
-  const [result, setResult] = useState<MediaResult | null>(null);
+  const { result, setResult, stale } = useMediaOutput<MediaResult>();
   const [name, setName] = useState('');
   const canvas = useRef<HTMLCanvasElement>(null);
   const audioPreview = useRef<HTMLAudioElement>(null);
@@ -115,7 +115,7 @@ export function ImageMotion({ storageKey }: { storageKey: string }) {
   function choose(next: ImageAsset[]) {
     setPlaying(false); setAssets(next); seek(0); setResult(null);
   }
-  return <Workspace preview={<Preview title="动效预览" empty="选择一张或多张照片，预览动画。">{assets.length > 0 && <>
+  return <Workspace widePreview preview={<Preview title="动效预览" empty="选择一张或多张照片，预览动画。">{assets.length > 0 && <>
     <canvas ref={canvas} width={previewSize.width} height={previewSize.height} role="img" aria-label="图片动效画面" />
     <Timeline time={Math.min(time, duration)} duration={duration} onChange={(value) => { setPlaying(false); seek(value); }} />
     <div className="media-actions"><button type="button" className={mediaButton} disabled={job.busy} onClick={play}>{playing ? '暂停预览' : '播放预览'}</button>
@@ -132,6 +132,7 @@ export function ImageMotion({ storageKey }: { storageKey: string }) {
       <Choice label="画面比例" value={ratio} options={ [['wide', '16:9 横屏'], ['portrait', '9:16 竖屏'], ['square', '1:1 方屏']] } onChange={(value) => update({ ratio: value })} />
     </div>
     <Field label="画面字幕（可选）"><textarea rows={2} className={mediaInput} value={caption} maxLength={160} onChange={(event) => { setCaption(event.target.value); setResult(null); }} /></Field>
+    <Details title="配乐与导出设置">
     <FilePicker label={audio ? `更换配乐（${audio.file.name}）` : '选择配乐（可选）'} accept="audio/*" disabled={audioJob.busy || job.busy} onFiles={([file]) => {
       setPlaying(false);
       void audioJob.run(async (signal) => {
@@ -141,20 +142,21 @@ export function ImageMotion({ storageKey }: { storageKey: string }) {
       });
     }} />
     {audio && <button type="button" className={mediaButton} onClick={() => { setPlaying(false); setAudio(null); setResult(null); }}>移除配乐</button>}
+      <NumberField label="配乐音量（%）" value={volume} onChange={(value) => update({ volume: value })} />
+      <NumberField label="输出最长边（像素）" value={maxEdge} min={240} max={1440} onChange={(value) => update({ maxEdge: value })} />
+      <VideoOptions options={{ ...options, setExtension: (value) => { options.setExtension(value); setResult(null); }, setQuality: (value) => { options.setQuality(value); setResult(null); } }} disabled={job.busy} />
+      <Field label="文件名"><input className={mediaInput} value={name} placeholder="图片动效" maxLength={100} onChange={(event) => { setName(event.target.value); setResult(null); }} /></Field>
+    </Details>
     <JobStatus job={audioJob} />
-    <Details title="动效细节、声音和导出尺寸">
+    <Details title="动效细节">
       <Choice<Fit> label="图片适配" value={style.fit} options={ [['cover', '裁切填满'], ['contain', '完整保留']] } onChange={(fit) => update({ fit })} />
       <Choice label="动作速度怎么变" value={style.easing} options={ [['smooth', '慢慢开始和停下'], ['linear', '一直同样快（匀速）']] } onChange={(easing) => update({ easing })} />
       <NumberField label="动作幅度（%）" hint="数字越大，照片放大或滑动的幅度越大。改完可以先看一下预览。" value={style.strength} onChange={(strength) => update({ strength })} />
       <ColorField label="背景" value={style.background} onChange={(background) => update({ background })} />
-      <NumberField label="配乐音量（%）" value={volume} onChange={(value) => update({ volume: value })} />
       <Field label="循环预览"><input type="checkbox" checked={loop} onChange={(event) => preset.setValue({ ...preset.value, loop: event.target.checked })} /></Field>
-      <NumberField label="输出最长边（像素）" value={maxEdge} min={240} max={1440} onChange={(value) => update({ maxEdge: value })} />
-      <Field label="文件名"><input className={mediaInput} value={name} placeholder="图片动效" maxLength={100} onChange={(event) => { setName(event.target.value); setResult(null); }} /></Field>
       <button type="button" className={mediaButton} onClick={preset.save}>保存为默认动效设置</button>
       <span className="media-hint" role="status">{preset.notice}</span>
     </Details>
-    <VideoOptions options={{ ...options, setExtension: (value) => { options.setExtension(value); setResult(null); }, setQuality: (value) => { options.setQuality(value); setResult(null); } }} disabled={job.busy} />
     <button type="button" className={mediaPrimary} disabled={!frames.length || !options.format || job.busy || audioJob.busy} onClick={() => {
       if (!options.format) return;
       const { mime, extension } = options.format;
@@ -164,11 +166,11 @@ export function ImageMotion({ storageKey }: { storageKey: string }) {
         const blob = await recordCanvas({ size, duration, fps: FPS, bitrate: bitrates[options.quality], mime, signal, progress,
           audio: audio?.audio, audioGain: volume / 100, paint: (ctx, elapsed) => paintMotion(ctx, frames, size, elapsed, style) });
         if (!signal.aborted) setResult({ blob, name: outputName(name || '图片动效', extension), details: `${size.width} × ${size.height}` });
-      });
+      }, 'generate_media');
     }}>生成动效视频</button>
     </fieldset>
     <p className="media-hint">导出按实际播放时长生成，请保持页面在前台。</p>
-    <JobStatus job={job} /><Download result={result} preview="video" />
+    <JobStatus job={job} /><Download result={result} preview="video" stale={stale && !job.busy && !audioJob.busy} />
   </Workspace>;
 }
 
@@ -189,7 +191,7 @@ export function VideoEdit() {
   const [cues, setCues] = useState<Cue[]>([]);
   const [captionName, setCaptionName] = useState('');
   const [name, setName] = useState('');
-  const [result, setResult] = useState<{ asset: MediaResult; type: 'audio' | 'image' | 'video' } | null>(null);
+  const { result, setResult, stale } = useMediaOutput<{ asset: MediaResult; type: 'audio' | 'image' | 'video' }>();
   const job = useMediaJob();
   const options = useVideoOptions();
   const duration = meta?.duration ?? 0;
@@ -244,7 +246,7 @@ export function VideoEdit() {
       const blob = await recordCanvas({ size, duration: range.end - range.start, fps: FPS, bitrate: bitrates[options.quality], mime,
         video, start: range.start, keepVideoAudio: audio, signal, progress, paint: (ctx) => paintVideo(ctx, video, size, rotation, cues) });
       if (!signal.aborted) setResult({ type: 'video', asset: { blob, name: outputName(name || `${defaultName}-处理`, extension), details: `${size.width} × ${size.height}` } });
-    });
+    }, 'generate_media');
   }
   function exportAudio() {
     if (!file) return;
@@ -255,7 +257,7 @@ export function VideoEdit() {
       if (signal.aborted) return;
       const blob = encodeWav(sliceAudio(decoded, range.start, Math.min(decoded.duration, range.end), 1, 0, 0));
       setResult({ type: 'audio', asset: { blob, name: outputName(name || `${defaultName}-音轨`, 'wav') } });
-    });
+    }, 'extract_audio');
   }
   function exportFrame() {
     const video = player.current;
@@ -273,9 +275,9 @@ export function VideoEdit() {
         const blob = await canvasBlob(screenshot, 'image/png');
         if (!signal.aborted) setResult({ type: 'image', asset: { blob, name: outputName(name || `${defaultName}-截图`, 'png') } });
       } finally { screenshot.width = 0; screenshot.height = 0; }
-    });
+    }, 'capture_frame');
   }
-  return <Workspace preview={<Preview title="视频画面与截取范围" empty="选择视频，拖动时间条查看画面。">{file && <>
+  return <Workspace widePreview preview={<Preview title="视频画面与截取范围" empty="选择视频，拖动时间条查看画面。">{file && <>
     {url && <video className="media-hidden-player" key={url} ref={player} src={url} playsInline preload="auto" muted={!audio} tabIndex={-1} aria-hidden="true"
       onLoadedMetadata={(event) => {
         const video = event.currentTarget;
@@ -291,7 +293,8 @@ export function VideoEdit() {
       onError={() => job.setError('浏览器无法播放此视频，请尝试常用的 MP4 或 WebM。')} />}
     {previewSize ? <>
       <canvas ref={canvas} width={previewSize.width} height={previewSize.height} role="img" aria-label="视频输出效果" />
-      <Timeline time={time} duration={duration} start={range.start} end={range.end} onChange={(value) => { setRangePreview(false); player.current?.pause(); seek(value); }} />
+      <Timeline time={time} duration={duration} start={range.start} end={range.end} disabled={job.busy}
+        onChange={(value) => { setRangePreview(false); player.current?.pause(); seek(value); }} />
       <div className="media-actions">
         <button type="button" className={mediaButton} disabled={job.busy} onClick={() => {
           setRangePreview(false);
@@ -301,22 +304,19 @@ export function VideoEdit() {
         <button type="button" className={mediaButton} disabled={job.busy || range.end <= range.start} onClick={() => void playRange()}>预览截取片段</button>
       </div>
       <p className="media-hint">选中 {Math.max(0, range.end - range.start).toFixed(2)} 秒 · 原文件 {fileSize(file.size)} · 输出 {size!.width} × {size!.height}</p>
+      <TimeRangeControls time={time} duration={duration} start={range.start} end={range.end} disabled={job.busy}
+        onStart={start => { setRange({ ...range, start }); setResult(null); }}
+        onEnd={end => { setRange({ ...range, end }); setResult(null); }} />
     </> : <p className="media-empty">{job.error ? '此视频暂时无法预览。' : '正在读取视频…'}</p>}
   </>}</Preview>}>
     <FilePicker label={file ? `更换视频（${file.name}）` : '选择视频文件'} accept="video/*" disabled={job.busy} onFiles={([value]) => choose(value!)} />
     {meta && <fieldset disabled={job.busy} className="media-controls">
-      <div className="media-fields">
-        <NumberField label="开始（秒）" value={range.start} max={duration} step={.01} onChange={(start) => { setRange({ ...range, start }); setResult(null); }} />
-        <NumberField label="结束（秒）" value={range.end} max={duration} step={.01} onChange={(end) => { setRange({ ...range, end }); setResult(null); }} />
-      </div>
       <div className="media-actions">
-        <button type="button" className={mediaButton} onClick={() => { setRange({ ...range, start: time }); setResult(null); }}>设当前为开始</button>
-        <button type="button" className={mediaButton} onClick={() => { setRange({ ...range, end: time }); setResult(null); }}>设当前为结束</button>
         <button type="button" className={mediaButton} onClick={() => { setRotation((rotation + 90) % 360); setResult(null); }}>顺时针旋转 90°</button>
       </div>
       {!validRange && <p className="media-hint">截取范围需大于 0 秒，最长 120 秒。</p>}
-      <VideoOptions options={{ ...options, setExtension: (value) => { options.setExtension(value); setResult(null); }, setQuality: (value) => { options.setQuality(value); setResult(null); } }} disabled={job.busy} />
-      <Details title="调整画面大小、声音、字幕和文件名">
+      <Details title="视频导出设置">
+        <VideoOptions options={{ ...options, setExtension: (value) => { options.setExtension(value); setResult(null); }, setQuality: (value) => { options.setQuality(value); setResult(null); } }} disabled={job.busy} />
         <NumberField label="画面最长的一边（像素）" hint="想让文件更小，可以把这个数字调低。横屏看宽度，竖屏看高度。" value={maxEdge} min={240} max={1440} onChange={(value) => { setMaxEdge(value); setResult(null); }} />
         <Field label="保留原视频声音"><input type="checkbox" checked={audio} onChange={(event) => { setAudio(event.target.checked); setResult(null); }} /></Field>
         <FilePicker label="把字幕写进视频（SRT / VTT）" accept=".srt,.vtt,text/vtt" onFiles={([value]) => {
@@ -328,13 +328,13 @@ export function VideoEdit() {
         {captionName && <button type="button" className={mediaButton} onClick={() => { setCues([]); setCaptionName(''); setResult(null); }}>移除字幕 {captionName}</button>}
         <Field label="文件名"><input className={mediaInput} value={name} placeholder={defaultName} maxLength={100} onChange={(event) => { setName(event.target.value); setResult(null); }} /></Field>
       </Details>
-      <div className="media-actions">
-        <button type="button" className={mediaPrimary} disabled={!canExport || !options.format} onClick={exportVideo}>生成视频</button>
+      <button type="button" className={mediaPrimary} disabled={!canExport || !options.format} onClick={exportVideo}>生成待下载的视频</button>
+      <div className="media-actions" role="group" aria-label="其他导出方式">
         <button type="button" className={mediaButton} disabled={!canExport || file!.size > 100 * 1024 ** 2} onClick={exportAudio}>只保存声音（WAV）</button>
         <button type="button" className={mediaButton} disabled={!hasFrame} onClick={exportFrame}>保存当前画面</button>
       </div>
       <p className="media-hint">视频导出时请保持页面在前台。音轨提取依赖浏览器支持的编码，原文件最大 100 MB。</p>
     </fieldset>}
-    <JobStatus job={job} /><Download result={result?.asset ?? null} preview={result?.type} />
+    <JobStatus job={job} /><Download result={result?.asset ?? null} preview={result?.type} stale={stale && !job.busy} />
   </Workspace>;
 }

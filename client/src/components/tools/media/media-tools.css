@@ -40,7 +40,7 @@
 .media-file { display: grid; gap: .4rem; font-size: .875rem; overflow-wrap: anywhere; }
 .media-file input { width: 100%; min-width: 0; max-width: 100%; font-size: .875rem; }
 .media-file input::file-selector-button { min-height: 2.75rem; margin-inline-end: .5rem; padding: .45rem .75rem; border: 1px solid var(--color-border); border-radius: .75rem; background: var(--color-bg-tertiary); color: var(--color-text); cursor: pointer; }
-.media-details summary { min-height: 2rem; cursor: pointer; font-size: .875rem; font-weight: 600; }
+.media-details summary { min-height: 2.75rem; align-content: center; cursor: pointer; font-size: .875rem; font-weight: 600; color: var(--tools-accent, var(--color-text)); }
 .media-details[open] summary { margin-bottom: .45rem; }
 .media-result { display: grid; gap: .65rem; background: var(--color-bg); }
 .media-result-meta { display: grid; gap: .2rem; overflow-wrap: anywhere; font-size: .875rem; }
@@ -63,14 +63,24 @@
 .media-controls [aria-pressed="true"], .media-preview [aria-pressed="true"] { border-color: var(--color-primary); color: var(--color-primary); }
 .media-preview-column .media-actions > button { flex: 1 1 auto; }
 .media-edit-list { max-height: 20rem; overflow: auto; display: grid; gap: .5rem; }
+.media-time-range { min-width: 0; border-top: 1px solid var(--color-border); padding-block-start: .4rem; }
+.media-time-range legend { padding-inline-end: .45rem; }
+.media-asset-thumb { width: 2.7rem; height: 2.7rem; flex: none; border-radius: .3rem; background: var(--color-bg); }
+.media-asset-label { display: flex; align-items: center; gap: .45rem; }
 
-@media (max-width: 759px) {
+@container tool-workspace (width < 43rem) {
   .media-empty { min-height: 5rem; }
   .media-controls > .media-primary, .media-result .media-primary { justify-self: stretch; }
 }
 
-@media (min-width: 760px) {
+@container tool-workspace (min-width: 43rem) {
   .media-workspace { grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 1.25rem; }
-  .media-preview-column { position: sticky; top: .5rem; align-self: start; }
-  .media-back-to-preview { display: none; }
+  .media-workspace[data-wide-preview] { grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr); }
+}
+
+@media (min-height: 50rem) {
+  @container tool-workspace (min-width: 43rem) {
+    .media-preview-column { position: sticky; top: .5rem; align-self: start; }
+    .media-workspace-jump { display: none; }
+  }
 }

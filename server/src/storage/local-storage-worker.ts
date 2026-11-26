@@ -12,7 +12,7 @@ import type { LocalStorageResult } from './local-storage-initializer.js';
 import { nativeQueries } from './native-queries.js';
 import { PREVIEW_PREFERENCES_SCHEMA_SQL } from '../contracts/preview-preferences.js';
 import { TOOLS_SCHEMA_SQL } from './tools-contract.js';
-import { FEISHU_IM_BINDINGS_SQL, FEISHU_IM_GROUPS_SQL, FEISHU_IM_RECEIPTS_SQL, FEISHU_IM_RUNTIME_SQL, FEISHU_IM_SCHEMA_SQL, FEISHU_IM_SETTINGS_SQL, FEISHU_IM_USER_ACCESS_SQL } from './native-feishu-im.js';
+import { FEISHU_IM_BINDINGS_SQL, FEISHU_IM_GROUPS_SQL, FEISHU_IM_RECEIPTS_SQL, FEISHU_IM_REPLY_FILES_SQL, FEISHU_IM_RUNTIME_SQL, FEISHU_IM_SCHEMA_SQL, FEISHU_IM_SETTINGS_SQL, FEISHU_IM_USER_ACCESS_SQL } from './native-feishu-im.js';
 import { HOSTING_ADD_SOURCE_COLUMN_SQL, HOSTING_SCHEMA_SQL } from '../page-hosting/contract.js';
 import { ANALYTICS_SCHEMA_SQL } from '../analytics/contract.js';
 import { createMemberWithDefaultProjectInDatabase } from '../db/queries-account.js';
@@ -203,6 +203,15 @@ async function initialize() {
     if (!has(db, 'feishu_im_groups') || !has(db, 'feishu_im_runtime') || !has(db, 'feishu_im_receipt_reactions') || !has(db, 'feishu_im_user_access')) {
       if (!workerData.fresh && backups.length === 0) await makeBackup(db, filename, backups, contents(db));
       transaction(db, () => db.exec(`${FEISHU_IM_GROUPS_SQL}\n${FEISHU_IM_RUNTIME_SQL}\n${FEISHU_IM_RECEIPTS_SQL}\n${FEISHU_IM_USER_ACCESS_SQL}`), null);
+      if (action === 'current') action = 'migrated';
+    }
+    if (!has(db, 'feishu_im_reply_files')) {
+      if (!workerData.fresh && backups.length === 0) await makeBackup(db, filename, backups, contents(db));
+      transaction(db, () => db.exec(FEISHU_IM_REPLY_FILES_SQL), null);
+      if (action === 'current') action = 'migrated';
+    } else if (!bridge.all('PRAGMA table_info(feishu_im_reply_files)').some(row => row.name === 'submit_started')) {
+      if (!workerData.fresh && backups.length === 0) await makeBackup(db, filename, backups, contents(db));
+      transaction(db, () => db.exec('ALTER TABLE feishu_im_reply_files ADD COLUMN submit_started INTEGER NOT NULL DEFAULT 1'), null);
       if (action === 'current') action = 'migrated';
     }
   } finally { db.close(); }

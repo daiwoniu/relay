@@ -49,7 +49,10 @@ export function projectRecoveredRuntime(db:DB,runtime:Extract<StoragePrincipal,{
     AND (connection_id=? OR EXISTS(SELECT 1 FROM _relay_storage_operations o WHERE o.scope_session_id=f.session_id AND o.command_name='turn.appendFact'
       AND json_extract(o.principal_json,'$.connectionId')=? AND json_extract(o.principal_json,'$.runtimeVersion')=? AND json_extract(o.result_json,'$.fact.id')=f.id)) LIMIT 1`,[runtime.sessionId,runtime.attemptId,input.externalTurnId,runtime.connectionId,runtime.connectionId,runtime.runtimeVersion]))deny();
   if(db.get("SELECT 1 FROM engine_turn_facts WHERE session_id=? AND attempt_id=? AND fact_type IN ('final_answer_completed','recovery_completed','engine_error','connection_closed','recovery_failed','recovery_interrupted','interrupt_confirmed') LIMIT 1",[runtime.sessionId,runtime.attemptId]))deny();
-  const status=row!.recovery_previous_status==='stopping'?'stopping':input.pendingCount||input.waitingOnInteraction?'awaiting_action':'processing';
+  // A request can be replayed and resolved before the recovery snapshot arrives.
+  // Its committed processing state is newer than the snapshot's wait hint.
+  const waiting=input.pendingCount>0||row!.status!=='processing'&&input.waitingOnInteraction;
+  const status=row!.status==='stopping'||row!.recovery_previous_status==='stopping'?'stopping':waiting?'awaiting_action':'processing';
   const startedAt=row!.active_turn_started_at??Date.now();
   db.run('UPDATE sessions SET status=?,active_turn_id=?,active_turn_started_at=? WHERE id=?',[status,input.externalTurnId,startedAt,runtime.sessionId]);
   const lease=db.get('SELECT state,resource_key FROM engine_resource_leases WHERE session_id=? AND attempt_id=?',[runtime.sessionId,runtime.attemptId]);if(!lease)deny();

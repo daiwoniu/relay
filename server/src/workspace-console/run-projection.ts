@@ -1,4 +1,5 @@
 import type { RunMetrics } from './run-metrics.js';
+import { normalizeRunTimestamp } from '../../../scripts/lib/workbench-run-time.mjs';
 
 export interface WorkspaceRunProjection {
   taskContext?:{directory:string;title:string|null;association:'registered'|'unregistered'|'ambiguous'};
@@ -30,6 +31,7 @@ export interface WorkspaceRunProjection {
   source: string;
   mode: string | null;
   target: string | null;
+  createdAt?: string | null;
   startedAt: string | null;
   finishedAt: string | null;
   durationSeconds: number | null;
@@ -59,8 +61,8 @@ function durationSeconds(record: Record<string, unknown>, startedAt: string | nu
   const explicit = numberValue(record, 'elapsed_seconds', 'duration_seconds');
   if (explicit !== null) return explicit;
   if (!startedAt || !finishedAt) return null;
-  const started = Date.parse(startedAt.replace(' ', 'T'));
-  const finished = Date.parse(finishedAt.replace(' ', 'T'));
+  const started = Date.parse(startedAt);
+  const finished = Date.parse(finishedAt);
   return Number.isFinite(started) && Number.isFinite(finished) && finished >= started ? (finished - started) / 1000 : null;
 }
 
@@ -76,10 +78,13 @@ function formatDuration(seconds: number): string {
 }
 
 export function projectRunRecord(raw: Record<string, unknown>, runId: string, taskId: string | null, evidenceFiles: string[], metadata?: Record<string, unknown> | null): WorkspaceRunProjection {
-  const startedAt = stringValue(raw, 'job_started_at', 'started_at', 'created_at') ?? stringValue(metadata ?? {}, 'started_at');
+  const startedAt = normalizeRunTimestamp(stringValue(raw, 'job_started_at'))
+    ?? normalizeRunTimestamp(stringValue(raw, 'started_at')) ?? normalizeRunTimestamp(stringValue(metadata ?? {}, 'started_at'));
+  const createdAt = normalizeRunTimestamp(stringValue(raw, 'created_at'));
   const status = stringValue(raw, 'status', 'state') ?? 'unknown';
   // updated_at is also a running heartbeat, not proof of completion.
-  const finishedAt = stringValue(raw, 'job_finished_at', 'finished_at', 'ended_at');
+  const finishedAt = normalizeRunTimestamp(stringValue(raw, 'job_finished_at'))
+    ?? normalizeRunTimestamp(stringValue(raw, 'finished_at')) ?? normalizeRunTimestamp(stringValue(raw, 'ended_at'));
   const mode = stringValue(raw, 'mode') ?? stringValue(metadata ?? {}, 'mode');
   const target = stringValue(raw, 'target', 'task_name') ?? stringValue(metadata ?? {}, 'task_name');
   const exitCode = numberValue(raw, 'exit_code');
@@ -100,5 +105,5 @@ export function projectRunRecord(raw: Record<string, unknown>, runId: string, ta
   const displayName = stringValue(raw, 'display_name') ?? stringValue(metadata ?? {}, 'display_name') ?? stringValue(notification, 'display_name');
   const failureReason = stringValue(raw, 'lost_reason', 'failure_reason');
   return { runId, taskId, source: 'task-runner', status, mode, target, startedAt, finishedAt, durationSeconds: duration, exitCode, committed, insertedRows, updatedRows, summary: summaryParts.join(' · ') || '暂无结果摘要', evidenceFiles, verification, executionLocation: metadata?.location === 'local' ? 'local' : null,
-    ...(displayName ? { displayName: displayName.slice(0, 240) } : {}), ...(failureReason ? { failureReason: failureReason.slice(0, 500) } : {}) };
+    ...(createdAt ? { createdAt } : {}), ...(displayName ? { displayName: displayName.slice(0, 240) } : {}), ...(failureReason ? { failureReason: failureReason.slice(0, 500) } : {}) };
 }

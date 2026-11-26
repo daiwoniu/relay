@@ -365,8 +365,9 @@ function SettingsDialog({ bot, projects, projectHint, onClose, onSaved }: {
   </Modal>;
 }
 
-export default function FeishuImSettings({ editor, onEdit, onChanged }: {
-  editor: BotEditor; onEdit: (editor: BotEditor) => void; onChanged: () => void;
+export default function FeishuImSettings({ botDirectory, editor, onEdit, onChanged }: {
+  botDirectory: { id: string; workspace: string }[]; editor: BotEditor;
+  onEdit: (editor: BotEditor) => void; onChanged: () => void;
 }) {
   const [data, setData] = useState<Configuration | null>(null);
   const [error, setError] = useState<unknown>(null);
@@ -430,7 +431,13 @@ export default function FeishuImSettings({ editor, onEdit, onChanged }: {
     {data && !data.projects.length && <p className="feishu-card">当前没有可管理的 Relay 项目。添加机器人前，请先创建项目或取得项目管理权限。</p>}
     <section className="feishu-card">
       <div className="feishu-section-heading">
-        <h2>机器人列表</h2>
+        <div className="feishu-row-actions">
+          <h2>机器人列表</h2>
+          <button type="button" className="feishu-primary" onClick={() => {
+            featureAction('feishu_admin', 'edit_bot', 'admin');
+            onEdit('new');
+          }}>添加机器人</button>
+        </div>
         <div className="feishu-concurrency-actions">
           {data && <button type="button" className="feishu-concurrency-toggle" aria-expanded={editingConcurrency} disabled={savingConcurrency}
             onClick={() => {
@@ -458,24 +465,30 @@ export default function FeishuImSettings({ editor, onEdit, onChanged }: {
         const approval = approvalExpired(bot.approval) ? 'manual' : bot.approval?.choice ?? 'manual';
         return <article className="feishu-bot-row" key={bot.id}>
           <header className="feishu-bot-heading">
-            <div><h3>{bot.name}</h3><p>工作区 · {project?.name ?? bot.projectId}</p></div>
+            <div><h3>{bot.name}</h3><p>{project?.name ?? botDirectory.find(item => item.id === bot.id)?.workspace ?? '工作区'}</p></div>
             <FeishuConnectionStatus enabled={bot.enabled} active={bot.active} connection={bot.connection} />
           </header>
           <dl className="feishu-bot-facts">
             <div><dt>引擎和模型</dt><dd>{engineName} · {bot.platformPreferences?.modelId ?? '自动选择模型'}</dd></div>
             <div><dt>审核方式</dt><dd>{approvalLabels[approval]}</dd></div>
-            <div><dt>机器人并发</dt><dd>{bot.maxConcurrent ?? '沿用飞书总并发'}</dd></div>
-            <div><dt>群历史总结</dt><dd>{bot.summary ? `已开启 · ${bot.summary.chatIds.length} 个群` : '未开启'}</dd></div>
-            <div><dt>私聊与群聊配置</dt><dd>{bot.conversationOverrides?.length ? `${bot.conversationOverrides.length} 项单独设置` : '沿用机器人默认设置'}</dd></div>
+            {bot.summary && <div><dt>群历史总结</dt><dd>{bot.summary.chatIds.length} 个群</dd></div>}
+            {!!bot.conversationOverrides?.length && <div><dt>单独设置</dt><dd>{bot.conversationOverrides.length} 项</dd></div>}
           </dl>
           <footer className="feishu-bot-footer">
-            <div><small>App ID · {bot.appId}</small>{!project && <p>编辑需要此项目的管理权限。</p>}</div>
+            <details className="feishu-bot-summary" onToggle={event => {
+              if (event.currentTarget.open) featureAction('feishu_admin', 'configuration_options', 'admin');
+            }}><summary>配置摘要</summary><dl>
+              <div><dt>App ID</dt><dd>{bot.appId}</dd></div><div><dt>机器人并发</dt><dd>{bot.maxConcurrent ?? '沿用飞书总并发'}</dd></div>
+              {!bot.summary && <div><dt>群历史总结</dt><dd>未开启</dd></div>}
+              {!bot.conversationOverrides?.length && <div><dt>私聊与群聊配置</dt><dd>沿用机器人默认设置</dd></div>}
+            </dl></details>
             <div className="feishu-row-actions">
               <button type="button" disabled={loading || error != null || !project} onClick={() => { featureAction('feishu_admin', 'edit_bot', 'admin'); onEdit(bot); }}>{bot.enabled ? '编辑' : '编辑或启用'}</button>
               {bot.enabled && <button type="button" disabled={loading || error != null} onClick={() => { featureAction('feishu_admin', 'open_pause', 'admin'); setPauseTarget(bot); }}>停用</button>}
             </div>
+            {!project && <small>编辑需要此项目的管理权限。</small>}
           </footer>
-        </article>; }) : data && <p>还没有机器人。点击页头的「添加机器人」绑定飞书应用和 Relay 项目。</p>}
+        </article>; }) : data && <p>还没有机器人。</p>}
     </section>
   </section>;
 }

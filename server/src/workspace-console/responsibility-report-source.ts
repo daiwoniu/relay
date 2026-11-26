@@ -26,7 +26,7 @@ export interface ResponsibilityItem extends FeishuContext {
   myRoleKeys?: string[];
   baseOwnerIsMe?: boolean;
   fallbackContact?: { role: 'reporter' | 'creator'; names: string[] };
-  personalSubtasks: Array<{ id: string; name: string; passed: boolean }>;
+  personalSubtasks: Array<{ id: string; name: string; passed: boolean; updatedAt?: string | null; finishedAt?: string | null }>;
   currentNodes: string[];
   version: string | null;
   url: string | null;
@@ -133,6 +133,10 @@ function workItemTimestamp(value: unknown, field: string): string | null {
     throw new Error(`Project ${field}无效`);
   }
   return new Date(value as number).toISOString();
+}
+function optionalReportTimestamp(value: unknown, field: string): string | null | undefined {
+  if (value === undefined) return undefined;
+  try { return workItemTimestamp(value, field); } catch { return null; }
 }
 function searchSubtaskFinishedAt(value: unknown): string | null {
   // The collector has already converted timezone-aware values to epoch millis.
@@ -251,6 +255,8 @@ export function parseResponsibilityReport(raw: unknown, expected: ExpectedIdenti
         throw new Error('Project 工作台子任务责任或状态无效');
       }
       return { id: childId, title: reportTitle(child, childId), owners: child.owners as string[], passed: child.passed,
+        ...(child.created_at === undefined ? {} : {createdAt:optionalReportTimestamp(child.created_at, '子任务创建时间')}),
+        ...(child.updated_at === undefined ? {} : {updatedAt:optionalReportTimestamp(child.updated_at, '子任务更新时间')}),
         finishedAt: searchSubtaskFinishedAt(child.finished_at),
         nodeId: child.node_id, nodeName: typeof child.node_name === 'string' ? child.node_name : null,
         phase: child.phase as WorkbenchItem['mySubtasks'][number]['phase'] };
@@ -258,6 +264,7 @@ export function parseResponsibilityReport(raw: unknown, expected: ExpectedIdenti
     if (owner !== expected.userKey && !roleOwners.includes(expected.userKey) && children.length === 0 && myNodes.length === 0) throw new Error('Project 工作台父项缺少本人责任');
     return { workItemId: id, title: reportTitle(item, id), typeName: typeof item.type_name === 'string' ? item.type_name : null,
       roleOwnerUserKeys: [...new Set(roleOwners as string[])],
+       ...(item.created_at === undefined ? {} : {createdAt:optionalReportTimestamp(item.created_at, '工作项创建时间')}),
       updatedAt: workItemTimestamp(item.updated_at, '工作项更新时间'),
       finishedAt: workItemTimestamp(item.finished_at, '工作项结束时间'),
       url: verifiedUrl(item.work_item_url, id, item.work_item_type), ownerUserKey: owner as string | null,
@@ -334,11 +341,15 @@ export function parseResponsibilityReport(raw: unknown, expected: ExpectedIdenti
       ...(Array.isArray(item.my_role_keys) && item.my_role_keys.every((role) => typeof role === 'string' && role.length > 0)
         ? { myRoleKeys: item.my_role_keys as string[] } : {}),
       ...(typeof item.base_owner_is_me === 'boolean' ? { baseOwnerIsMe: item.base_owner_is_me } : {}),
+       ...(item.created_at === undefined ? {} : {createdAt:optionalReportTimestamp(item.created_at, '工作项创建时间')}),
       updatedAt: workItemTimestamp(item.updated_at, '工作项更新时间'),
+       ...(item.finished_at === undefined ? {} : {finishedAt:optionalReportTimestamp(item.finished_at, '工作项结束时间')}),
       personalSubtasks: subtasks.map((value) => {
         const task = record(value);
         const taskId = validId(task.id);
-        return { id: taskId, name: reportTitle(task, taskId), passed: task.passed === true };
+        return { id: taskId, name: reportTitle(task, taskId), passed: task.passed === true,
+          ...(task.updated_at === undefined ? {} : {updatedAt:optionalReportTimestamp(task.updated_at, '子任务更新时间')}),
+          ...(task.finished_at === undefined ? {} : {finishedAt:searchSubtaskFinishedAt(task.finished_at)}) };
       }),
       currentNodes: nodes.map((value) => record(value)).filter((node) => node.status === 2 && typeof node.name === 'string').map((node) => String(node.name)),
       version: typeof release.effective_version === 'string' ? release.effective_version : null,

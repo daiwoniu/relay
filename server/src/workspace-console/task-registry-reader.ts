@@ -12,7 +12,6 @@ export interface TaskRegistryTask {
   taskPath: string | null;
   taskDocumentPath: string | null;
   taskPlanPath?: string | null;
-  taskDirectoryUpdatedAt?: string | null;
   status: string | null;
   horizon: string | null;
   nextAction: string | null;
@@ -100,15 +99,6 @@ async function readTaskDocumentPath(root: string, taskPath: string | null, filen
     } catch { /* Missing or unreadable guide: try the next conventional filename. */ }
   }
   return null;
-}
-
-async function readTaskDirectoryUpdatedAt(root:string,taskPath:string|null):Promise<string|null>{
-  if(!taskPath)return null;
-  try{
-    const directory=requireWorkspaceDirectory(root,taskPath);
-    const stat=await fs.stat(directory);
-    return stat.isDirectory()?stat.mtime.toISOString():null;
-  }catch{return null;}
 }
 
 async function readTaskPlanPath(root: string, taskPath: string | null): Promise<string | null> {
@@ -243,7 +233,6 @@ export async function readTaskRegistry(root: string, { includeEvidence = true }:
       taskPath,
       taskDocumentPath,
       taskPlanPath: includeEvidence ? await readTaskPlanPath(root, taskPath) : null,
-      taskDirectoryUpdatedAt:includeEvidence?await readTaskDirectoryUpdatedAt(root,taskPath):null,
       status: optionalString(item.status),
       horizon: optionalString(item.horizon),
       nextAction: optionalString(item.next_action),

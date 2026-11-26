@@ -11,7 +11,7 @@ test('a Feishu card uses its parent title, owner and update separately from ledg
   const model=buildTaskCardModel(group,report);
   assert.equal(model.title,parent.title);assert.deepEqual(model.nodeLines,['交付（负责人：李国祥）']);assert.equal(model.feishuUpdatedAt,parent.updatedAt);
   assert.equal(model.ledgers[0].task.id,'local');assert.equal(model.ledgers[0].next,'复核结果');assert.equal(model.ledgers[0].files[0].path,'tasks/local/README.md');
-  assert.equal(model.ledgers[0].updatedAt,task.lastVerifiedAt);
+  assert.deepEqual(model.ledgers[0].time,{label:'本地最近记录（核验）',at:task.lastVerifiedAt});
 });
 test('local-only cards must not absorb unrelated associations when parent IDs are absent',()=>{
   const model=buildTaskCardModel({...local,task:{...task,feishuWorkItemIds:[]}}, {...report,localAssociated:[{workItemId:'999',title:'其他任务',verified:true}]});
@@ -49,6 +49,7 @@ test('personally delivered defects no longer appear as current children but reta
  assert.equal(buildTaskCardModel(entry,source).relations.some(row=>row.id==='33'),false);
  const history=buildTaskCardModel({...entry,members:[{...local,task:{...task,status:'done'}},delivered]},source);
  const row=history.relations.find(row=>row.id==='33');assert.equal(row.completed,true);assert.equal(row.status,'已修复，待验收');
+  assert.equal(row.nativeEnded,false);
 });
 test('header prioritizes a single unfinished local status and leaves unverified Feishu status unknown',()=>{
   const mixed=buildTaskCardModel({...group,members:[local,{...local,key:'two',task:{...task,id:'two',status:'done'}}]},report);
@@ -131,14 +132,14 @@ test('a completed parent ledger with secondary defect IDs remains at the parent 
   assert.notEqual(model.tone,'completed');assert.deepEqual(model.relations,[]);
   assert.deepEqual(model.ledgers.map(item=>item.task.id),['local']);assert.equal(model.ledgers[0].status,'已完成');
 });
-test('unfinished children sort by creation only; completed children are excluded and missing dates stay last',()=>{
+test('unfinished children sort by update time and missing update times stay last',()=>{
   const row=(id,createdAt,completed=false,updatedAt=null)=>({id,title:id,createdAt,completed,updatedAt,status:'状态',label:'子任务',url:null});
   const items=[row('old','2026-11-18',false,'2026-11-22'),row('new','2026-11-20'),row('done','2026-11-21',true),row('missing',null,false,'2026-11-23')];
-  assert.deepEqual(sortCardRelations(items,false).map(item=>item.id),['new','old','missing']);
+  assert.deepEqual(sortCardRelations(items,false).map(item=>item.id),['missing','old','new']);
   assert.equal(items.length,4,'projection must not mutate the report');
 });
-test('completed cards include completed children and order by their latest update or completion',()=>{
-  const items=[{id:'a',title:'a',completed:true,finishedAt:'2026-11-21',updatedAt:'2026-11-19'}, {id:'b',title:'b',completed:false,updatedAt:'2026-11-20'}, {id:'c',title:'c',completed:true,updatedAt:'2026-11-22'}];
+test('completed cards include history and sort each state by its corresponding time',()=>{
+  const items=[{id:'a',title:'a',completed:true,finishedAt:'2026-11-21',updatedAt:'2026-11-26'}, {id:'b',title:'b',completed:false,updatedAt:'2026-11-20'}, {id:'c',title:'c',completed:true,finishedAt:'2026-11-22'}];
   assert.deepEqual(sortCardRelations(items,true).map(item=>item.id),['c','a','b']);
   const child={id:'7173251048',title:'已完成子任务',passed:true,phase:'completed',nodeId:'n',owners:['me'],finishedAt:'2026-11-21',createdAt:'2026-11-17'};
   const done={...group,parent:{...parent,mySubtasks:[child]},members:[{...local,task:{...task,status:'done'}}]};

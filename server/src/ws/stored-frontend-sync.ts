@@ -11,7 +11,7 @@ import { presentRuntimeSession } from './frontend-runtime-policy.js';
 function stale():never{throw new Error('FRONTEND_SNAPSHOT_STALE');}
 function matchesAttempt(runtime:SessionRuntime,attemptId:string|null){return runtime.attemptId===attemptId||attemptId===null&&!runtime.isRunning&&!runtime.isStopping&&runtime.pendingInteractions.size>0&&[...runtime.pendingInteractions.values()].every(p=>p.standalone);}
 function runtimeStamp(runtime:SessionRuntime) {
-  return canonicalJson([runtime.attemptId,runtime.engineConnectionId,runtime.engine,runtime.isRunning,runtime.isStopping,runtime.isRecovering,
+  return canonicalJson([runtime.attemptId,runtime.engineConnectionId,Boolean(runtime.engineConnection),runtime.engine,runtime.isRunning,runtime.isStopping,runtime.isRecovering,
     [...runtime.pendingInteractions].map(([id,p])=>[id,p.createdAt,p.connectionId])]);
 }
 /** Candidate synchronization adapter. Every dependency is explicit; it never starts engines or imports legacy services. */

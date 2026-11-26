@@ -4,6 +4,14 @@ import { normalize } from 'node:path';
 import { ApprovalTrustDurationSchema, EngineIdSchema, FEISHU_MAX_CONCURRENCY } from '../../contracts/dto.js';
 
 export const feishuIdentity = z.string().min(1).max(128).regex(/^[A-Za-z0-9_-]+$/);
+export const feishuConversationFilters = {
+  q: z.string().trim().min(1).max(120).optional(),
+  chatType: z.enum(['p2p', 'group']).optional(),
+  attention: z.enum(['approval', 'failed', 'unknown', 'reply_failed', 'reply_unknown', 'reply_anomaly']).optional(),
+};
+export const feishuStatsBuckets = z.enum(['hour', 'day', 'week']);
+export const feishuStatsDimensions = z.enum(['robot', 'group', 'p2p', 'model']);
+export const feishuStatsMetrics = z.enum(['received', 'anomalies', 'tokens']);
 const identity = feishuIdentity;
 const optionalIdentity = identity.nullish().transform(value => value ?? null);
 export const feishuTaskIdSchema = z.string().min(1).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/);

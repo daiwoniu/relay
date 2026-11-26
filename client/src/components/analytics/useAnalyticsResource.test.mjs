@@ -11,6 +11,7 @@ function harness(){
   const slots=[],effects=[],requests=[];
   const react={
     useState(initial){const index=cursor++;if(!(index in slots))slots[index]=initial;return[slots[index],next=>{const value=typeof next==='function'?next(slots[index]):next;if(!Object.is(value,slots[index])){slots[index]=value;dirty=true;}}];},
+    useRef(initial){const index=cursor++;return slots[index]??={current:initial};},
     useEffect(effect,deps){const index=cursor++,old=slots[index];if(!old||deps.some((value,i)=>!Object.is(value,old.deps[i]))){old?.cleanup?.();slots[index]={deps};effects.push(()=>{slots[index].cleanup=effect();});}},
   };
   const exports={};
@@ -26,6 +27,9 @@ test('模块重试保留路径与旧数据，使用实际快照时间并请求�
  h.retry();assert.equal(h.view.data.pv,7);assert.equal(h.view.loading,true);assert.match(h.requests[1].path,/fresh=true/);assert.equal(h.view.dataPath,'/summary?excludeAdmin=false');
  h.requests[1].reject(Error('temporary'));await h.settle();assert.equal(h.view.data.pv,7);assert.equal(h.view.updatedAt,123456);
  h.retry();h.requests[2].resolve({data:{pv:9},asOf:123999,cached:false});await h.settle();assert.equal(h.view.data.pv,9);assert.equal(h.view.error,null);assert.equal(h.view.updatedAt,123999);
+ h.change('/summary?excludeAdmin=true');assert.doesNotMatch(h.requests[3].path,/fresh=true/);
+ h.change('/summary?excludeAdmin=true','admin',1);assert.match(h.requests[4].path,/fresh=true/);
+ h.change('/summary?excludeAdmin=false');assert.doesNotMatch(h.requests[5].path,/fresh=true/);
 });
 
 test('筛选请求期间保留同账号结果和时间，并明确标记上次查询而非清空整页',async t=>{

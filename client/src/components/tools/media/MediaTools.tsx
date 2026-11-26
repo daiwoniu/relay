@@ -1,5 +1,6 @@
 import type { MediaToolId } from '../../../../../server/src/analytics/registry.ts';
 import { lazy, type ComponentType } from 'react';
+import { MediaJobsContext, MediaToolContext } from './tool-jobs';
 
 const panels: Record<MediaToolId, ComponentType<{ storageKey: string }>> = {
   'image-edit': lazy(() => import('./ImageTools').then(({ ImageEdit }) => ({ default: ImageEdit }))),
@@ -12,7 +13,9 @@ const panels: Record<MediaToolId, ComponentType<{ storageKey: string }>> = {
   'video-edit': lazy(() => import('./VideoTools').then(({ VideoEdit }) => ({ default: VideoEdit }))),
 };
 
-export default function MediaTools({ id, storageKey }: { id: MediaToolId; storageKey: string }) {
+export default function MediaTools({ id, storageKey, jobs }: { id: MediaToolId; storageKey: string; jobs: Set<AbortController> }) {
   const Panel = panels[id];
-  return <Panel storageKey={storageKey} />;
+  return <MediaJobsContext.Provider value={jobs}>
+    <MediaToolContext.Provider value={id}><Panel storageKey={storageKey} /></MediaToolContext.Provider>
+  </MediaJobsContext.Provider>;
 }

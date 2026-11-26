@@ -1403,12 +1403,16 @@ export function cancelQueuedTurnForUser(
   return true;
 }
 
-function handleCancel(client: FrontendClient, requestedSessionId?: string): void {
+function handleCancel(client: FrontendClient, requestedSessionId?: string, expectedAttemptId?: string): void {
   const sessionId = requestedSessionId || client.activeSubscriptionSessionId;
   if (!sessionId) return;
   if (!authorizeClientSession(client, sessionId)) return;
-  const audit = beginSessionAdminAudit(client.actor, sessionService.getRecord(sessionId), 'session.stop');
   const runtime = runtimes.get(sessionId);
+  if (expectedAttemptId && (!runtime?.isRunning || runtime.attemptId !== expectedAttemptId)) {
+    sendFrontendEvent(client.ws, { type: 'error', protocolVersion: RELAY_PROTOCOL_VERSION, code: 'TURN_CANCEL_CONFLICT', commandType: 'cancel', sessionId, message: '回合状态已变化，请同步状态后核对' });
+    return;
+  }
+  const audit = beginSessionAdminAudit(client.actor, sessionService.getRecord(sessionId), 'session.stop');
   if (!runtime?.isRunning) {
     try {
       const cancelled = cancelQueuedTurnForUser(sessionId, { id: client.actor.userId, role: client.actor.role });
@@ -1581,7 +1585,7 @@ export function setupWebSocket(wss: WebSocketServer,
             });
           }
         }
-        else if (message.type === 'cancel') handleCancel(client, message.sessionId);
+        else if (message.type === 'cancel') handleCancel(client, message.sessionId, message.expectedAttemptId);
         else if (message.type === 'cancel_followup') followups.cancel(client, message.sessionId, message.messageId);
         else if (message.type === 'resume_followups') followups.resume(client, message.sessionId);
         else if (message.type === 'respond_interaction') handleInteractionResponse(client, message);

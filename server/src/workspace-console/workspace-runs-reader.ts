@@ -1,6 +1,7 @@
 import { lstat } from 'node:fs/promises';
 import type { Dirent } from 'node:fs';
 import path from 'node:path';
+import { compareRunRecency, normalizeRunTimestamp } from '../../../scripts/lib/workbench-run-time.mjs';
 import { projectRunRecord,type WorkspaceRunProjection } from './run-projection.js';
 import { projectRunMetrics,type RunMetrics } from './run-metrics.js';
 import { projectRunBusinessResult } from './run-business-result.js';
@@ -8,12 +9,6 @@ import { readRunOperation } from './run-operation.js';
 import {readRunTestResult} from './run-test-result.js';
 import { FIXED_WORKSPACE_PATH } from './workspace-snapshot.js';
 import { readWorkspaceDirectory, readWorkspaceFile } from './workspace-files.js';
-function runSortTime(run: WorkspaceRunProjection): number {
-  const encoded = /^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})/.exec(run.runId);
-  const value = run.startedAt ?? (encoded ? `${encoded[1]}-${encoded[2]}-${encoded[3]}T${encoded[4]}:${encoded[5]}:${encoded[6]}` : null);
-  const time = value ? Date.parse(value.replace(' ', 'T')) : NaN;
-  return Number.isFinite(time) ? time : 0;
-}
 
 async function readRunResult(root: string, directory: string, runId: string, status: string, statusRecord: Record<string, unknown>, availableFiles?: string[]): Promise<{ resultMetrics: RunMetrics | null; businessResult: WorkspaceRunProjection['businessResult']; resultFile: string | null }> {
   const names = status === 'running' ? ['progress', 'summary'] as const : ['summary', 'progress'] as const;
@@ -82,7 +77,7 @@ export async function readWorkspaceRuns(root = FIXED_WORKSPACE_PATH): Promise<Wo
         testResult,
         operation: await readRunOperation(root, taskEntry.name, metadata ?? raw, projected.mode),
         detailFilePath: testResult?path.join(runPath,'run.log'):resultFile ? path.join(runPath, resultFile) : hasStatus ? path.join(runPath, 'status.json') : path.join(runPath, 'run-meta.json'),
-        resultMetrics, businessResult, observedAt: typeof raw.updated_at === 'string' ? raw.updated_at : null });
+        resultMetrics, businessResult, observedAt: normalizeRunTimestamp(typeof raw.updated_at === 'string' ? raw.updated_at : null) });
     }
     let registry: unknown;
     try { registry = JSON.parse(await readWorkspaceFile(root, path.join(root, 'tasks', taskEntry.name, 'remote', 'runs-registry.json'))) as unknown; }
@@ -139,16 +134,16 @@ export async function readWorkspaceRuns(root = FIXED_WORKSPACE_PATH): Promise<Wo
           } catch { /* Collected evidence is optional; retain the registration. */ }
         }
       }
-      const projected = projectRunRecord(collected, run.run_id, taskEntry.name, collectedFiles);
+       const projected = projectRunRecord(collected, run.run_id, taskEntry.name, collectedFiles, {started_at:field('started_at')});
       if(result.length>=5000)throw new Error('工作台执行记录超过安全上限');
       result.push({ ...projected, source: 'remote-runner', status: field('status') ?? projected.status,
         operation: await readRunOperation(root, taskEntry.name, run, field('mode') ?? projected.mode),
         mode: field('mode') ?? projected.mode, target: field('task_name') ?? projected.target,
-        startedAt: projected.startedAt ?? field('created_at'), executionLocation: 'remote',
+        createdAt: projected.createdAt ?? normalizeRunTimestamp(field('created_at')), executionLocation: 'remote',
         displayName: field('display_name')?.slice(0, 240) ?? projected.displayName ?? null,
-        serverName: field('server_profile'), observedAt: field('last_checked_at'), collectedAt: field('collected_at'), detailFilePath, resultMetrics, businessResult });
+        serverName: field('server_profile'), observedAt: normalizeRunTimestamp(field('last_checked_at')), collectedAt: normalizeRunTimestamp(field('collected_at')), detailFilePath, resultMetrics, businessResult });
     }
   }
-  return result.sort((left, right) => runSortTime(right) - runSortTime(left) || right.runId.localeCompare(left.runId));
+  return result.sort(compareRunRecency);
 }
 

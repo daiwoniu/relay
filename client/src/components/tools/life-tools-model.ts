@@ -87,9 +87,15 @@ export function thresholdDeal(current: string, threshold: string, reduction: str
   return { gap, payable, extraPay: payable - original };
 }
 
+export function collectOptions(raw: string): { options: string[]; duplicates: number } {
+  const entries = raw.split(/\r?\n/).map(value => value.trim()).filter(Boolean);
+  const options = [...new Set(entries)];
+  return { options, duplicates: entries.length - options.length };
+}
+
 export function parseOptions(raw: string): string[] {
   if (raw.length > 50000) throw new Error('候选内容过长，请缩短后重试。');
-  const result = [...new Set(raw.split(/\r?\n/).map((value) => value.trim()).filter(Boolean))];
+  const { options: result } = collectOptions(raw);
   if (!result.length) throw new Error('至少输入一个候选项。');
   if (result.length > 500) throw new Error('最多支持 500 个不同候选项。');
   return result;

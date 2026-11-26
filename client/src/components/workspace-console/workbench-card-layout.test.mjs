@@ -137,7 +137,7 @@ test('current card sections follow the requested order and all current relations
   assert.match(text,/子项4.*子项3.*子项2.*子项1.*子项0/);assert.doesNotMatch(text,/子项5/);
   assert.doesNotMatch(text,/展开其余子项与关联项/);
   assert(text.indexOf('飞书父项')<text.indexOf('飞书更新时间'));assert(text.indexOf('飞书更新时间')<text.indexOf('子项4'));
-  assert(text.indexOf('子项0')<text.indexOf('本地台账'));assert(text.indexOf('台账状态')<text.indexOf('下一步'));assert(text.indexOf('下一步')<text.indexOf('README.md'));assert(text.indexOf('README.md')<text.indexOf('本地更新时间'));
+  assert(text.indexOf('子项0')<text.indexOf('本地台账'));assert(text.indexOf('台账状态')<text.indexOf('下一步'));assert(text.indexOf('下一步')<text.indexOf('README.md'));assert(text.indexOf('README.md')<text.indexOf('本地最近记录（核验）'));
   assert.doesNotMatch(text,/核心文件：/);assert.match(html,/<details open="" aria-label="飞书子项"/);assert.match(text,/飞书子项 · 5 项/);
   assert.match(text,/负责人：李国祥/);assert.match(html,/subTaskId=7173251052/);assert.match(html,/target="_blank"/);
   assert.equal((html.match(/workspace-workbench__task-card/g)??[]).length,1);
@@ -184,11 +184,12 @@ test('NEW markers identify the specific discovered child and local ledger within
   assert.doesNotMatch(plain(render(MatterCard,props)),/NEW/);
 });
 
-test('completed cards use the same sections and include completed relations sorted by change time',()=>{
+test('completed cards show the local end time and retain completed Feishu relations',()=>{
   const props=cardFixture();props.entry.members[0].task.status='done';props.entry.members[0].task.completedAt='2026-11-20T12:00:00+08:00';
   const html=render(MatterCard,props),text=plain(html.slice(0,html.indexOf('<details>')));
   assert.match(text,/子项5.*已完成.*子项4.*子项3/);
-  assert.match(plain(html),/台账状态.*下一步.*README.md.*本地更新时间/);
+  assert.match(plain(html),/台账状态.*下一步.*README.md.*本地结束/);
+  assert.match(plain(html),/本轮结束：.*12:00/);
   assert.doesNotMatch(plain(html),/null|undefined|verified/);
   assert.doesNotMatch(plain(html),/当前节点：|所属节点：/);
   assert.match(html,/<details aria-label="飞书子项"/);assert.doesNotMatch(html,/<details open="" aria-label="飞书子项"/);
@@ -215,7 +216,7 @@ test('duplicate ledger titles are hidden under the card or child while local det
  props.entry.members[0].task.title='  飞书父项  ';props.newKeys=new Set(['local:active']);props.onOpenEntry=entry=>opened.push(entry.task.id);
  const text=plain(render(MatterCard,props));
  assert.equal((text.match(/飞书父项/g)??[]).length,1);assert.match(text,/台账状态：处理中NEW/);
- assert.match(text,/下一步：复核后交付/);assert.match(text,/README.md/);assert.match(text,/本地更新时间/);
+ assert.match(text,/下一步：复核后交付/);assert.match(text,/README.md/);assert.match(text,/本地最近记录（核验）/);
  const buttons=[];const visit=node=>{if(!node||typeof node!=='object')return;if(Array.isArray(node)){node.forEach(visit);return;}if(node.type==='button')buttons.push(node);visit(node.props?.children);};
  visit(MatterCard(props));buttons.find(button=>button.props['aria-label']?.startsWith('打开本地台账详情')).props.onClick();assert.deepEqual(opened,['active']);
  const nested=cardFixture();nested.entry.members[0].task.title='子项0';

@@ -29,22 +29,21 @@ test('projects only task registry fields and structured Feishu ids', async () =>
     assert.deepEqual(result.tasks, [{
       id: 'task-a', kind: 'task', diagnostics: ['任务说明缺失或目录不可读取'], title: '任务 A', description: null, taskPath: 'tasks/task-a', status: 'active', horizon: 'now',
       nextAction: '继续验收', waitingOn: null, statusBasis: '本地修复已完成，等待验收', verification: 'verified',
-      lastVerifiedAt: '2026-09-22T09:00:00+08:00', startedAt: '2026-09-22T08:00:00+08:00', completedAt: null, taskDocumentPath: null, taskPlanPath: null, taskDirectoryUpdatedAt:null, deliveryMatrix: [], feishuWorkItemIds: ['9001000007'], feishuWorkItemUrls: { '9001000007': 'https://project.feishu.cn/demo-space/story/detail/9001000007' },
+      lastVerifiedAt: '2026-09-22T09:00:00+08:00', startedAt: '2026-09-22T08:00:00+08:00', completedAt: null, taskDocumentPath: null, taskPlanPath: null, deliveryMatrix: [], feishuWorkItemIds: ['9001000007'], feishuWorkItemUrls: { '9001000007': 'https://project.feishu.cn/demo-space/story/detail/9001000007' },
     }]);
     assert.equal('secret_field' in result.tasks[0]!, false);
   });
 });
 
-test('directory update time is the validated folder mtime, never completion or guide-file time',async()=>{
+test('completion time comes from the ledger even when the directory is older',async()=>{
  await withRoot(async root=>{
   const directory=path.join(root,'tasks','recent');await fs.mkdir(directory,{recursive:true});
   await fs.writeFile(path.join(directory,'README.md'),'# 任务');
   const timestamp=new Date('2026-11-01T12:00:00Z');await fs.utimes(directory,timestamp,timestamp);
   await fs.writeFile(path.join(root,'tasks','task-registry.json'),JSON.stringify({schema_version:1,tasks:{recent:{kind:'task',task_path:'tasks/recent',completed_at:'2026-11-20T12:00:00Z',status:'done'},outside:{kind:'task',task_path:'../outside',status:'done'},item:{kind:'item',status:'done'}}}));
   const result=await readTaskRegistry(root);
-  assert.equal(result.tasks.find(task=>task.id==='recent')!.taskDirectoryUpdatedAt,timestamp.toISOString());
-  assert.equal(result.tasks.find(task=>task.id==='outside')!.taskDirectoryUpdatedAt,null);
-  assert.equal(result.tasks.find(task=>task.id==='item')!.taskDirectoryUpdatedAt,null);
+  assert.equal(result.tasks.find(task=>task.id==='recent')!.completedAt,'2026-11-20T12:00:00Z');
+  assert(result.tasks.every(task=>!Object.hasOwn(task,'taskDirectoryUpdatedAt')));
  });
 });
 

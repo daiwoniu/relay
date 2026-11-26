@@ -160,9 +160,9 @@ test('attention items prioritize blocked work and recent records within each sta
 
 test('session activity labels show elapsed time without inventing missing timestamps', () => {
   const now = Date.parse('2026-09-29T12:00:00+08:00');
-  assert.equal(viewModel.formatSessionActivity(now - 3 * 60_000, now), '3 分钟前活跃');
-  assert.equal(viewModel.formatSessionActivity(now - 2 * 60 * 60_000, now), '2 小时前活跃');
-  assert.equal(viewModel.formatSessionActivity(null, now), '活跃时间未记录');
+  assert.equal(viewModel.formatSessionActivity(now - 3 * 60_000, now), '3 分钟前更新');
+  assert.equal(viewModel.formatSessionActivity(now - 2 * 60 * 60_000, now), '2 小时前更新');
+  assert.equal(viewModel.formatSessionActivity(null, now), '更新时间未记录');
 });
 
 test('Feishu-only cards use report facts without inventing a current action or update time', () => {
@@ -209,23 +209,14 @@ test('Feishu work items and grouped matters sort by their own last update time',
   assert.deepEqual(viewModel.selectFocusEntries(entries).map((entry) => entry.key), ['local:ledger', 'project:102', 'group:201', 'project:101']);
 });
 
-test('ended matters use completion time instead of later updates', () => {
-  const finishedParent = { ...parent('201', 'u'), flowFinished: true,
-    finishedAt: '2026-10-14T10:00:00+08:00', updatedAt: '2026-10-16T10:00:00+08:00' };
+test('ended local ledger rows use completion time instead of later updates', () => {
   const finishedLocal = { ...task('ledger', 'done'), completedAt: '2026-10-15T10:00:00+08:00',
     lastVerifiedAt: '2026-10-16T11:00:00+08:00' };
-  const group = { kind: 'group', key: 'group:201', parent: finishedParent, members: [
-    { kind: 'parent', key: 'parent:201', item: finishedParent },
-    { kind: 'local', key: 'local:ledger', task: finishedLocal },
-  ] };
-  assert.equal(viewModel.taskDisplayEntryFinishedAt(group), Date.parse(finishedLocal.completedAt));
-  assert.equal(viewModel.taskEntryFinishedAt({ kind: 'parent', key: 'parent:201', item: finishedParent }), Date.parse(finishedParent.finishedAt));
-  assert.equal(viewModel.taskEntryFinishedAt({ kind: 'subtask', key: 'subtask:201:301', parent: finishedParent,
-    subtask: { ...child('301', true, 'completed'), finishedAt: '2026-10-13T10:00:00+08:00' }, localTasks: [] }), Date.parse('2026-10-13T10:00:00+08:00'));
-  assert.equal(viewModel.taskEntryFinishedAt({ kind: 'local', key: 'local:cancelled', task: task('cancelled', 'cancelled') }), 0);
+  assert.deepEqual(viewModel.localLedgerTime(finishedLocal), {label:'本地结束',at:finishedLocal.completedAt});
+  assert.equal(viewModel.localLedgerTime(task('cancelled','cancelled')).at,null);
 });
 
-test('a refresh marks only newly discovered task IDs and temporarily prioritizes them', () => {
+test('a refresh marks only newly discovered active task IDs', () => {
   const entries = [
     { kind: 'local', key: 'local:recent', task: task('recent', 'doing') },
     { kind: 'local', key: 'local:new', task: task('new', 'doing') },
@@ -236,12 +227,9 @@ test('a refresh marks only newly discovered task IDs and temporarily prioritizes
   assert.deepEqual(viewModel.newTaskEntryKeys(null, entries), []);
   const discovered = viewModel.newTaskEntryKeys(['local:recent', 'local:old'], entries);
   assert.deepEqual(discovered, ['local:new', 'project:42', 'local:finished']);
-  assert.deepEqual(viewModel.prioritizeTaskEntries(entries, new Set(discovered)).map((entry) => entry.key),
-    ['local:new', 'project:42', 'local:recent', 'local:old', 'local:finished']);
+  assert.equal(viewModel.taskDisplayEntryIsNew(entries[1], new Set(discovered)), true);
   assert.equal(viewModel.taskDisplayEntryIsNew(entries[4], new Set(discovered)), false);
   assert.deepEqual(viewModel.newTaskEntryKeys(entries.map((entry) => entry.key), entries), []);
-  assert.deepEqual(viewModel.prioritizeTaskEntries(entries, new Set()).map((entry) => entry.key),
-    ['local:recent', 'local:new', 'project:42', 'local:old', 'local:finished']);
 });
 
 test('new markers retain both split refresh results while known future/shared identities stay known',()=>{
@@ -646,11 +634,11 @@ test('same-named Runs stay with their task', () => {
   assert.deepEqual(runsForTask(next, next.tasks[0]).map((item) => item.taskId), ['a']);
 });
 
-test('detail local ledgers put unfinished work first and sort each state by its latest record', () => {
+test('detail local ledgers sort open work by latest record and ended work by completion', () => {
   const rows = [
     { ...task('done-new', 'done'), completedAt: '2026-10-16T11:00:00+08:00' },
     { ...task('open-old', 'doing'), lastVerifiedAt: '2026-10-14T09:00:00+08:00' },
-    { ...task('done-old', 'done'), completedAt: '2026-10-15T11:00:00+08:00' },
+    { ...task('done-old', 'done'), completedAt: '2026-10-15T11:00:00+08:00', lastVerifiedAt: '2026-10-17T11:00:00+08:00' },
     { ...task('open-new', 'doing'), lastVerifiedAt: '2026-10-16T09:00:00+08:00' },
   ];
   assert.deepEqual(viewModel.sortDetailLocalTasks(rows).map((row) => row.id),
@@ -679,26 +667,19 @@ test('detail local ledger folding always exposes unfinished work and fills two s
   assert.equal(rows[0].id, 'done-old');
 });
 
-test('detail Feishu children put unfinished work first and use their available own or local dates', () => {
+test('detail Feishu children use their own update or end time and put missing times last', () => {
   const children = [
     { id: 'done', passed: true, finishedAt: '2026-10-16T12:00:00+08:00' },
-    { id: 'open-old', passed: false, localTaskIds: ['local-old'] },
-    { id: 'open-new', passed: false, localTaskIds: ['local-new'] },
-    { id: 'done-old', passed: true, finishedAt: '2026-10-15T12:00:00+08:00' },
+    { id: 'open-old', passed: false },
+    { id: 'open-new', passed: false, updatedAt: '2026-10-17T09:00:00+08:00' },
+    { id: 'done-old', passed: true, finishedAt: '2026-10-15T12:00:00+08:00', updatedAt: '2026-10-17T09:00:00+08:00' },
   ];
   const next = parent('123', 'user', children);
   next.updatedAt = '2026-10-14T12:00:00+08:00';
-  const locals = [
-    { ...task('local-new', 'doing', ['open-new']), lastVerifiedAt: '2026-10-16T09:00:00+08:00' },
-    { ...task('local-old', 'doing', ['open-old']), lastVerifiedAt: '2026-10-15T09:00:00+08:00' },
-  ];
-  assert.deepEqual(viewModel.sortDetailSubtasks(next, locals).map((child) => child.id),
+  assert.deepEqual(viewModel.sortDetailSubtasks(next).map((child) => child.id),
     ['open-new', 'open-old', 'done', 'done-old']);
   assert.equal(viewModel.taskEntryUpdatedAt({ kind: 'subtask', parent: next, subtask: children[1] }), 0);
-  assert.deepEqual(viewModel.sortDetailSubtasks(next, []).map((child) => child.id),
-    ['open-old', 'open-new', 'done', 'done-old']);
-  assert.deepEqual(viewModel.sortDetailSubtasks(next, [], new Map([['open-new', '2026-10-17T09:00:00+08:00']]))
-    .map((child) => child.id), ['open-new', 'open-old', 'done', 'done-old']);
+  assert.equal(viewModel.taskEntryUpdatedAt({ kind: 'subtask', parent: next, subtask: children[2] }), Date.parse(children[2].updatedAt));
   assert.equal(children[0].id, 'done');
 });
 
@@ -715,7 +696,7 @@ test('parent detail collects child and direct ledgers once for a separate local 
     task('unrelated', 'doing', ['other-parent']),
   ];
   assert.deepEqual(viewModel.localLedgersForParent(story, rows).map((row) => row.id),
-    ['active-child', 'direct-parent', 'completed-child']);
+    ['completed-child', 'direct-parent', 'active-child']);
 });
 
 test('task detail Runs show newest starts first even when the source order differs', () => {
@@ -823,6 +804,14 @@ test('recent run observation does not displace newer runs to favor distinct task
   ];
   assert.deepEqual(viewModel.selectRecentRuns(runs, 4).map((item) => item.runId), ['a3', 'a2', 'b1', 'a1']);
   assert.equal(runs[0].runId, 'c1');
+});
+test('recent runs compare legacy China Standard Time with explicit offsets and do not infer starts from IDs', () => {
+  const runs = [
+    {runId:'20261130-000000',taskId:'a',startedAt:null},
+    {runId:'started',taskId:'a',startedAt:'2026-11-26 13:30:00'},
+    {runId:'created',taskId:'b',startedAt:null,createdAt:'2026-11-26T05:31:00Z'},
+  ];
+  assert.deepEqual(viewModel.selectRecentRuns(runs,3).map(run=>run.runId),['created','started','20261130-000000']);
 });
 
 test('task material does not substitute a run file when no task documents are registered', () => {

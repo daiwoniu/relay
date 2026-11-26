@@ -8,7 +8,7 @@ export const AnalyticsPageSchema = z.enum(analyticsPageIds);
 export const AnalyticsToolSchema = AnalyticsToolIdSchema;
 export const AnalyticsActionSchema = z.enum(['format','minify','validate','copy','export_png','export_svg','compare','start','complete','cancel','calculate','randomize']);
 export const AnalyticsResultSchema = z.enum(['success','invalid_input','error','cancelled','rejected','throttled']);
-export const AnalyticsRangeSchema = z.enum(['today','7d','30d','all']);
+export const AnalyticsRangeSchema = z.enum(['today','24h','7d','30d','custom','all']);
 const errorCode = z.enum(['INVALID_INPUT','COPY_FAILED','EXPORT_FAILED','OPERATION_FAILED']).optional();
 const context = {
   id: z.string().uuid(), page: AnalyticsPageSchema, pageViewId: z.string().uuid().nullable(),
@@ -51,19 +51,23 @@ export const AnalyticsRecordSchema = z.object({
   networkType:z.enum(['internal','public','unknown']).optional(),
 }).strict();
 export const AnalyticsQuerySchema = z.object({range:AnalyticsRangeSchema.default('7d'),excludeAdmin:z.boolean().default(false),excludeInternal:z.boolean().optional(),
+  startAt:z.number().int().min(0).max(253402300799999).optional(),endAt:z.number().int().min(0).max(253402300799999).optional(),
   feature:z.string().max(50).regex(/^(?:[a-z][a-z0-9_]*|tool\.[a-z][a-z0-9_]*)$/).optional(),
   action:z.string().max(40).regex(/^[a-z][a-z0-9_]*$/).optional(),result:z.enum(['success','error','invalid_input','cancelled','rejected','throttled','unknown']).optional(),
   metric:z.enum(['view','action','result','system']).optional(),includeSystem:z.boolean().optional(),operationId:z.string().uuid().optional(),
-}).strict();
+  pageSize:z.union([z.literal(10),z.literal(50),z.literal(100)]).optional(),
+}).strict().refine(({range,startAt,endAt})=>range==='custom'?startAt!==undefined&&endAt!==undefined&&startAt<endAt:startAt===undefined&&endAt===undefined,{message:'日期范围无效'});
 export type AnalyticsClientEvent = z.infer<typeof AnalyticsClientEventSchema>;
 export type AnalyticsEvent = z.infer<typeof AnalyticsEventSchema>;
 export type AnalyticsRecord = z.infer<typeof AnalyticsRecordSchema>;
 export type AnalyticsQuery = z.infer<typeof AnalyticsQuerySchema>;
 export type AnalyticsPrincipal = {kind:'user';userId:string;authSessionHash:string};
+export type AnalyticsTrendCount={pv:number;uv:number;network?:{public:number;internal:number;unknown:number}};
 export interface AnalyticsSummary {
-  since:number; earliest:number|null; totalStored:number;
+  since:number; until?:number; earliest:number|null; totalStored:number;
   totals:{pv:number;uv:number;users:number;actions:number;hosting:number;logins:number;news:number};
-  daily:Array<{day:string;pv:number;uv:number}>;
+  daily:Array<AnalyticsTrendCount&{day:string}>;
+  trend?:{start:number;step:number;points:Array<AnalyticsTrendCount&{at:number}>};
   pages:Array<{label:string;count:number}>; tools:Array<{label:string;opens:number;actions:number}>;
   results:Array<{label:string;count:number}>; sources:Array<{label:string;count:number}>;
   devices:Array<{label:string;count:number}>; hosting:Array<{label:string;count:number}>;

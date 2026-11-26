@@ -55,6 +55,9 @@ test('HTML 工具栏提供可视化和源码切换', () => {
   assert.match(panelSource, /workspace-preview-modes/);
   assert.match(panelSource, /普通 HTML 默认禁用脚本/);
   assert.match(panelSource, /<ConfirmDialog[\s\S]*确认启用 HTML 脚本/);
+  assert.match(panelSource, /buildStandaloneHtmlPreview\(activeTab\.content, activeTab\.title, activeTab\.htmlPreviewScriptsEnabled === true\)/);
+  assert.match(panelSource, /standaloneUrl && largeCodePreview && !activeTab\.htmlPreviewScriptsEnabled\s*\? \[\{ id: 'scripts', label: '启用 HTML 脚本', onSelect: onRequestHtmlScripts/);
+  assert.match(panelSource, /featureAction\('file_preview', 'open_external', 'preview_toolbar'\);\s*window\.open\(standaloneUrl/);
 });
 
 test('可视化 iframe 使用隔离脚本沙箱且不获得同源权限', () => {
@@ -121,6 +124,58 @@ test('已授权 HTML 保留交互脚本能力', () => {
   const document = buildSandboxedHtmlDocument('<div>chart</div>', {}, { nonce: 'trusted', allowUserScripts: true });
   assert.match(document, /script-src 'unsafe-inline' 'unsafe-eval'/);
   assert.match(document, /https:\/\/cdn\.jsdelivr\.net/);
+});
+
+test('Visualize 图表和组件脚本只在用户授权后可加载', () => {
+  const rendered = (allowUserScripts) => buildSandboxedHtmlDocument('<div></div>', {}, { nonce: 'trusted', allowUserScripts });
+  const trusted = rendered(true);
+  assert.match(trusted, /script-src[^;]+https:\/\/persistent\.oaistatic\.com\/plugins\/visualize\/charts\//);
+  assert.match(trusted, /script-src[^;]+https:\/\/persistent\.oaistatic\.com\/plugins\/visualize\/widgets\//);
+  assert.doesNotMatch(trusted, /connect-src[^;]+persistent\.oaistatic\.com/);
+  assert.doesNotMatch(rendered(false), /persistent\.oaistatic\.com/);
+});
+
+test('原始 Visualize HTML 在脚本禁用时也可以切换方案', () => {
+  const markup = '<div class="viz-carousel"><section data-variant="使用总览"></section><section data-variant="排障优先" hidden></section></div><main>共享明细</main>';
+  const preview = buildSandboxedHtmlDocument(markup, {}, { nonce: 'trusted', allowUserScripts: false });
+  const script = preview.match(/<script nonce="trusted">([\s\S]*?)<\/script>/)?.[1];
+  assert.ok(script);
+  assert.match(preview, /\.viz-carousel>\[data-variant\]\[hidden\]\{display:none!important\}/);
+  const panels = [{ hidden: false, dataset: { variant: '使用总览' } }, { hidden: true, dataset: { variant: '排障优先' } }];
+  const callbacks = [];
+  const carousel = {
+    dataset: { previousLabel: '上一方案', nextLabel: '下一方案' },
+    querySelector() { return this.controls; },
+    querySelectorAll(selector) { return selector === ':scope > [data-variant]' ? panels : []; },
+    prepend(controls) { this.controls = controls; },
+  };
+  const document = {
+    readyState: 'loading',
+    querySelectorAll(selector) { return selector === '.viz-carousel' ? [carousel] : []; },
+    createElement() {
+      return {
+        style: {}, setAttribute() {},
+        addEventListener(event, handler) { this[event] = handler; },
+        append(...children) { this.children = children; },
+      };
+    },
+    addEventListener(event, callback) { if (event === 'DOMContentLoaded') callbacks.push(callback); },
+  };
+  new Function('document', script)(document);
+  const installCarousel = callbacks.at(-1);
+  installCarousel();
+  const { controls } = carousel;
+  const [previous, status, next] = controls.children;
+  assert.deepEqual([previous.textContent, status.textContent, next.textContent], ['上一方案', '1 / 2 · 使用总览', '下一方案']);
+  next.click();
+  assert.deepEqual(panels.map(({ hidden }) => hidden), [true, false]);
+  assert.equal(carousel.dataset.activeVariant, '排障优先');
+  assert.equal(status.textContent, '2 / 2 · 排障优先');
+  previous.click();
+  assert.deepEqual(panels.map(({ hidden }) => hidden), [false, true]);
+  installCarousel();
+  assert.equal(carousel.controls, controls);
+  assert.match(preview, /<main>共享明细<\/main>/);
 });
 
 test('高度桥接使用真实内容边界并允许内容收缩', () => {

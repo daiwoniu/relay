@@ -46,8 +46,12 @@ export function createAnalyticsRouter(options:{port:CoreStoragePort;service:Anal
     c.header('Cache-Control','private, no-store');
     if(c.get('relayActor').role!=='admin')return c.json({error:'仅管理员可查看统计'},403);
     const raw=c.req.query(),filterKeys=['feature','action','result','metric','includeSystem','operationId'];
-    if(Object.keys(raw).some(k=>!['range','excludeAdmin','excludeInternal','meta','fresh',...(view==='actions'?['beforeAt','beforeId',...filterKeys]:[])].includes(k))||['excludeAdmin','excludeInternal','meta','fresh','includeSystem'].some(key=>raw[key]!==undefined&&!['true','false'].includes(raw[key])))return c.json({error:'查询参数无效'},400);
+    if(Object.keys(raw).some(k=>!['range','startAt','endAt','excludeAdmin','excludeInternal','meta','fresh',...(view==='actions'?['beforeAt','beforeId','pageSize',...filterKeys]:[])].includes(k))||['excludeAdmin','excludeInternal','meta','fresh','includeSystem'].some(key=>raw[key]!==undefined&&!['true','false'].includes(raw[key])))return c.json({error:'查询参数无效'},400);
+    if(raw.pageSize!==undefined&&!['10','50','100'].includes(raw.pageSize))return c.json({error:'每页条数无效'},400);
+    if(['startAt','endAt'].some(key=>raw[key]!==undefined&&!/^\d{1,15}$/.test(raw[key])))return c.json({error:'日期范围无效'},400);
     const query=AnalyticsQuerySchema.safeParse({range:raw.range??'7d',excludeAdmin:raw.excludeAdmin==='true',excludeInternal:raw.excludeInternal==='true',
+      ...(raw.startAt===undefined?{}:{startAt:Number(raw.startAt)}),...(raw.endAt===undefined?{}:{endAt:Number(raw.endAt)}),
+      ...(raw.pageSize===undefined?{}:{pageSize:Number(raw.pageSize)}),
       ...Object.fromEntries(filterKeys.filter(key=>raw[key]!==undefined).map(key=>[key,key==='includeSystem'?raw[key]==='true':raw[key]]))});
     if(!query.success)return c.json({error:'日期范围无效'},400);
     const principal=c.get('relayStoragePrincipal');if(!principal||principal.kind!=='user')return c.json({error:'统计权限无效'},403);

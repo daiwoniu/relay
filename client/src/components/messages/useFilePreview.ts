@@ -5,6 +5,7 @@ import { readFile } from '../../api/filesystem';
 import { useChatStore } from '../../stores/chat';
 import { buildFileMetadataUpdate, buildFilePreviewUpdate, disposeFilePreviewUpdate, getFilePreviewObjectUrl, EMPTY_FILE_PREVIEW_MODES } from '../layout/file-preview-state';
 import { filePreviewRequestManager } from '../layout/file-preview-request-manager';
+import { filePreviewFailureReason } from '../layout/file-preview-failure';
 import type { HtmlPreviewMode } from '../../stores/chat';
 import { resolveFilePreviewPath } from './file-preview-path';
 
@@ -62,13 +63,14 @@ export function useFilePreview(projectPath?: string) {
         return;
       }
       const objectUrl = getFilePreviewObjectUrl(update);
-      report(update.previewError?'error':'success');
+      if(update.previewError)report('error',{reasonCode:'LOAD_FAILED'});
+      else report('success');
       if (objectUrl) {
         filePreviewRequestManager.trackObjectUrl(tabId, request.generation, objectUrl);
       }
     } catch (error) {
       if (request.signal.aborted || !filePreviewRequestManager.isCurrent(tabId, request.generation)){report('cancelled');return;}
-      report('error',{reasonCode:'LOAD_FAILED'});
+      report('error',{reasonCode:resolution.ok?filePreviewFailureReason(error):'INVALID_INPUT'});
       if (error instanceof ApiError) {
         const errorMessage = error.data?.error || '读取文件失败';
         updateRightPanelTab(tabId, {

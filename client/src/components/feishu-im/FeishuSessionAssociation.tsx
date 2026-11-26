@@ -20,9 +20,9 @@ export default function FeishuSessionAssociation({ sessionId }: { sessionId: str
       <div className="mt-1">{value.bot} · {value.workspace} · {value.taskId}</div>
       <div>{value.isCurrent ? '当前跟进会话' : '交接前会话'}</div>
       {value.handoff && <div className="whitespace-pre-wrap mt-1">{value.handoff}</div>}
-      <a className="underline" href={`${appPageRoutes.feishu_bots.path}?bot=${encodeURIComponent(value.botId)}&view=matters`}
+      <a className="underline" href={`${appPageRoutes.feishu_bots.path}?bot=${encodeURIComponent(value.botId)}&view=messages&chat=${encodeURIComponent(value.group)}`}
         onClick={() => featureAction('feishu_admin', 'open_feishu', 'session_details')}
-        onAuxClick={event => { if (event.button === 1) featureAction('feishu_admin', 'open_feishu', 'session_details'); }}>查看飞书事项</a>
+        onAuxClick={event => { if (event.button === 1) featureAction('feishu_admin', 'open_feishu', 'session_details'); }}>查看飞书群消息</a>
     </details>
   </div>;
 }

@@ -40,7 +40,7 @@ export default function WorkspaceSourceTimes({ dashboard, responsibility, localF
   return <div className="workspace-workbench__source-times text-xs text-slate-500" aria-label="数据与刷新时间">
     {sources.map(({ source, name, dataAt, emptyDataTime, refreshAt,meta, legacyRefreshAt, failed, requestFailed, activity, partial }) => {
       const sourceFailed = meta?.state === 'failed_snapshot' || meta?.state === 'unavailable';
-      const lastRefresh = formatTime(refreshAt ?? (meta ? meta.lastSuccessAt : legacyRefreshAt), '');
+      const lastRefresh = formatTime(Math.max(refreshAt ?? 0, (meta ? meta.lastSuccessAt : legacyRefreshAt) ?? 0), '');
       const loading = !!activity?.pending;
       const refreshed = !!activity?.succeeded && !!lastRefresh && !failed && !sourceFailed && !partial;
       const elapsed = activity?.startedAt == null ? null : Math.max(0, (activity.finishedAt ?? now) - activity.startedAt);
@@ -50,8 +50,8 @@ export default function WorkspaceSourceTimes({ dashboard, responsibility, localF
       return <section key={name} className="workspace-workbench__source-time" aria-label={`${name}时间`}>
         <span className="font-medium text-slate-400">{name}</span>
         <dl>
-          <dt>数据时间</dt><dd>{formatTime(dataAt, emptyDataTime)}</dd>
-          <dt>最后刷新</dt><dd className="workspace-workbench__source-refresh-row">
+          <dt>{source === 'local' ? '台账生成' : '飞书更新'}</dt><dd>{formatTime(dataAt, emptyDataTime)}</dd>
+          <dt>刷新成功</dt><dd className="workspace-workbench__source-refresh-row">
             <span>{lastRefresh || '尚未成功刷新'}</span>
             {!activity?.dismissed && (loading || refreshed) && <span className="workspace-workbench__source-refresh-status">
               {loading ? (

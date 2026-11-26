@@ -6,6 +6,7 @@ import { feishuIdentityLabel } from './feishu-status';
 
 interface UserAccess {
   id: string;
+  botId?: string;
   name: string | null;
   allowed: boolean;
 }
@@ -17,44 +18,52 @@ interface AccessPage {
 
 const endpoint = '/api/admin/feishu-im/users';
 
-export default function FeishuUserAccess({ bot, revision }: { bot: string; revision: number }) {
+export default function FeishuUserAccess({ bot, bots, revision }: {
+  bot: string; bots: { id: string; name: string; workspace: string }[]; revision: number;
+}) {
+  const all = bot === 'all';
   const [cursors, setCursors] = useState<number[]>([]);
   const before = cursors[cursors.length - 1];
   const [page, setPage] = useState<AccessPage | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<unknown>(null);
+  const [readError, setReadError] = useState<unknown>(null);
+  const [mutationError, setMutationError] = useState<unknown>(null);
 
   useEffect(() => {
+    if (saving) return;
     const controller = new AbortController();
     const params = new URLSearchParams({ bot });
     if (before) params.set('before', String(before));
     setLoading(true);
-    setError(null);
+    setReadError(null);
     void requestJson<AccessPage>(`${endpoint}?${params}`, { signal: controller.signal }).then(result => {
       if (!controller.signal.aborted) setPage(result);
     }).catch(failure => {
       if (!controller.signal.aborted) {
         setPage(null);
-        setError(failure);
+        setReadError(failure);
       }
     }).finally(() => {
       if (!controller.signal.aborted) setLoading(false);
     });
     return () => controller.abort();
-  }, [bot, before, revision]);
+  }, [bot, before, revision, saving]);
+  useEffect(() => { setMutationError(null); }, [before, revision]);
 
   async function setAccess(user: UserAccess) {
+    const owner = user.botId ?? (all ? null : bot);
+    if (!owner) return;
     const allowed = !user.allowed;
     setSaving(true);
-    setError(null);
+    setMutationError(null);
     try {
-      await requestJson(endpoint, { method: 'PUT', ...jsonBody({ bot, senderId: user.id, allowed }),
+      await requestJson(endpoint, { method: 'PUT', ...jsonBody({ bot: owner, senderId: user.id, allowed }),
         analytics: { feature: 'feishu_admin', action: 'set_user_access', surface: 'admin' } });
       setPage(current => current && { ...current, userAccess: current.userAccess.map(item =>
-        item.id === user.id ? { ...item, allowed } : item) });
+        item.id === user.id && item.botId === user.botId ? { ...item, allowed } : item) });
     } catch (failure) {
-      setError(failure);
+      setMutationError(failure);
     } finally {
       setSaving(false);
     }
@@ -67,18 +76,24 @@ export default function FeishuUserAccess({ bot, revision }: { bot: string; revis
   }
 
   return <section className="feishu-card feishu-user-access">
-    <h2>可使用此机器人的用户</h2>
-    <p>用户发过私聊消息或在群里 @ 机器人后会出现在这里。新用户默认未开通。</p>
-    {error != null && <FailureNotice error={error} description={page ? '权限修改未确认' : '读取用户权限失败'} />}
+    <h2>用户权限</h2>
+    <p>{all ? '按可管理的机器人列出用户。同一用户在不同机器人的权限可分别设置。' : '用户私聊或在群里 @ 此机器人后会显示在这里。新用户默认未开通。'}</p>
+    {readError != null && <FailureNotice error={readError} description="读取用户权限失败" />}
+    {mutationError != null && <FailureNotice error={mutationError} description="权限修改未确认" />}
     {loading && <p role="status">正在读取用户…</p>}
-    {!loading && page?.userAccess.length === 0 && <p>还没有用户联系过这个机器人。</p>}
+    {!loading && page?.userAccess.length === 0 && <p>当前范围暂无用户记录。</p>}
     {!!page?.userAccess.length && <ul className="feishu-access-list">{page.userAccess.map(user => {
       const label = feishuIdentityLabel(user.id, user.name, '飞书用户');
       const action = user.allowed ? '取消权限' : '允许使用';
-      return <li key={user.id}>
-        <div><strong>{label}</strong><small>{user.id}</small></div>
-        <span>{user.allowed ? '已开通' : '未开通'}</span>
-        <button type="button" aria-label={`${action} · ${label}`} disabled={loading || saving} onClick={() => void setAccess(user)}>{action}</button>
+      const owner = bots.find(item => item.id === user.botId);
+      return <li key={JSON.stringify([user.botId, user.id])}>
+        <div>
+          <details className="feishu-access-person"><summary><strong>{label}</strong></summary><small>{user.id}</small></details>
+          {all && owner && <small>{owner.name} · {owner.workspace}</small>}
+        </div>
+        <span className="feishu-status" data-state={user.allowed ? 'connected' : 'idle'}>{user.allowed ? '已开通' : '未开通'}</span>
+        <button type="button" aria-label={`${action} · ${label}${owner ? ` · ${owner.name} · ${owner.workspace}` : ''}`}
+          disabled={loading || saving || all && !owner} onClick={() => void setAccess(user)}>{action}</button>
       </li>;
     })}</ul>}
     {(before || page?.nextUser) && <div className="feishu-row-actions">

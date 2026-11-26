@@ -3,7 +3,7 @@ import test from 'node:test';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { loadTsxForTest } from '../ui/tsx-test-helper.mjs';
-import { TOOL_IDS, toggleToolPin } from './tools-state.ts';
+import { TOOL_IDS } from './tools-state.ts';
 import { MEDIA_TOOL_IDS } from '../../../../server/src/analytics/registry.ts';
 import { listTools, matchesTool, toolsCatalog } from './tools-catalog.ts';
 import { formatHelpText } from '../workspace-console/workspace-help-text.ts';
@@ -19,10 +19,10 @@ test('each registered tool keeps its three examples and caption in one reachable
     const tool = toolsCatalog[id];
     assert.equal(new Set(tool.examples).size, 3, id);
     const markup = renderToStaticMarkup(element(ToolGuide, { id, compact: id === 'news' }));
-    assert.match(markup, /<summary>常见用法/);
+    assert.match(markup, id === 'news' ? /<summary aria-label="常见用法">用法/ : /<summary>常见用法/);
     assert.equal(markup.match(/<li>/g)?.length, 3, id);
     assert.ok(markup.includes(formatHelpText(tool.start)));
-    assert.ok(markup.includes(`${tool.title}说明`));
+    assert.equal(markup.indexOf(formatHelpText(tool.start)), markup.lastIndexOf(formatHelpText(tool.start)), id);
     const title = renderToStaticMarkup(element(ToolName, { tool }));
     assert.ok(title.startsWith(tool.title));
     if (tool.term) assert.ok(title.includes(`（${tool.term}）`));
@@ -38,7 +38,7 @@ test('search accepts familiar actions, specialist names and multiple words', () 
     ['audio-edit', '录音与音频剪辑'], ['weather', '天气预报'], ['dates', '日期计算'],
   ]) assert.equal(matchesTool(id, query), true, query);
   assert.equal(matchesTool('weather', '压缩照片'), false);
-  assert.equal(listTools('all', '@@@', [], {}).resultCount, 0);
+  assert.deepEqual(listTools('category', '@@@', [], {}).results, []);
 });
 
 test('an explained field retains a separate label and an accessible help button', () => {
@@ -52,67 +52,46 @@ test('an explained field retains a separate label and an accessible help button'
   assert.doesNotMatch(markup, /aria-haspopup="dialog"/);
 });
 
-test('search counts follow the keyword across categories and the active category scopes the results', () => {
+test('search includes all tools, and pinning or changing browse sort does not change search results', () => {
   const usage = { shopping: { count: 2, lastUsed: 8 } };
-  const matching = listTools('all', '凑单', ['random'], usage);
-  assert.deepEqual(matching.pinned, ['random']);
-  assert.deepEqual(matching.remaining, ['shopping']);
-  assert.equal(matching.resultCount, 1);
-  assert.deepEqual(matching.counts, { all: 1, frequent: 1, media: 0 });
-  assert.deepEqual(listTools('frequent', '凑单', [], usage).remaining, ['shopping']);
-  const media = listTools('media', '凑单', ['random'], usage);
-  assert.deepEqual(media.counts, matching.counts);
-  assert.equal(media.resultCount, 0);
-  const pinnedMatch = listTools('all', '凑单', ['shopping', 'random'], usage);
-  assert.deepEqual(pinnedMatch.pinned, ['shopping', 'random']);
-  assert.deepEqual(pinnedMatch.counts, { all: 0, frequent: 0, media: 0 });
-  assert.equal(pinnedMatch.resultCount, 0);
-  assert.equal(listTools('frequent', '压缩照片', [], usage).resultCount, 0);
-  assert.ok(listTools('media', '压缩照片', [], usage).remaining.includes('image-edit'));
-  assert.equal(listTools('all', '找不到的工具xyz', [], {}).resultCount, 0);
-  assert.ok(!listTools('media', '', [], {}).remaining.includes('shopping'));
-  assert.deepEqual(listTools('frequent', '', [], { random: { count: 1, lastUsed: 1 } }).remaining, ['random']);
+  for (const sort of ['category', 'frequent']) {
+    assert.deepEqual(listTools(sort, '凑单', ['random'], usage).results, ['shopping']);
+    assert.deepEqual(listTools(sort, '凑单', ['shopping', 'random'], usage).results, ['shopping']);
+    assert.deepEqual(listTools(sort, '压缩照片', [], usage).results, ['image-edit']);
+    assert.deepEqual(listTools(sort, '找不到的工具xyz', [], usage).results, []);
+  }
 });
 
-test('category counts match the unique tools and frequent includes only used tools in count order', () => {
+test('each tool belongs to one category and browse shows every pinned or unpinned tool once', () => {
+  const all = listTools('category', '', [], {}).directory;
+  assert.deepEqual(all.map(group => group.label), ['日常与计算', '文字与数据', '图片与影音', '资讯']);
+  assert.deepEqual(all[2].ids, [...MEDIA_TOOL_IDS]);
+  assert.deepEqual(all.flatMap(group => group.ids).sort(), [...TOOL_IDS].sort());
+  const pins = ['image-edit', 'news'];
+  const browse = listTools('category', '', pins, {});
+  assert.deepEqual(browse.pinned, pins);
+  assert.ok(browse.directory.every(group => group.ids.length > 0 && group.ids.every(id => !pins.includes(id))));
+  assert.deepEqual([...browse.pinned, ...browse.directory.flatMap(group => group.ids)].sort(), [...TOOL_IDS].sort());
+  assert.deepEqual(listTools('category', '', [...TOOL_IDS], {}).directory, []);
+  assert.deepEqual(listTools('frequent', '', [...TOOL_IDS], {}).directory, []);
+});
+
+test('frequent sort ranks used tools first and keeps unused tools available when clearing search', () => {
   const usage = {
     random: { count: 5, lastUsed: 1 },
     'image-edit': { count: 2, lastUsed: 20 },
-    news: { count: 0, lastUsed: 30 },
+    shopping: { count: 2, lastUsed: 30 },
   };
-  const pins = ['news', 'image-edit'];
-  const frequent = listTools('frequent', '', pins, usage);
-  assert.deepEqual(frequent.counts, { all: TOOL_IDS.length - 2, frequent: 1, media: MEDIA_TOOL_IDS.length - 1 });
-  assert.deepEqual(frequent.pinned, pins);
-  assert.deepEqual(frequent.remaining, ['random']);
-  assert.deepEqual(listTools('frequent', '', ['news'], usage).remaining, ['random', 'image-edit']);
-  assert.equal(listTools('frequent', '', pins, {}).resultCount, 0);
-
-  const media = listTools('media', '', pins, usage);
-  assert.deepEqual(media.pinned, pins);
-  assert.ok(!media.remaining.includes('image-edit'));
-  assert.equal(media.remaining.length, media.counts.media);
-
-  const search = listTools('frequent', ' ', pins, usage);
-  assert.equal(search.searching, false);
-  assert.deepEqual(search.counts, frequent.counts);
+  assert.deepEqual(listTools('frequent', '凑单', ['news'], usage).results, ['shopping']);
+  const restored = listTools('frequent', ' ', ['news'], usage);
+  assert.equal(restored.searching, false);
+  const [group] = restored.directory;
+  assert.deepEqual(group.ids.slice(0, 3), ['random', 'shopping', 'image-edit']);
+  assert.equal(group.ids.length, TOOL_IDS.length - 1);
+  assert.ok(group.ids.includes('json'));
 });
 
-test('default browsing follows available unpinned tools and search selections are independent', () => {
-  const usage = { shopping: { count: 2, lastUsed: 8 } };
-  const state = { pinned: ['shopping'], usage };
-  assert.equal(listTools(null, '', state.pinned, usage).filter, 'all');
-
-  const unpinned = toggleToolPin(state, 'shopping');
-  const restored = listTools(null, '', unpinned.pinned, usage);
-  assert.equal(restored.filter, 'frequent');
-  assert.deepEqual(restored.remaining, ['shopping']);
-  assert.equal(restored.counts.all, TOOL_IDS.length);
-  assert.equal(listTools('frequent', '凑单', unpinned.pinned, usage, 'media').resultCount, 0);
-  assert.equal(listTools('frequent', '', unpinned.pinned, usage, 'media').filter, 'frequent');
-});
-
-test('all tool cards have distinct decorative vector icons', () => {
+test('all tool entries have distinct decorative vector icons', () => {
   const drawings = TOOL_IDS.map((id) => {
     const markup = renderToStaticMarkup(element(ToolIcon, { id }));
     assert.match(markup, /<svg aria-hidden="true" focusable="false"/);

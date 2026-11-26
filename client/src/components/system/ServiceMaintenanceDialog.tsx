@@ -101,7 +101,11 @@ function diagnosticDescription(controller: ServiceMaintenanceController): string
   if (!mismatch) {
     if (controller.capabilities?.setup.blockedByConflicts) return '检测到未解决的 Git 冲突，必须先完成冲突处理。';
     if (controller.capabilities?.setup.required) return '检测到依赖状态需要初始化，普通服务重启暂不可用。';
-    if (controller.capabilities?.frontendBuildRequired) return '当前 production 构建落后于前端源码，建议构建并重启前端。';
+    if (controller.capabilities?.frontendBuildRequired) {
+      return controller.capabilities.frontendBuildReason === '前端源码较活动构建更新'
+        ? '有前端源码改动待发布。'
+        : controller.capabilities.frontendBuildReason || '前端生产构建需要更新。';
+    }
     return controller.policy.statusReason || '服务状态已读取，可按需执行维护操作。';
   }
   if (recommended === 'restart_backend') return '当前前端协议较新，需要重启 Relay 后端。';
@@ -215,7 +219,10 @@ export function ServiceMaintenanceDialog({ open, onClose, controller, mobile }: 
     ? 'HMR 实时源码'
     : capabilities?.activeBuildLabel || capabilities?.activeBuildId || '未知';
   const hasActiveTasks = Boolean(capabilities && capabilities.activeTaskCount > 0);
-  const statusTone = controller.error
+  const confirmedError = controller.error?.outcomeUnconfirmed ? null : controller.error;
+  const statusTone = controller.error?.outcomeUnconfirmed
+    ? 'warning'
+    : confirmedError
     ? 'danger'
     : capabilities?.setup.blockedByConflicts
       ? 'danger'
@@ -266,7 +273,8 @@ export function ServiceMaintenanceDialog({ open, onClose, controller, mobile }: 
     ? `${activeStatus.title} · ${controller.operationOutputDisconnected
       ? '进度暂时中断，等待恢复'
       : controller.operationOutput?.lines.slice(-1)[0]?.trim() || setupPhaseDetail || activeStatus.detail}`
-    : controller.error ? `维护失败 · ${controller.error.title}`
+    : controller.error?.outcomeUnconfirmed ? controller.error.title
+      : controller.error ? `维护失败 · ${controller.error.title}`
       : controller.operationOutput?.status === 'completed' ? '维护操作已完成' : undefined;
 
   return (
@@ -298,7 +306,7 @@ export function ServiceMaintenanceDialog({ open, onClose, controller, mobile }: 
           /> : <section
             data-service-maintenance-status={statusTone}
             data-service-maintenance-action={controller.activeAction ?? 'none'}
-            role={controller.error ? 'alert' : 'status'}
+            role={confirmedError ? 'alert' : 'status'}
             aria-live="polite"
             className={`rounded-xl border p-3 shadow-sm ${statusToneClass}`}
           >
@@ -310,7 +318,7 @@ export function ServiceMaintenanceDialog({ open, onClose, controller, mobile }: 
               <button type="button" onClick={() => void controller.refreshCapabilities()} disabled={controller.loading || controller.submitting} className="shrink-0 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-1 text-[11px] text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-hover)] disabled:opacity-40">{controller.loading ? '检测中…' : '重新检测'}</button>
             </div>
             <p className="mt-1 text-xs leading-5 text-[var(--color-text-secondary)]">
-              {controller.error ? <FailureNotice error={controller.error.originalMessage || controller.error.detail} code={controller.error.code} description={controller.error.title} suggestion={controller.error.detail} /> : statusDescription}
+              {confirmedError ? <FailureNotice error={confirmedError.originalMessage || confirmedError.detail} code={confirmedError.code} description={confirmedError.title} suggestion={confirmedError.detail} /> : statusDescription}
               {(controller.error?.showTerminalFallback || controller.policy.showTerminalFallback) && <span className="ml-1 font-mono text-[var(--color-text)]">{capabilities?.setup.required ? 'npm run setup' : 'npm run restart'}</span>}
             </p>
             {controller.mismatch && <div className="mt-1.5 flex flex-wrap gap-x-1.5 font-mono text-[11px] text-[var(--color-text-secondary)]"><span>前端协议 v{controller.mismatch.clientVersion}</span><span>·</span><span>后端协议 {controller.serverVersion === null ? '未知' : `v${controller.serverVersion}`}</span></div>}

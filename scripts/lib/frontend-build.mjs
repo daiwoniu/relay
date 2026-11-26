@@ -34,6 +34,8 @@ export function getFrontendFingerprintFiles(root) {
     path.join(root, 'package.json'),
     path.join(root, 'scripts', 'lib', 'frontend-access.mjs'),
     path.join(root, 'scripts', 'lib', 'client-environment.mjs'),
+    path.join(root, 'scripts', 'lib', 'workbench-run-time.mjs'),
+    path.join(root, 'scripts', 'lib', 'workbench-run-time.d.mts'),
     path.join(root, 'scripts', 'lib', 'client-environment.d.mts'),
     path.join(root, 'scripts', 'lib', 'analytics-source.mjs'),
     path.join(root, 'scripts', 'lib', 'analytics-source.d.mts'),

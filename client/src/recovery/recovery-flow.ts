@@ -31,7 +31,8 @@ export async function pollForRecovery(options: PollForRecoveryOptions): Promise<
 > {
   const now = options.now ?? Date.now;
   const intervalMs = options.intervalMs ?? 500;
-  const timeoutMs = options.timeoutMs ?? 30_000;
+  // The launcher allows 10 minutes for backend startup, after stopping the old instance.
+  const timeoutMs = options.timeoutMs ?? (options.target === 'backend' ? 10 * 60_000 + 30_000 : 30_000);
   const wait = options.wait ?? ((milliseconds) => new Promise<void>((resolve) => setTimeout(resolve, milliseconds)));
   const deadline = now() + timeoutMs;
   let observedInterruption = false;

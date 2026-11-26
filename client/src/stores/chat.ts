@@ -43,6 +43,10 @@ export type Project = ProjectDto;
 export type Session = SessionDto;
 
 function mergeSessionListItem(current: Session, incoming: Session): Session {
+  if (incoming.active_attempt_id === undefined && current.active_attempt_id
+    && current.updated_at === incoming.updated_at && current.status === incoming.status) {
+    incoming = { ...incoming, active_attempt_id: current.active_attempt_id };
+  }
   return current.updated_at > incoming.updated_at
     ? mergeSessionByPreferencesRevision(incoming, current)
     : mergeSessionByPreferencesRevision(current, incoming);

@@ -1,24 +1,25 @@
 import type { WorkspaceConsoleRunDto } from '../../generated/relay-contracts';
 import { formatClockTime, formatDateTime } from '../../utils/date-display';
 import Tooltip from '../ui/Tooltip';
+import { runTimestamp } from '../../../../scripts/lib/workbench-run-time.mjs';
 import { describeRun, describeRunCategory, describeRunListMetrics, describeRunMode, describeBusinessResult, describeRunScope, runMatchesFilter, formatRunDuration,describeRunAssociation,describeTestResult,describeTestErrors } from './run-presentation';
 
-function cardTime(value: string | null): string {
-  return value ? formatDateTime(new Date(value.replace(' ', 'T')), { short: true }) : '未记录';
+function cardTime(at: number): string {
+  return formatDateTime(at || null, { short: true });
 }
 
-function observationTime(value: string, startedAt: string | null): string {
-  const date = new Date(value.replace(' ', 'T'));
-  if (Number.isNaN(date.getTime())) return '未记录';
-  const started = startedAt ? new Date(startedAt.replace(' ', 'T')) : null;
-  return started && !Number.isNaN(started.getTime()) && date.toDateString() === started.toDateString()
-    ? formatClockTime(date) : cardTime(value);
+function observationTime(value: string, startedAt: number): string {
+  const at = runTimestamp(value);
+  return at && startedAt && new Date(at).toDateString() === new Date(startedAt).toDateString()
+    ? formatClockTime(at) : cardTime(at);
 }
 
 export default function WorkspaceRunRow({ run, taskTitle, onOpen }: { run: WorkspaceConsoleRunDto; taskTitle?: string; onOpen: () => void }) {
   const description = describeRun(run);
   const metrics = describeRunListMetrics(run);
   const running = run.status.toLowerCase() === 'running';
+  const startedAt = runTimestamp(run.startedAt);
+  const createdAt = runTimestamp(run.createdAt);
   const abnormal = runMatchesFilter(run, 'abnormal');
   const business = describeBusinessResult(run);
   const scope = describeRunScope(run);
@@ -44,8 +45,8 @@ export default function WorkspaceRunRow({ run, taskTitle, onOpen }: { run: Works
     {business.length > 0 && <span className={`mt-1 block break-words text-[11px] ${abnormal || run.businessResult?.complete === false ? 'text-amber-200' : 'text-slate-200'}`}>{business.join(' · ')}</span>}
     {!run.failureReason && !metrics && !business.length && !tests && <span className="mt-1 block break-words text-[11px] text-slate-400">{fallback}</span>}
     {running && !run.resultMetrics?.items.length && !run.businessResult && <span className="mt-1 block text-[11px] text-amber-200">尚未采集执行进度，实际运行情况待核查</span>}
-    <span className="mt-1 block break-words text-[11px] text-slate-500">{location} · 开始 {cardTime(run.startedAt)}{!running && run.durationSeconds !== null ? ` · 用时 ${formatRunDuration(run.durationSeconds)}` : ''}</span>
+    <span className="mt-1 block break-words text-[11px] text-slate-500">{location} · {!startedAt&&createdAt?'记录创建':'执行开始'} {cardTime(startedAt || createdAt)}{!running && run.durationSeconds !== null ? ` · 用时 ${formatRunDuration(run.durationSeconds)}` : ''}</span>
     {run.testResult&&<span className="mt-0.5 block truncate text-[10px] text-slate-500" title={run.runId}>运行编号：{run.runId}</span>}
-    {running && <span className="mt-0.5 block break-words text-[11px] text-slate-500">{run.source === 'remote-runner' ? '最近核查' : '状态更新'}：{run.observedAt ? observationTime(run.observedAt, run.startedAt) : '时间未记录'}</span>}
+    {running && <span className="mt-0.5 block break-words text-[11px] text-slate-500">{run.source === 'remote-runner' ? '最近核查' : '状态更新'}：{run.observedAt ? observationTime(run.observedAt, startedAt || createdAt) : '未记录'}</span>}
   </button>;
 }

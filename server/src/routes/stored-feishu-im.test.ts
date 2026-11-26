@@ -8,9 +8,69 @@ import type { AnalyticsRecord } from '../analytics/contract.js';
 import { AnalyticsService } from '../analytics/service.js';
 import { analyticsMeaning } from '../analytics/semantics.js';
 import type { ManagedFeishuIm } from '../integrations/feishu-im/managed-config.js';
+import { feishuBindingId } from '../integrations/feishu-im/inbound.js';
 import type { CoreStoragePort } from '../storage/contracts.js';
 import { createStoredFeishuImRouter } from './stored-feishu-im.js';
 import type { SessionRuntime } from '../engine/runtime.js';
+
+test('飞书会话搜索可与旧事项链接一同读取，筛选只作用于会话列表', async () => {
+  const bot = randomUUID(), matter = randomUUID();
+  const reads: Parameters<CoreStoragePort['runFeishuAdmin']>[0]['request'][] = [];
+  const port = {
+    authenticateSession: async () => ({ user: { id: 'admin', role: 'admin' } }),
+    runFeishuWork: async () => ({ kind: 'tenant', tenantKey: 'tenant' }),
+    runFeishuAdmin: async ({ request }: Parameters<CoreStoragePort['runFeishuAdmin']>[0]) => { reads.push(request); return {}; },
+  } as unknown as CoreStoragePort;
+  const management = { bots: () => [{ id: bot, appId: 'cli_test', projectId: 'project', workspacePath: '/workspace' }],
+    name: () => 'test', status: () => null, enabled: () => true, active: () => true } as unknown as ManagedFeishuIm;
+  const app = new Hono<RelayEnv>();
+  app.route('/admin', createStoredFeishuImRouter({ port, management, assertExclusiveWriter: async () => {} }));
+  const headers = { cookie: 'relay_session=test' };
+  const query = new URLSearchParams({ bot, conversations: '1', focusMatter: matter, q: ' X%_12 ', attention: 'unknown', chatType: 'group' });
+  assert.equal((await app.request(`/admin?${query}`, { headers })).status, 200);
+  assert.ok(reads[0]?.action === 'inspect');
+  assert.equal(reads[0].focusMatter, matter);
+  assert.equal(reads[0].q, 'X%_12');
+  assert.equal(reads[0].chatType, 'group');
+  assert.equal(reads[0].attention, 'unknown');
+  query.delete('conversations');
+  assert.equal((await app.request(`/admin?${query}`, { headers })).status, 400);
+  assert.equal(reads.length, 1);
+});
+
+test('全部飞书机器人使用服务端解析的范围并将记录还原到实际机器人', async () => {
+  const bots = ['one', 'two'].map(projectId => ({ id: randomUUID(), appId: `cli_${projectId}`, projectId, workspacePath: `/workspaces/${projectId}` }));
+  const [first, second] = bots.map(bot => ({ botId: feishuBindingId(bot), tenantKey: 'tenant' }));
+  const reads: Parameters<CoreStoragePort['runFeishuAdmin']>[0]['request'][] = [];
+  const port = {
+    authenticateSession: async () => ({ user: { id: 'admin', role: 'admin' } }),
+    runFeishuWork: async () => ({ kind: 'tenant', tenantKey: 'tenant' }),
+    runFeishuAdmin: async ({ request }: Parameters<CoreStoragePort['runFeishuAdmin']>[0]) => {
+      reads.push(request);
+      return request.action === 'listUserAccess' ? { userAccess: [{ bindingId: second.botId, id: 'sender', allowed: false, name: null }] }
+        : { conversations: [{ bindingId: second.botId, tenantKey: second.tenantKey, conversationId: 'group', sequence: 3 }] };
+    },
+  } as unknown as CoreStoragePort;
+  const management = { bots: () => bots, name: (bot: string) => bot, status: () => null,
+    enabled: () => true, active: () => true } as unknown as ManagedFeishuIm;
+  const app = new Hono<RelayEnv>();
+  app.route('/admin', createStoredFeishuImRouter({ port, management, assertExclusiveWriter: async () => {} }));
+  const headers = { cookie: 'relay_session=test' };
+  const response = await app.request('/admin?bot=all&conversations=1&from=10&to=20&attention=reply_failed&requestsOnly=1', { headers });
+  assert.equal(response.status, 200);
+  const { selected, data } = await response.json();
+  assert.equal(selected, 'all');
+  assert.deepEqual(data.conversations, [{ botId: bots[1].id, conversationId: 'group', sequence: 3 }]);
+  assert.deepEqual(reads[0], { action: 'inspect', ...first, scopes: [first, second], from: 10, to: 20, conversationList: true, requestsOnly: true, attention: 'reply_failed' });
+  const access = await app.request('/admin/users?bot=all', { headers });
+  assert.equal(access.status, 200);
+  assert.deepEqual((await access.json()).userAccess, [{ botId: bots[1].id, id: 'sender', allowed: false, name: null }]);
+  assert.equal((await app.request('/admin?bot=all&conversationId=group&chatId=chat', { headers })).status, 400);
+  assert.equal((await app.request('/admin?bot=all&conversations=1&chatId=chat', { headers })).status, 400);
+  assert.equal((await app.request('/admin?bot=all&stats=1&chatType=p2p&bucket=hour', { headers })).status, 200);
+  assert.ok(reads[2]?.action === 'inspect');
+  assert.equal(reads[2].chatType, 'p2p');
+});
 
 test('飞书处理详情只读取绑定回合的实时过程，不返回运行时标识', async () => {
   const bot = randomUUID(), sessionId = randomUUID(), attemptId = randomUUID();

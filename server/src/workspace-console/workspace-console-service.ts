@@ -9,7 +9,7 @@ import { deleteWorkspaceTaskSessionLinkInDatabase, insertWorkspaceLinkInDatabase
 import { ServiceError } from '../services/errors.js';
 import { AssociationService } from './association-service.js';
 import { readObservedTaskDurations } from './activity-duration.js';
-import { buildWorkspaceDashboard, type WorkspaceDashboard } from './dashboard-projection.js';
+import { buildWorkspaceDashboard, hasCurrentRunTimes, withoutLegacyRunTiming, type WorkspaceDashboard } from './dashboard-projection.js';
 import { ResponsibilityReportService, type WorkspaceResponsibilitySnapshot } from './responsibility-report.js';
 import type { WorkspaceRunProjection } from './run-projection.js';
 import type { SessionCardProjection } from './session-projection.js';
@@ -101,8 +101,8 @@ export class WorkspaceConsoleService {
       const loaded = readWorkspaceSnapshot(this.database(), 'dashboard', identityKey, WorkspaceConsoleDashboardDtoSchema);
       if (loaded) previous = { value: loaded.value as WorkspaceDashboard, savedAt: loaded.savedAt };
     } catch { /* The live file and database sources can still be read. */ }
-    if (previous && !options.force) {
-      const cached: WorkspaceDashboard = { ...previous.value, sourceMeta: {
+    if (previous && !options.force && (this.dashboardFailure || hasCurrentRunTimes(previous.value))) {
+      const cached: WorkspaceDashboard = { ...withoutLegacyRunTiming(previous.value), sourceMeta: {
         state: this.dashboardFailure ? 'failed_snapshot' : 'snapshot', lastSuccessAt: previous.savedAt,
         lastAttemptAt: this.dashboardFailure?.at ?? null, error: this.dashboardFailure?.error ?? null,
       } };
@@ -158,7 +158,7 @@ export class WorkspaceConsoleService {
     }
     this.dashboardFailure = { at: capturedAt, error: '本地数据部分来源读取失败' };
     if (!previous) return { ...result, sourceMeta: { state: 'unavailable', lastSuccessAt: null, lastAttemptAt: capturedAt, error: this.dashboardFailure.error } };
-    const old = previous.value;
+    const old = withoutLegacyRunTiming(previous.value);
     const oldTasks = new Map(old.tasks.map((task) => [task.id, task]));
     let tasks = registryResult.status === 'fulfilled' ? result.tasks : old.tasks;
     if (runsResult.status === 'rejected') tasks = tasks.map((task) => ({ ...task, runIds: oldTasks.get(task.id)?.runIds ?? [] }));

@@ -20,7 +20,7 @@ export function useSearchCommit(feature:AnalyticsFeature,surface:AnalyticsSurfac
   return(query:string)=>{const next=query.trim();if(next===previous.current)return;previous.current=next;featureAction(feature,'search',surface);};
 }
 /** Local outcomes only; never turns a remote HTTP response into a committed result. */
-export function localAction(feature:AnalyticsFeature,action:string,surface:AnalyticsSurface){
+export function localAction(feature:AnalyticsFeature,action:string,surface:AnalyticsSurface,attributes:Pick<AnalyticsFeatureProperties,'toolId'> = {}){
   const captured=tracker.capture();let settled=false;
-  return(ok:boolean|NonNullable<AnalyticsFeatureProperties['result']>)=>{if(settled)return false;settled=true;return captured.track('feature_action',{feature,action,surface,result:typeof ok==='boolean'?(ok?'success':'error'):ok});};
+  return(ok:boolean|NonNullable<AnalyticsFeatureProperties['result']>)=>{if(settled)return false;settled=true;return captured.track('feature_action',{feature,action,surface,...attributes,result:typeof ok==='boolean'?(ok?'success':'error'):ok});};
 }

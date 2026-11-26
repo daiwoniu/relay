@@ -8,7 +8,10 @@ export function latestFeishuTaskUpdatedAt(report:Pick<WorkspaceConsoleResponsibi
     const at=Date.parse(value);
     if(Number.isFinite(at)&&at>0&&(latest===null||at>latest))latest=at;
   };
-  for(const item of report?.items??[])add(item.updatedAt);
+  for(const item of report?.items??[]){
+    add(item.updatedAt);
+    for(const child of item.personalSubtasks??[])add(child.updatedAt);
+  }
   for(const item of report?.workbenchItems??[]){
     add(item.updatedAt);
     for(const child of item.mySubtasks??[])add(child.updatedAt);
@@ -49,16 +52,15 @@ export function readWorkspaceRefreshTimes(storage:StorageReader|null,userId:stri
     return {local:validTime(data?.local)?data.local:null,project:validTime(data?.project)?data.project:null};
   }catch{return {local:null,project:null};}
 }
-export function rememberWorkspaceRefreshTime(storage:(StorageReader&Pick<Storage,'setItem'>)|null,userId:string,source:keyof WorkspaceRefreshTimes,startedAt:number):WorkspaceRefreshTimes{
+export function rememberWorkspaceRefreshTime(storage:(StorageReader&Pick<Storage,'setItem'>)|null,userId:string,source:keyof WorkspaceRefreshTimes,completedAt:number):WorkspaceRefreshTimes{
   const times=readWorkspaceRefreshTimes(storage,userId);
-  if(validTime(startedAt))times[source]=Math.max(times[source]??0,startedAt);
+  if(validTime(completedAt))times[source]=Math.max(times[source]??0,completedAt);
   try{storage?.setItem(refreshKey(userId),JSON.stringify(times));}catch{/* Memory state still updates if browser storage is unavailable. */}
   return times;
 }
 
-export async function trackSuccessfulWorkspaceRefresh<T>(request:()=>Promise<T>,successful:(value:T)=>boolean,remember:(startedAt:number)=>void,now:()=>number=Date.now):Promise<T>{
-  const startedAt=now();
+export async function trackSuccessfulWorkspaceRefresh<T>(request:()=>Promise<T>,successful:(value:T)=>boolean,remember:(completedAt:number)=>void,now:()=>number=Date.now):Promise<T>{
   const value=await request();
-  if(successful(value))remember(startedAt);
+  if(successful(value))remember(now());
   return value;
 }

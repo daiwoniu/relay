@@ -65,7 +65,6 @@ function NewsCard({ item, category, authenticated, canTranslate, onFollow, onMut
       {'matchReason' in item && item.matchReason && <span className="news-match-reason">{item.matchReason}</span>}
       {item.language === 'en' && canTranslate && (translation ? <button type="button" onClick={() => setShowOriginal((value) => !value)}>{showOriginal ? '看中文' : '看原文'}</button> : <button type="button" onClick={() => void translate()} disabled={translating}>{translating ? '翻译中…' : '翻成中文'}</button>)}
       {authenticated && <><button type="button" onClick={() => onFollow(item)}>关注相关</button><button type="button" onClick={() => onMute(item)}>不感兴趣</button></>}
-      <a className="news-card-open" href={item.url} target="_blank" rel="noopener noreferrer" onClick={()=>tracker.track('news_click',{newsId:item.id})}>读原文 ↗</a>
     </div>
   </article>;
 }
@@ -247,6 +246,7 @@ export default function NewsPage() {
     </header>
     <main className="news-main">
       <div className="news-toolbar">
+        <form className="news-search news-search-primary" onSubmit={submitSearch}><input value={searchInput} maxLength={120} onChange={(event) => setSearchInput(event.target.value)} placeholder="搜标题或摘要" aria-label="搜索资讯" enterKeyHint="search" /><button type="submit">搜索</button></form>
         <div className="news-primary-filters">
           {member && <div className="news-view-tabs" role="group" aria-label="资讯视图"><button type="button" className={view === 'all' ? 'active' : ''} onClick={() => {if(view!=='all')featureAction('news','mode','news');setView('all');}}>全部</button><button type="button" className={view === 'following' ? 'active' : ''} onClick={() => {if(view!=='following')featureAction('news','mode','news');setView('following');}}>我的关注</button></div>}
           <div className="news-view-tabs" role="group" aria-label="资讯地区"><button type="button" className={region === 'all' ? 'active' : ''} onClick={() => {if(region!=='all')featureAction('news','filter','news');setRegion('all');}}>国内外</button><button type="button" className={region === 'cn' ? 'active' : ''} onClick={() => {if(region!=='cn')featureAction('news','filter','news');setRegion('cn');}}>国内</button><button type="button" className={region === 'global' ? 'active' : ''} onClick={() => {if(region!=='global')featureAction('news','filter','news');setRegion('global');}}>海外</button></div>
@@ -257,7 +257,6 @@ export default function NewsPage() {
         <div className="news-tools-row">
           <label className="news-select-label">时间 <select value={days} onChange={(event) => { featureAction('news','filter','news');setDays(Number(event.target.value)); setRangeEnd(newsTimeBucket()); }}><option value={1}>最近 24 小时</option><option value={2}>最近 48 小时</option><option value={3}>最近 3 天</option><option value={7}>最近 7 天</option><option value={30}>最近 30 天</option><option value={0}>自选时间</option></select></label>
           <button type="button" className="news-advanced-toggle" aria-expanded={advancedOpen} onClick={() => setAdvancedOpen((open) => !open)}>更多筛选{advancedFilterCount > 0 && <span className="news-filter-count">{advancedFilterCount}</span>}<span aria-hidden="true">⌄</span></button>
-          <form className="news-search" onSubmit={submitSearch}><input value={searchInput} maxLength={120} onChange={(event) => setSearchInput(event.target.value)} placeholder="搜标题或摘要" aria-label="搜索资讯" enterKeyHint="search" /><button type="submit">搜索</button></form>
         </div>
         {advancedOpen && <div className="news-advanced-filter-fields">
               <label className="news-select-label">话题 <select value={topic} onChange={(event) => {featureAction('news','filter','news');setTopic(event.target.value);}}>{TOPICS.map(([id, label]) => <option value={id} key={id}>{label}</option>)}</select></label>

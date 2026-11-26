@@ -2,15 +2,15 @@ import type { WorkspaceConsoleDashboardDto, WorkspaceConsoleResponsibilityDto } 
 import { primaryFeishuWorkItemId } from './workspace-task-identity.ts';
 import { taskStatusPresentation } from './task-status.ts';
 import {summarizeTaskCardStatus} from './task-card-status.ts';
-import { feishuSubtaskUrl, feishuTypeName, isFinishedProjectIssue,personalIssueCompleted, latestTaskRecordAt, taskEntryLane, taskPrimaryFiles, workbenchFlowEnded, workbenchSubtaskStatusLabel, workItemCurrentNodeLines, type GroupedTaskEntry, type TaskEntry } from './workspace-console-view-model.ts';
+import { compareFeishuListTimes, feishuSubtaskUrl, feishuTypeName, isFinishedProjectIssue,personalIssueCompleted, localLedgerTime, sortDetailLocalTasks, taskEntryLane, taskPrimaryFiles, workbenchFlowEnded, workbenchSubtaskStatusLabel, workItemCurrentNodeLines, type GroupedTaskEntry, type TaskEntry } from './workspace-console-view-model.ts';
 
 type Report=WorkspaceConsoleResponsibilityDto;
 type Task=Extract<TaskEntry,{kind:'local'}>['task'];
 type Parent=Report['workbenchItems'][number];
 type Item=Report['items'][number];
 export type CardIdentity={id:string;title:string;label:string;url:string|null};
-export type CardLedger={task:Task;status:string;next:string;updatedAt:string|null;files:ReturnType<typeof taskPrimaryFiles>};
-export type CardRelation=CardIdentity & {status:string;completed:boolean;current?:boolean;ownerLabel?:string;ownerNames?:string[];createdAt?:string|null;updatedAt?:string|null;finishedAt?:string|null;target?:TaskEntry;ledgers?:CardLedger[]};
+export type CardLedger={task:Task;status:string;next:string;time:ReturnType<typeof localLedgerTime>;files:ReturnType<typeof taskPrimaryFiles>};
+export type CardRelation=CardIdentity & {status:string;completed:boolean;nativeEnded?:boolean;current?:boolean;ownerLabel?:string;ownerNames?:string[];updatedAt?:string|null;finishedAt?:string|null;target?:TaskEntry;ledgers?:CardLedger[]};
 type StatusTone='doing'|'waiting'|'completed'|'attention'|'unknown';
 export type CardStatus={source:string;label:string;description:string;tone:StatusTone};
 export type TaskCardModel={
@@ -19,10 +19,11 @@ export type TaskCardModel={
   missingLedgerCount:number;
   parentAction:CardRelation|null;localActions:CardRelation[];
 };
-const time=(value?:string|null)=>Date.parse(value??'')||0;
+export const isCardRelationEnded = (item: CardRelation) => item.nativeEnded ?? item.completed;
 export function sortCardRelations(items:CardRelation[],completed:boolean):CardRelation[]{
-  const rank=(item:CardRelation)=>completed?Math.max(time(item.updatedAt),time(item.finishedAt)):time(item.createdAt);
-  return items.filter(item=>completed||!item.completed).sort((a,b)=>rank(b)-rank(a)||a.id.localeCompare(b.id));
+  const compare = compareFeishuListTimes(isCardRelationEnded, item => item, true);
+  return items.filter(item=>completed||!item.completed)
+    .sort((a,b)=>compare(a,b)||a.id.localeCompare(b.id));
 }
 function identity(item:Pick<Parent,'workItemId'|'title'|'typeName'|'url'>):CardIdentity{
   return {id:item.workItemId,title:item.title,label:feishuTypeName(item.typeName,item.url)??'工作项',url:item.url};
@@ -58,7 +59,7 @@ export function buildTaskCardModel(entry:GroupedTaskEntry,report:Report|null,run
   const relations=new Map<string,CardRelation>();
   const add=(item:CardRelation)=>{if(item.id!==root?.id&&!relations.has(item.id))relations.set(item.id,item);};
   if(parent&&'mySubtasks' in parent){
-    for(const child of parent.mySubtasks)add({id:child.id,title:child.title,label:'子任务',url:feishuSubtaskUrl(parent,child),status:workbenchSubtaskStatusLabel(child),completed:child.passed,current:!child.passed&&child.phase==='current',ownerLabel:'负责人',ownerNames:child.ownerNames,createdAt:child.createdAt,updatedAt:child.updatedAt,finishedAt:child.finishedAt,target:{kind:'subtask',key:`subtask:${parent.workItemId}:${child.id}`,parent,subtask:child,localTasks:locals.filter(task=>child.localTaskIds?.includes(task.id))}});
+    for(const child of parent.mySubtasks)add({id:child.id,title:child.title,label:'子任务',url:feishuSubtaskUrl(parent,child),status:workbenchSubtaskStatusLabel(child),completed:child.passed,current:!child.passed&&child.phase==='current',ownerLabel:'负责人',ownerNames:child.ownerNames,updatedAt:child.updatedAt,finishedAt:child.finishedAt,target:{kind:'subtask',key:`subtask:${parent.workItemId}:${child.id}`,parent,subtask:child,localTasks:locals.filter(task=>child.localTaskIds?.includes(task.id))}});
   }
   const candidates=[...(entry.kind==='group'?entry.members.flatMap(member=>member.kind==='project'?[member.item]:[]):[]),...(report?.items??[]),...(report?.workbenchItems??[])];
   const addNative=(item:Item|Parent)=>{
@@ -69,19 +70,18 @@ export function buildTaskCardModel(entry:GroupedTaskEntry,report:Report|null,run
     const current=!completed&&report?.workbenchItems.find(parent=>parent.workItemId===item.workItemId)?.participated!==false&&('mySubtasks' in item?item.myNodes?.some(node=>node.phase==='current')||item.mySubtasks.some(child=>!child.passed&&child.phase==='current'):item.actionability==='current'||item.actionability==='state_responsibility');
     const target:TaskEntry='mySubtasks' in item?{kind:'parent',key:`parent:${item.workItemId}`,item}:{kind:'project',key:`project:${item.workItemId}`,item:{...item,localTaskIds:item.localTaskIds??[],tasks:locals.filter(task=>item.localTaskIds?.includes(task.id)),needsRecheck:false}};
     const ownerNames=item.responsibleNames?.length?item.responsibleNames:report?.workbenchItems.find(parent=>parent.workItemId===item.workItemId)?.currentNodes?.flatMap(node=>node.ownerNames);
-    add({...identity(item),status,completed:!!completed,current,ownerLabel:status==='新建'?'新建人':'负责人',ownerNames:status==='新建'?item.creatorNames:ownerNames,createdAt:item.createdAt,updatedAt:item.updatedAt,finishedAt:item.finishedAt,target});
+    add({...identity(item),status,completed:!!completed,nativeEnded,current,ownerLabel:status==='新建'?'新建人':'负责人',ownerNames:status==='新建'?item.creatorNames:ownerNames,updatedAt:item.updatedAt,finishedAt:item.finishedAt,target});
   };
   for(const item of candidates)if(item.workItemId!==root?.id&&(item.linkedStoryIds?.includes(root?.id??'')||localIds.includes(item.workItemId)))addNative(item);
   for(const item of report?.localAssociated??[])if(root&&item.workItemId!==root.id&&(item.parentId===root.id||item.linkedStoryIds?.includes(root.id))&&!relations.has(item.workItemId)){
-    add({id:item.workItemId,title:item.title,label:item.kind==='subtask'?'子任务':'关联事项',url:item.verified?item.url:null,status:'状态待核实',completed:false,createdAt:item.createdAt});
+    add({id:item.workItemId,title:item.title,label:item.kind==='subtask'?'子任务':'关联事项',url:item.verified?item.url:null,status:'状态待核实',completed:false});
   }
   for(const id of localIds)if(id!==root?.id&&!relations.has(id)){
     const associated=report?.localAssociated.find(item=>item.workItemId===id);
     add({id,title:associated?.title??`关联工作项 ${id}`,label:associated?.kind==='subtask'?'子任务':'关联事项',url:locals.find(task=>task.feishuWorkItemUrls?.[id])?.feishuWorkItemUrls?.[id]??(associated?.verified?associated.url:null)??null,status:'状态待核实',completed:false});
   }
   const tone=taskEntryLane(entry),completed=tone==='completed';
-  const ledgers=locals.sort((a,b)=>Number(taskEntryLane({kind:'local',key:a.id,task:a})==='completed')-Number(taskEntryLane({kind:'local',key:b.id,task:b})==='completed')
-    ||time(latestTaskRecordAt(b))-time(latestTaskRecordAt(a))).map(task=>({task,status:taskStatusPresentation(task.status).label,next:task.nextAction?.trim()||'',updatedAt:latestTaskRecordAt(task),files:taskPrimaryFiles(task)}));
+  const ledgers=sortDetailLocalTasks(locals).map(task=>({task,status:taskStatusPresentation(task.status).label,next:task.nextAction?.trim()||'',time:localLedgerTime(task),files:taskPrimaryFiles(task)}));
   const lines=parent?workItemCurrentNodeLines(parent):[];
   const ended=parent&&('mySubtasks' in parent?workbenchFlowEnded(parent):isFinishedProjectIssue(parent));
   const registered=new Set([...(parent?.localTaskIds??[]),...(parent&&'mySubtasks' in parent?parent.mySubtasks.flatMap(child=>child.localTaskIds??[]):[])]);

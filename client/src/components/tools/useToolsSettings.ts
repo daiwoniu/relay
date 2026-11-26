@@ -24,7 +24,10 @@ export function useToolsSettings(storageKey: string, signedIn: boolean) {
   const apply = useCallback((value: ToolsState) => {
     current.current = value;
     setState(value);
-    if (signedIn) return true;
+    if (signedIn) {
+      setUsageAtLoad(previous => previous ?? value.usage);
+      return true;
+    }
     try { localStorage.setItem(storageKey, JSON.stringify(value)); return true; } catch { return false; }
   }, [storageKey, signedIn]);
 
@@ -34,7 +37,6 @@ export function useToolsSettings(storageKey: string, signedIn: boolean) {
     try {
       const value = await requestJson<ToolsState>('/api/auth/tools-settings', { cache: 'no-store', signal: controller.current?.signal, timeoutMs: 8000 });
       if (!mounted.current) return;
-      setUsageAtLoad((previous) => previous ?? value.usage);
       if (version !== generation.current) return;
       apply(value); setReady(true); setError('');
     } catch {

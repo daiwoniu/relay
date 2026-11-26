@@ -156,7 +156,7 @@ test('run reader uses local run metadata without guessing execution location fro
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
-test('run reader merges remote runner registrations by start time and keeps only display-safe fields', async () => {
+test('run reader merges remote runner registrations by observed start or creation and keeps only display-safe fields', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'relay-remote-runs-'));
   try {
     const task = path.join(root, 'tasks', 'task-a');
@@ -176,14 +176,14 @@ test('run reader merges remote runner registrations by start time and keeps only
     const runs = await readWorkspaceRuns(root);
     assert.deepEqual(runs.map((run) => run.runId), ['remote-run', 'local-run', 'collected-run']);
     assert.deepEqual(runs[0] && { taskId: runs[0].taskId, status: runs[0].status, mode: runs[0].mode, target: runs[0].target,
-      startedAt: runs[0].startedAt, finishedAt: runs[0].finishedAt, executionLocation: runs[0].executionLocation,
+      createdAt: runs[0].createdAt, startedAt: runs[0].startedAt, finishedAt: runs[0].finishedAt, executionLocation: runs[0].executionLocation,
       serverName: runs[0].serverName, observedAt: runs[0].observedAt },
-    { taskId: 'task-a', status: 'running', mode: 'execute', target: 'mapping-full', startedAt: '2026-10-09 20:31:44',
-      finishedAt: null, executionLocation: 'remote', serverName: 'spider-manager-codex', observedAt: '2026-10-09 20:36:05' });
+    { taskId: 'task-a', status: 'running', mode: 'execute', target: 'mapping-full', createdAt: '2026-10-09T20:31:44+08:00', startedAt: null,
+      finishedAt: null, executionLocation: 'remote', serverName: 'spider-manager-codex', observedAt: '2026-10-09T20:36:05+08:00' });
     assert.doesNotMatch(JSON.stringify(runs[0]), /secret command|private\/remote\/path/);
     assert.equal(runs[0]?.detailFilePath, null);
     assert.deepEqual(runs[2] && { finishedAt: runs[2].finishedAt, durationSeconds: runs[2].durationSeconds, exitCode: runs[2].exitCode, executionLocation: runs[2].executionLocation },
-      { finishedAt: '2026-10-09 18:01:30', durationSeconds: 90, exitCode: 0, executionLocation: 'remote' });
+      { finishedAt: '2026-10-09T18:01:30+08:00', durationSeconds: 90, exitCode: 0, executionLocation: 'remote' });
     assert.deepEqual(runs[2]?.evidenceFiles, ['summary.json', 'status.json']);
     assert.equal(runs[2]?.detailFilePath, path.join(collected, 'summary.json'));
   } finally { await rm(root, { recursive: true, force: true }); }

@@ -999,7 +999,7 @@ export class NativeStore {
           else{
             const job=prepareInteractionResponse(nativeQueries(this.db),actor as AccessActor,request.operationId,{sessionId:runtime.sessionId,attemptId:runtime.attemptId,
               connectionId:runtime.connectionId,runtimeVersion:runtime.runtimeVersion,interactionId:input.interactionId,requestDigest:input.requestDigest,
-              responseDigest:input.responseDigest,claimToken:input.claimToken,...(input.standalone?{standalone:true as const}:{})},this.runtimes.get(runtime.sessionId)!.leaseToken);
+              responseDigest:input.responseDigest,claimToken:input.claimToken,...(input.standalone?{standalone:true as const}:{})},this.runtimes.get(runtime.sessionId)!.leaseToken,'runtime-trust');
             value={prepared:true,job,source:trust.source,expiresAt:trust.expiresAt};
           }
         }else if(request.command.name==='turn.authorizeAutoResponse'&&request.principal.kind==='runtime'){
@@ -1026,7 +1026,7 @@ export class NativeStore {
           }
         }else if(request.command.name==='interaction.prepareResponse'&&request.principal.kind==='user'){
           const input=request.command.input,runtime={kind:'runtime' as const,sessionId:input.sessionId,attemptId:input.attemptId,connectionId:input.connectionId,runtimeVersion:input.runtimeVersion};
-          this.authorize(runtime,input.sessionId,!!input.standalone);value=prepareInteractionResponse(nativeQueries(this.db),this.user(request.principal) as AccessActor,request.operationId,input,this.runtimes.get(input.sessionId)!.leaseToken);
+          this.authorize(runtime,input.sessionId,!!input.standalone);value=prepareInteractionResponse(nativeQueries(this.db),this.user(request.principal) as AccessActor,request.operationId,input,this.runtimes.get(input.sessionId)!.leaseToken,'manual-review');
         }else if(request.command.name==='interaction.confirmResponse'){
           value=confirmInteractionResponse(nativeQueries(this.db),request.command.input);
         }else if(request.command.name==='interaction.projectSubmitted'){

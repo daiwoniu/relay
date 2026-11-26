@@ -11,8 +11,10 @@ import { ANALYTICS_SCHEMA_SQL,ANALYTICS_DAY,AnalyticsClientEventSchema,type Anal
 import { trustedGatewayFrontendContext,analyticsSourceRequestUrl } from './request-context.js';
 import { classifyAnalyticsSource } from '../../../scripts/lib/analytics-source.mjs';
 import { appendAnalytics,readAnalytics } from '../storage/native-analytics.js';
+import { ANALYTICS_TOOL_IDS } from './registry.js';
 import { AnalyticsService,analyticsLoginId } from './service.js';
 import { createAnalyticsRouter } from './routes.js';
+import { readFeatureAnalytics } from './read-features.js';
 import { HOSTING_SCHEMA_SQL } from '../page-hosting/contract.js';
 
 function record(at=Date.now()):AnalyticsRecord & {event:Extract<AnalyticsRecord['event'],{name:'page_view'}>}{return{event:{id:randomUUID(),name:'page_view',page:'tools',pageViewId:randomUUID(),referrerHost:null,device:'mobile',browser:'Safari',os:'iOS',properties:{}},receivedAt:at,visitorId:randomUUID(),userId:null,role:'guest',ip:'203.0.113.9',version:'0.0.0'};}
@@ -54,13 +56,68 @@ test('网络过滤统一作用于各类统计与明细；未知历史保留，�
     const query={range:'30d' as const,excludeAdmin:false,excludeInternal:true};
     const filtered=readAnalytics(db,query,'summary',now) as AnalyticsSummary;
     assert.deepEqual(filtered.totals,{pv:4,uv:4,users:0,actions:3,hosting:3,logins:3,news:3});
+    assert.deepEqual(filtered.daily[0].network,{public:2,internal:0,unknown:2});
+    const unfiltered=readAnalytics(db,{...query,excludeInternal:false},'summary',now) as AnalyticsSummary;
+    assert.deepEqual(unfiltered.daily[0].network,{public:2,internal:1,unknown:2});
     assert.equal(filtered.tools[0].opens,3);assert.equal(filtered.tools[0].actions,3);
     const visits=readAnalytics(db,query,'visits',now) as any[];
     assert.equal(visits.length,10);assert.ok(visits.every(row=>row.networkType!=='internal'));
-    assert.equal((readAnalytics(db,{...query,excludeAdmin:true},'summary',now) as AnalyticsSummary).totals.pv,3);
+    const withoutAdmins=readAnalytics(db,{...query,excludeAdmin:true},'summary',now) as AnalyticsSummary;
+    assert.equal(withoutAdmins.totals.pv,3);
+    assert.deepEqual(withoutAdmins.daily[0].network,{public:1,internal:0,unknown:2});
     appendAnalytics(db,[record(now+8*ANALYTICS_DAY)],now+8*ANALYTICS_DAY);
     assert.equal(db.get('SELECT COUNT(*) AS n FROM analytics_events WHERE ip IS NOT NULL')!.n,26);
     assert.equal((readAnalytics(db,query,'summary',now+8*ANALYTICS_DAY) as AnalyticsSummary).totals.actions,3);
+  }finally{sql.close();}
+});
+
+test('工具完整聚合保留打开次数最高但组合次数较低的工具',()=>{
+  const sql=new DatabaseSync(':memory:');sql.exec(ANALYTICS_SCHEMA_SQL+HOSTING_SCHEMA_SQL);
+  try{
+    const db=nativeQueries(sql),now=Date.now(),[top,...otherTools]=ANALYTICS_TOOL_IDS;
+    const events=otherTools.flatMap(toolId=>Array.from({length:3},()=>{
+      const row=record(now);
+      return {...row,event:{...row.event,name:'tool_action' as const,properties:{toolId,action:'copy' as const,result:'success' as const}}};
+    }));
+    appendAnalytics(db,[...events,...Array.from({length:2},()=>{
+      const row=record(now);
+      return {...row,event:{...row.event,name:'tool_open' as const,properties:{toolId:top}}};
+    })],now);
+    const {tools}=readAnalytics(db,{range:'today',excludeAdmin:false},'summary',now) as AnalyticsSummary;
+    assert.equal(tools.length,ANALYTICS_TOOL_IDS.length);
+    const mostOpened=tools.find(row=>row.label===top);
+    assert.equal(mostOpened?.opens,2);
+    assert.equal(mostOpened?.actions,0);
+  }finally{sql.close();}
+});
+
+test('滚动24小时、自定义时刻与小时趋势使用同一窗口，期间访客独立去重',()=>{
+  const sql=new DatabaseSync(':memory:');sql.exec(ANALYTICS_SCHEMA_SQL+HOSTING_SCHEMA_SQL);
+  try{
+    const db=nativeQueries(sql),now=Date.parse('2026-11-26T03:35:00+08:00'),start=now-ANALYTICS_DAY;
+    const visitorId=randomUUID();
+    appendAnalytics(db,[start-1,start,start+3600_000,now-1,now+1].flatMap(at=>{
+      const page={...record(at),visitorId,networkType:'public' as const};
+      const action=record(at);
+      return [page,{...action,event:{...action.event,name:'feature_action',properties:{feature:'composer',action:'submit',surface:'composer',operationId:randomUUID()}}}];
+    }),now);
+    const rolling={range:'24h' as const,excludeAdmin:false};
+    const summary=readAnalytics(db,rolling,'summary',now) as AnalyticsSummary;
+    assert.equal(summary.since,start);assert.equal(summary.until,now);
+    assert.equal(summary.totals.pv,3);assert.equal(summary.totals.uv,1);
+    assert.equal(summary.trend?.step,3600_000);assert.equal(summary.trend?.points.length,3);
+    const today=readAnalytics(db,{...rolling,range:'today'},'summary',now) as AnalyticsSummary;
+    assert.equal(today.trend?.step,3600_000);assert.equal(today.daily[0].uv,1);
+    const custom={range:'custom' as const,startAt:start,endAt:start+3600_000,excludeAdmin:false};
+    const selected=readAnalytics(db,custom,'summary',now) as AnalyticsSummary;
+    assert.equal(selected.totals.pv,2);assert.equal(selected.until,custom.endAt);
+    assert.equal((readAnalytics(db,custom,'visits',now) as unknown[]).length,2);
+    assert.equal((readFeatureAnalytics(db,custom,'features',undefined,now) as {messageSubmits:number}).messageSubmits,2);
+    const actions=readFeatureAnalytics(db,custom,'actions',undefined,now) as {items:unknown[]};
+    assert.equal(actions.items.length,2);
+    const long=readAnalytics(db,{...custom,startAt:now-200*ANALYTICS_DAY,endAt:now},'summary',now) as AnalyticsSummary;
+    assert.ok(long.trend&&long.trend.step>ANALYTICS_DAY);
+    assert.equal(long.trend.points.reduce((total,row)=>total+row.pv,0),long.totals.pv);
   }finally{sql.close();}
 });
 

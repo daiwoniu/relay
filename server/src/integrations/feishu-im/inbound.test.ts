@@ -42,7 +42,8 @@ test('Feishu model replies use Card JSON 2.0 Markdown with a separate footer and
   const source = '# **结果**\n\n> 引用第一段\n>\n> 引用第二段\n\n| 项目 | 状态 |\n| --- | --- |\n| 测试 | 完成 |\n\n```ts\nconst ok = true;\n```';
   const executionLine = '引擎：Codex · 模型：GPT · 强度：高 · 速度：常规 · 压缩次数：0';
   const outgoing = {
-    id: 'msg', body: `${source}\n\n${executionLine}`, inbound: { executionLine },
+    id: 'msg', body: `${source}\n\n${executionLine}`, inbound: { executionLine, chatType: 'p2p' as const,
+      conversation: { actualModel: 'GPT', usage: { total_tokens: 3482 } } },
     replyTo: 'om_source', inThread: true, chatId: 'oc_group',
   };
   const delivery = buildFeishuDelivery({ ...outgoing, contextCard: { kind: 'private' } });
@@ -56,13 +57,19 @@ test('Feishu model replies use Card JSON 2.0 Markdown with a separate footer and
   assert.deepEqual(elements[0], { tag: 'markdown', content: source });
   assert.deepEqual(elements.filter(item => item.tag === 'button').map(action => action.behaviors[0]),
     ['carry', 'clear'].map(choice => ({ type: 'callback', value: { relay: 'new-context', id: 'msg', choice } })));
-  assert.deepEqual(elements[3], { tag: 'div', text: { tag: 'plain_text', content: executionLine, text_size: 'notation', text_color: 'grey' } });
-  assert.deepEqual(buildFeishuContextCard('msg', `<at id=all>所有人</at>\n\n${executionLine}`, undefined, executionLine).body.elements[0],
+  assert.deepEqual(elements[3], { tag: 'div', text: { tag: 'plain_text', content: 'Codex · GPT · 3.48K Tokens', text_size: 'notation', text_color: 'grey' } });
+  const group = buildFeishuDelivery({ ...outgoing, inbound: { ...outgoing.inbound, chatType: 'group' } });
+  assert.deepEqual(JSON.parse(group.payload.data.content).body.elements, [{ tag: 'markdown', content: source }]);
+  assert.deepEqual(buildFeishuContextCard('msg', '<at id=all>所有人</at>', undefined, { markdown: true }).body.elements[0],
     { tag: 'markdown', content: '&lt;at id=all>所有人&lt;/at>' });
+  const short = buildFeishuDelivery({ ...outgoing, body: `<at user_id="all">所有人</at>\n\n${executionLine}`,
+    inbound: { executionLine, chatType: 'group' } });
+  assert.equal(short.payload.data.msg_type, 'text');
+  assert.equal(JSON.parse(short.payload.data.content).text, '＜at user_id="all">所有人＜/at>');
 
   const largeBody = `${'长'.repeat(10_000)}\n\n${executionLine}`;
   assert.deepEqual(buildFeishuDelivery({ ...outgoing, body: largeBody }).payload.data,
-    { content: JSON.stringify({ text: largeBody }), msg_type: 'text', uuid: 'msg', reply_in_thread: true });
+    { content: JSON.stringify({ text: '长'.repeat(10_000) }), msg_type: 'text', uuid: 'msg', reply_in_thread: true });
   assert.deepEqual(buildFeishuDelivery({ ...outgoing, body: '操作完成', inbound: null, replyTo: null }),
     { method: 'create', payload: { params: { receive_id_type: 'chat_id' },
       data: { content: JSON.stringify({ text: '操作完成' }), msg_type: 'text', uuid: 'msg', receive_id: 'oc_group' } } });
@@ -72,24 +79,25 @@ test('Feishu checks the serialized send body at the exact card limit', () => {
   const executionLine = '引擎：Codex';
   const suffix = `\n\n${executionLine}`;
   for (const replyTo of [null, 'om_source']) {
-    const outgoing = { id: 'msg', body: '中' + suffix, inbound: { executionLine }, replyTo, inThread: true, chatId: 'oc_group' };
+    const outgoing = { id: 'msg', body: '# 中' + suffix, inbound: { executionLine }, replyTo, inThread: true, chatId: 'oc_group' };
     const baseline = buildFeishuDelivery(outgoing);
     const limit = 30_000;
-    const text = '中' + 'a'.repeat(limit - Buffer.byteLength(JSON.stringify(baseline.payload.data)));
+    const text = '# 中' + 'a'.repeat(limit - Buffer.byteLength(JSON.stringify(baseline.payload.data)));
     const exact = buildFeishuDelivery({ ...outgoing, body: text + suffix });
     assert.equal(exact.payload.data.msg_type, 'interactive');
     assert.equal(Buffer.byteLength(JSON.stringify(exact.payload.data)), limit);
     assert.equal(buildFeishuDelivery({ ...outgoing, body: text + '中' + suffix }).payload.data.msg_type, 'text');
   }
-  const withButtons = { id: 'msg', body: '中' + suffix, inbound: { executionLine }, replyTo: 'om_source',
+  const withButtons = { id: 'msg', body: '中' + suffix, inbound: { executionLine, chatType: 'p2p' as const }, replyTo: 'om_source',
     inThread: true, chatId: 'oc_group', contextCard: { kind: 'private' as const } };
   const baseline = buildFeishuDelivery(withButtons);
   const oversized = '中' + 'a'.repeat(30_001 - Buffer.byteLength(JSON.stringify(baseline.payload.data))) + suffix;
   const downgraded = buildFeishuDelivery({ ...withButtons, body: oversized }).payload.data;
   assert.equal(downgraded.msg_type, 'interactive');
   const { body } = JSON.parse(downgraded.content) as ReturnType<typeof buildFeishuContextCard>;
-  assert.deepEqual(body.elements[0], { tag: 'div', text: { tag: 'plain_text', content: oversized } });
+  assert.deepEqual(body.elements[0], { tag: 'div', text: { tag: 'plain_text', content: oversized.slice(0, -suffix.length) } });
   assert.equal(body.elements.filter(item => item.tag === 'button').length, 2);
+  assert.equal(body.elements.some(item => item.tag === 'div' && 'text_size' in item.text), false);
 });
 
 function permitFixtureSender(db: ReturnType<typeof nativeQueries>, { inbound }: Parameters<typeof acceptFeishuInbound>[1]) {
@@ -258,7 +266,7 @@ test('Feishu approval notices preserve lines and share only recognized operation
     snapshot: { title: '网络授权', networkApprovalContext: { host: 'intranet.example' } }, availableActions: ['accept_once'] });
   const question = defineNormalizedInteraction({ requestId: 4, kind: 'user_input', snapshot: { title: '提问' }, availableActions: ['submit'] });
   const body = feishuApprovalWaitBody([command('运行项目检查'), question]);
-  assert.deepEqual(body?.split('\n'), ['任务正在等待 Relay 人工审核。', '申请授权：执行命令', '申请说明：运行项目检查',
+  assert.deepEqual(body?.split('\n'), ['等待管理员审核。', '申请授权：执行命令', '申请说明：运行项目检查',
     '所需授权通过后，任务会自动继续。你无需重复发送。']);
   const delivery = buildFeishuDelivery({ id: 'approval-notice', body: body!, inbound: null,
     replyTo: 'om_original', inThread: true, chatId: 'oc_group' });
@@ -832,6 +840,83 @@ test('Feishu uses the native turn queue and recovers the same committed request 
     assert.ok(other?.kind === 'inbound');
     assert.deepEqual(store.runFeishuWork({ ...scope, action: 'startSummary', sequence: other.sequence }), { kind: 'summaryStarted' });
     assert.deepEqual(store.runFeishuWork({ ...cardHistory, sequence: other.sequence }), { kind: 'summaryReplies', replies: [] });
+  } finally { store.close(); f.cleanup(); }
+});
+
+test('Feishu private permanent trust authorizes the bot without granting it manual review access', () => {
+  const f = fixture();
+  f.mutate(FEISHU_IM_SCHEMA_SQL);
+  const workspacePath = 'D:/synthetic', configurationId = randomUUID();
+  const inbound = { ...normalizeFeishuInbound({ ...bot, id: configurationId, workspacePath }, 'ou_bot', event())!, chatType: 'p2p' as const };
+  const scope = { botId: inbound.botId, tenantKey: inbound.tenantKey, workspacePath };
+  f.mutate(`INSERT INTO feishu_im_settings VALUES('${configurationId}','cli_a','project','测试机器人',1,1,'{}','secret',NULL)`);
+  const store = new NativeStore(f.filename, 'store', 1, true, { 'codex:feishu': 1 });
+  const envelope = { protocolVersion: 1, storeId: 'store', workerGeneration: 1, principal: { kind: 'system', purpose: 'scheduler' } } as const;
+  try {
+    assert.equal(acceptPermittedWithStore(f, store, { workspacePath, inbound }), 'received');
+    const entry = store.runFeishuWork({ ...scope, action: 'pending' });
+    assert.ok(entry?.kind === 'inbound');
+    const prepared = store.runFeishuWork({ ...scope, action: 'prepareRelayTurn', sequence: entry.sequence, engineId: 'codex', configurationId });
+    assert.ok(prepared?.kind === 'relayTurnPrepared');
+    const { turn } = prepared;
+    const attemptId = feishuExecutionId([turn.messageId, 'attempt']);
+    const enqueued = store.execute({ ...envelope, requestId: 'enqueue', operationId: 'enqueue', command: { name: 'turn.enqueue', input: {
+      sessionId: turn.sessionId, messageId: turn.messageId, attemptId, engineId: 'codex', resourceKey: 'codex:feishu',
+      content: prepared.content, metadata: null, expectedPreferencesRevision: 0,
+      origin: { kind: 'feishu', botId: inbound.botId, tenantKey: inbound.tenantKey, sequence: entry.sequence },
+    } } });
+    assert.equal(enqueued.state, 'committed');
+    const claimed = store.execute({ ...envelope, requestId: 'claim', operationId: 'claim',
+      command: { name: 'queue.claim', input: { resourceKey: 'codex:feishu', claimToken: 'fixture-claim' } } });
+    assert.ok(claimed.state === 'committed');
+    const runtime = { kind: 'runtime', sessionId: turn.sessionId, attemptId, connectionId: 'test-connection', runtimeVersion: 1 } as const;
+    const { leaseToken } = claimed.value as QueueClaim;
+    store.registerRuntime({ storeId: 'store', workerGeneration: 1, leaseToken, runtime });
+    const sqlite = new DatabaseSync(f.filename, { readOnly: true });
+    try { assert.equal(canReviewFeishuRelayTurn(nativeQueries(sqlite), turn.actorId, turn.actorId, turn.sessionId, attemptId), false); }
+    finally { sqlite.close(); }
+    f.mutate(`UPDATE sessions SET status='awaiting_action' WHERE id='${turn.sessionId}'`);
+    const review = () => {
+      const sqlite = new DatabaseSync(f.filename, { readOnly: true });
+      try { return runFeishuAdmin(nativeQueries(sqlite), { action: 'reviewTurn', botId: scope.botId, tenantKey: scope.tenantKey,
+        sequence: entry.sequence }, 'owner').reviewTurn; }
+      finally { sqlite.close(); }
+    };
+    assert.deepEqual(review(), { sessionId: turn.sessionId, attemptId });
+    f.mutate(`UPDATE feishu_im_inbox SET data_json=json_set(data_json,'$.tenantKey','other') WHERE sequence=${entry.sequence}`);
+    assert.equal(review(), null);
+    f.mutate(`UPDATE feishu_im_inbox SET data_json=json_set(data_json,'$.tenantKey','${scope.tenantKey}') WHERE sequence=${entry.sequence}`);
+    const sessionId = turn.sessionId, runtimeEnvelope = { ...envelope, principal: runtime };
+    const prepare = (id: string) => store.execute({ ...runtimeEnvelope, requestId: id, operationId: id,
+      command: { name: 'turn.prepareAutoResponse', input: { sessionId, interactionId: id, kind: 'command',
+        requestDigest: 'a'.repeat(64), responseDigest: 'b'.repeat(64), claimToken: id } } });
+    const authorize = (jobId: string) => store.execute({ ...runtimeEnvelope, requestId: `authorize-${jobId}`, operationId: `authorize-${jobId}`,
+      command: { name: 'turn.authorizeAutoResponse', input: { sessionId, jobId } } });
+    const setTrust = (permanent: boolean) => f.mutate(`UPDATE feishu_im_settings SET options_json='${JSON.stringify({
+      conversationOverrides: [{ kind: 'p2p', targetId: inbound.senderId, engine: 'bot', model: null,
+        approval: { choice: permanent ? 'permanent' : 'manual', expiresAt: null } }],
+    })}' WHERE id='${configurationId}'`);
+
+    const manual = prepare('manual');
+    assert.ok(manual.state === 'committed');
+    assert.deepEqual(manual.value, { prepared: false });
+    setTrust(true);
+    const revoked = prepare('revoked');
+    assert.ok(revoked.state === 'committed' && revoked.value && 'prepared' in revoked.value && revoked.value.prepared);
+    setTrust(false);
+    const denied = authorize('revoked');
+    assert.ok(denied.state === 'committed');
+    assert.deepEqual(denied.value, { allowed: false });
+    setTrust(true);
+    const trusted = prepare('trusted');
+    assert.ok(trusted.state === 'committed' && trusted.value && 'job' in trusted.value && 'prepared' in trusted.value && trusted.value.prepared);
+    const allowed = authorize('trusted');
+    assert.ok(allowed.state === 'committed');
+    assert.deepEqual(allowed.value, { allowed: true });
+    const { jobId, claimToken, requestDigest, responseDigest } = trusted.value.job;
+    const confirmed = store.execute({ ...runtimeEnvelope, requestId: 'confirm', operationId: 'confirm',
+      command: { name: 'turn.confirmAutoResponse', input: { sessionId, jobId, claimToken, requestDigest, responseDigest } } });
+    assert.ok(confirmed.state === 'committed' && confirmed.value && 'phase' in confirmed.value && confirmed.value.phase === 'submitted');
   } finally { store.close(); f.cleanup(); }
 });
 
@@ -1476,7 +1561,7 @@ test('private context commands offer explicit carry and clear choices', () => {
   const message = { chatType: 'p2p' as const, text: '/新建' };
   const choice = feishuContextCommandReply(message, []);
   assert.equal(choice?.category, 'private_context_choice');
-  assert.match(choice?.body ?? '', /带摘要新建[\s\S]+空白新建/);
+  assert.match(choice?.body ?? '', /带上之前的对话要点[\s\S]+从空白开始/);
   const carry = feishuContextCommandReply({ ...message, text: '/新建 保留' }, ['release']);
   assert.deepEqual(carry?.carriedTaskIds, ['release']);
   assert.equal(feishuContextCommandReply({ ...message, text: '/新建 清空' }, [])?.category, 'private_context_reset');

@@ -38,3 +38,33 @@ test('a real terminal error still renders the failure status', () => {
   assert.match(html, /引擎任务失败/);
   assert.doesNotMatch(html, /消息发送中/);
 });
+
+test('the active reply renders two shared stop controls even before timing starts', () => {
+  const stopControl = { request() {}, pending: false };
+  const waiting = { waitingStage: 'forwarded', stopControl };
+  const html = render(waiting);
+  assert.equal((html.match(/aria-label="停止生成"/g) || []).length, 2);
+  assert.equal((html.match(/正在启动/g) || []).length, 2);
+  assert.equal((render({ ...waiting, isAwaitingAction: true }).match(/aria-label="停止等待"/g) || []).length, 2);
+  assert.equal((render({ ...waiting, stopControl: { ...stopControl, pending: true } }).match(/disabled="" aria-label="正在请求停止"/g) || []).length, 2);
+  assert.equal((render({ ...waiting, isStopping: true }).match(/disabled="" aria-label="正在停止"/g) || []).length, 2);
+  assert.doesNotMatch(render({ ...waiting, shareSelectionMode: true }), /aria-label="停止生成"/);
+  assert.doesNotMatch(render({ ...waiting, isWaiting: false }), /aria-label="停止生成"/);
+  assert.doesNotMatch(render({ waitingStage: 'queued' }), /aria-label="停止生成"/);
+});
+
+test('the header keeps the status and token estimate together before the stop control', () => {
+  const html = render({
+    isWaiting: false,
+    isStreaming: true,
+    waitingStage: 'started',
+    streamingTokenUsage: {
+      inputTokens: 10, cachedInputTokens: 0, outputTokens: 20,
+      reasoningOutputTokens: 0, totalTokens: 30, modelContextWindow: null,
+    },
+    stopControl: { request() {}, pending: false },
+  });
+  const header = html.split('assistant-message__running-footer')[0];
+  assert.match(header, /处理中[\s\S]*输出 ≈ 20[\s\S]*aria-label="停止生成"/);
+  assert.equal((header.match(/aria-label="停止生成"/g) || []).length, 1);
+});

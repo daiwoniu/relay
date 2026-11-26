@@ -9,7 +9,7 @@ import {
   type RecoveryCapabilities,
 } from '../api/service-recovery.ts';
 import type { ProtocolMismatch } from '../stores/chat.ts';
-import { RELAY_PROTOCOL_VERSION } from '../generated/relay-contracts.ts';
+import { RELAY_PROTOCOL_VERSION, type MaintenanceOutputSnapshotDto } from '../generated/relay-contracts.ts';
 import {
   hasRefreshedForMismatch,
   markMismatchRefreshed,
@@ -26,6 +26,7 @@ import {
 } from '../recovery/service-maintenance-policy.ts';
 import {
   canIgnoreRecoveryConfirmationError,
+  hasCompletedFrontendRestart,
   toRecoveryRequestAction,
 } from '../recovery/service-maintenance-operation.ts';
 import {
@@ -232,7 +233,7 @@ export function useServiceMaintenance(options: UseServiceMaintenanceOptions) {
         // 或确认记录已失效，只能说明结果未知，必须观察实例切换后才能判定成功。
       }
       setOperationOutput(emptyMaintenanceOutputState());
-      const latestCapabilitiesRef: { current: RecoveryCapabilities | null } = { current: null };
+      let frontendOperationStatus: MaintenanceOutputSnapshotDto['status'] | null = null;
       const result = await pollForRecovery({
         target: response.target,
         clientProtocolVersion,
@@ -243,13 +244,17 @@ export function useServiceMaintenance(options: UseServiceMaintenanceOptions) {
             ? 90_000
             : response.target === 'frontend'
               ? 90_000
-              : 30_000,
-        intervalMs: response.target === 'setup' ? 1_000 : 500,
-        requireExplicitRestartObserved: response.target === 'setup' || confirmationUncertain,
+              : undefined,
+        intervalMs: response.target === 'setup' || response.target === 'backend' ? 1_000 : 500,
+        requireExplicitRestartObserved: response.target === 'setup' || response.target === 'frontend' || confirmationUncertain,
         probe: async (signal) => {
           try {
             const output = await getServiceRecoveryOperationOutput(response.operationId, signal);
             if (mountedRef.current && !signal?.aborted) setOperationOutput((current) => receiveMaintenanceOutput(current, output));
+            if (response.target === 'frontend' && output) frontendOperationStatus = output.status;
+            if ((response.target === 'backend' || response.target === 'frontend') && output?.status === 'failed') {
+              return { healthy: false, serverProtocolVersion: null, terminalFailure: true };
+            }
           } catch (outputError) {
             if (outputError instanceof Error && outputError.name === 'AbortError') throw outputError;
             if (mountedRef.current && !signal?.aborted) setOperationOutput(disconnectMaintenanceOutput);
@@ -259,7 +264,6 @@ export function useServiceMaintenance(options: UseServiceMaintenanceOptions) {
           const nextFrontendStatus = response.target === 'frontend' || response.target === 'relay'
             ? await getFrontendStatus(signal)
             : null;
-          latestCapabilitiesRef.current = next;
           if (mountedRef.current && !signal?.aborted) {
             setCapabilities(next);
             if (nextFrontendStatus) setFrontendStartedAt(nextFrontendStatus.startedAt);
@@ -280,11 +284,21 @@ export function useServiceMaintenance(options: UseServiceMaintenanceOptions) {
               : response.target === 'backend' || response.target === 'relay'
               ? backendChanged
               : response.target === 'frontend'
-                ? frontendChanged
-                : frontendChanged,
+                ? hasCompletedFrontendRestart(frontendOperationStatus, frontendChanged, next.frontendBuildRequired)
+                : false,
           };
         },
       });
+      if ((response.target === 'backend' || response.target === 'frontend') && result.status === 'timeout') {
+        const service = response.target === 'backend' ? '后端' : '前端';
+        setError({
+          title: `${service}重启结果待确认`,
+          detail: `等待期间未确认${service}恢复。请查看启动终端的进度，服务就绪后点「重新检测」。`,
+          showTerminalFallback: false,
+          outcomeUnconfirmed: true,
+        });
+        return;
+      }
       if (result.status === 'timeout' || result.status === 'failed') {
         setError({
           title: response.target === 'setup'
@@ -299,11 +313,11 @@ export function useServiceMaintenance(options: UseServiceMaintenanceOptions) {
           detail: response.target === 'setup'
             ? '未能确认环境修复成功。请重新检测；如仍异常，请在终端运行 npm run setup 查看完整输出。'
             : response.target === 'frontend'
-            ? '未检测到前端实例完成切换。production 构建可能失败且旧前端仍在运行，请查看启动终端后重新检测。'
+            ? '启动器报告前端构建或切换失败，请查看维护输出或启动终端。'
             : response.target === 'relay'
               ? '未能确认新启动器和全部 Relay 服务恢复。请查看 logs；如仍不可用，请在终端运行 npm run restart。'
             : response.target === 'backend'
-              ? '未检测到后端实例完成切换。当前后端可能仍在运行旧代码，请查看启动终端后重新检测。'
+              ? '启动器报告后端重启失败，请查看维护输出或启动终端。'
               : '服务没有在预期时间内恢复。请查看启动终端，重新检测后再决定是否执行终端重启。',
           showTerminalFallback: true,
         });
@@ -311,16 +325,6 @@ export function useServiceMaintenance(options: UseServiceMaintenanceOptions) {
       }
       if (response.target === 'setup') {
         await refreshCapabilities();
-        return;
-      }
-      if (response.target === 'frontend'
-        && latestCapabilitiesRef.current?.frontendMode === 'production'
-        && latestCapabilitiesRef.current.frontendBuildRequired) {
-        setError({
-          title: '前端构建未生效',
-          detail: '前端实例已经恢复，但 production 构建仍落后于源码。旧构建可能仍在运行，请查看启动终端中的构建或回滚记录。',
-          showTerminalFallback: true,
-        });
         return;
       }
       if (response.target === 'backend' && options.onReconnect) {

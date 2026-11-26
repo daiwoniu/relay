@@ -1,5 +1,11 @@
 import { resolveCodexFileReferencePathResult } from './codex-file-directives.ts';
 
+export function normalizeMessageFilePath(href: string | undefined): string {
+  let path = (href ?? '').trim();
+  try { path = decodeURIComponent(path); } catch { /* Keep literal percent signs in filenames. */ }
+  return path.replace(/^\/+([A-Za-z]:)/, '$1').replace(/^([A-Za-z]):\/\/+/u, '$1:/').replace(/#.*$/, '').replace(/:\d+$/, '');
+}
+
 interface PreviewProjectContext {
   activeSessionId: string | null;
   currentProjectId: string | null;

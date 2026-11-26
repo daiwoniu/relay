@@ -34,6 +34,8 @@ export const SendCommandSchema = z.object({
 export const CancelCommandSchema = z.object({
   type: z.literal('cancel'),
   sessionId: z.string().uuid().optional(),
+  expectedAttemptId: z.string().min(1).optional(),
+  analyticsOperationId: z.string().uuid().optional(),
 }).strict();
 
 export const CancelFollowupCommandSchema = z.object({

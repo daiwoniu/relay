@@ -6,11 +6,12 @@ import { isCanonicalWorkspace, resolveFeishuScope } from './config.js';
 import { createFeishuClient } from './sdk.js';
 import { FeishuSenderDirectory, type SenderName } from './sender-directory.js';
 import { isSummaryRequest, summarizeFeishuHistory } from './history-summary.js';
-import { buildFeishuDelivery, feishuContextCommandReply } from './context-card.js';
+import { buildFeishuDelivery, feishuContextCommandReply, splitFeishuReplyBody } from './context-card.js';
 import type { FeishuSummaryPlatform } from './managed-config.js';
 import type { NativeFeishuConversation } from './native-conversation.js';
 import { recordTrustedResult } from '../../analytics/command-collector.js';
 import { FeishuAttachmentError } from './attachments.js';
+import { prepareFeishuReplyFiles, readFeishuReplyFile } from './reply-files.js';
 
 const senderNameWaitMs = 300;
 
@@ -80,6 +81,7 @@ export class FeishuImWorker {
     if (this.closed) return;
     if (feedback?.kind === 'inbound' && (feedback.accessDenied || feedback.inbound.contentIssue)) await this.processInbound(bot, scope, feedback);
     await this.deliver(bot, scope, work);
+    await this.deliverReplyFile(bot, scope, work);
     const active = this.active.get(bot.id) ?? new Map<string, Promise<void>>();
     this.active.set(bot.id, active);
     while (!this.closed) {
@@ -145,7 +147,15 @@ export class FeishuImWorker {
       : feishuPolicyKey(bot, outgoing.chatId) === outgoing.policyKey;
     if (allowed) {
       try {
-        Object.assign(settle, await this.transmit(bot, () => outgoing));
+        const { text, footer } = splitFeishuReplyBody(outgoing.body, outgoing.inbound?.executionLine);
+        const reply = footer ? await prepareFeishuReplyFiles(text, bot.workspacePath) : null;
+        if (reply && footer) reply.body = `${reply.body}\n\n${footer}`;
+        Object.assign(settle, await this.transmit(bot, () => reply ? { ...outgoing, ...reply } : outgoing, async fileCount => {
+          const files = reply?.files.slice(0, fileCount);
+          if (!files?.length) return;
+          const result = await work({ ...scope, action: 'stageReplyFiles', id: outgoing.id, files });
+          if (result?.kind !== 'replyFilesStaged') throw Error('FEISHU_REPLY_FILES_NOT_STAGED');
+        }));
       } catch {
         settle.state = 'unknown';
         settle.errorCode = 'transport';
@@ -154,12 +164,49 @@ export class FeishuImWorker {
     await work(settle);
   }
 
-  private async transmit(bot: FeishuBotConfig, readOutgoing: () => Parameters<typeof buildFeishuDelivery>[0] | null) {
+  private async deliverReplyFile(bot: FeishuBotConfig, scope: { botId: string; tenantKey: string }, work: CoreStoragePort['runFeishuWork']) {
+    if (this.closed) return;
+    const delivery = await work({ ...scope, action: 'claimReplyFile', projectId: bot.projectId, workspacePath: bot.workspacePath });
+    if (delivery?.kind !== 'replyFileDelivery') return;
+    const { file } = delivery;
+    let state: Extract<FeishuWork, { action: 'settleReplyFile' }>['state'] = 'failed';
+    let messageId: string | null = null;
+    try {
+      const content = await isCanonicalWorkspace(bot.workspacePath) ? await readFeishuReplyFile(bot.workspacePath, file) : null;
+      if (!content) state = 'unavailable';
+      else {
+        const client = await this.client(bot);
+        await this.options.assertExclusiveWriter();
+        const uploaded = await client.im.file.create({ data: { file_type: 'stream', file_name: file.name, file: content } });
+        if (uploaded?.file_key) {
+          await this.options.assertExclusiveWriter();
+          const submit = await work({ ...scope, action: 'beginReplyFileSend', id: file.id,
+            projectId: bot.projectId, workspacePath: bot.workspacePath });
+          if (submit?.kind !== 'replyFileSendStarted') return;
+          state = 'unknown';
+          const sent = await client.im.message.reply({ path: { message_id: delivery.replyTo }, data: {
+            msg_type: 'file', content: JSON.stringify({ file_key: uploaded.file_key }), uuid: file.id, reply_in_thread: delivery.inThread,
+          } });
+          if (sent.code === 0 && sent.data?.message_id) {
+            messageId = sent.data.message_id;
+            state = 'sent';
+          } else if (typeof sent.code === 'number' && sent.code !== 0) state = 'failed';
+        }
+      }
+    } catch { this.options.diagnostic(); }
+    await work({ ...scope, action: 'settleReplyFile', id: file.id, state, messageId });
+    recordTrustedResult(this.options.port, { userId: null, role: 'guest' }, 'feishu_reply', 'claim_file', `${file.id}:${state}`, file.id,
+      state === 'sent' ? 'success' : state === 'unknown' ? 'unknown' : state === 'unavailable' ? 'rejected' : 'error');
+  }
+
+  private async transmit(bot: FeishuBotConfig, readOutgoing: () => Parameters<typeof buildFeishuDelivery>[0] | null,
+    stageFiles?: (fileCount: number) => Promise<void>) {
     const client = await this.client(bot);
     await this.options.assertExclusiveWriter();
     const outgoing = readOutgoing();
     if (!outgoing) return null;
     const delivery = buildFeishuDelivery(outgoing);
+    if (delivery.fileCount) await stageFiles?.(delivery.fileCount);
     const response = delivery.method === 'reply' ? await client.im.message.reply(delivery.payload)
       : await client.im.message.create(delivery.payload);
     const messageId = response.data?.message_id ?? null;
@@ -256,8 +303,8 @@ export class FeishuImWorker {
     return result ? { category: 'conversation', body: result.body, executionLine: result.executionLine,
       ...(result.taskId === undefined ? {} : { taskId: result.taskId }),
       ...(result.taskTitle === undefined ? {} : { taskTitle: result.taskTitle }),
-      conversation: { model: result.model, called: true, usage: result.usage } }
-      : { category: 'conversation_error', body: '暂时没有完成这条回复，请稍后再试。' };
+      conversation: { model: result.model, ...(result.actualModel ? { actualModel: result.actualModel } : {}), called: true, usage: result.usage } }
+      : { category: 'conversation_error', body: '这次处理没有完成。请稍后重新发送原消息。' };
   }
 
   async close() {

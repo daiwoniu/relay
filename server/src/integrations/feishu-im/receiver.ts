@@ -143,18 +143,27 @@ export class FeishuImReceiver {
     const unavailable = { toast: { type: 'warning', content: '这个按钮可能已过期，或需要由提问人操作。' } };
     if (!parsed.success || parsed.data.app_id !== bot.appId) return unavailable;
     const data = parsed.data;
+    const value = data.action.value;
     const work = (async () => {
       await this.options.assertExclusiveWriter();
-      return this.options.port.runFeishuWork({
-        action: 'cardAction', botId: feishuBindingId(bot), tenantKey: data.tenant_key,
-        workspacePath: bot.workspacePath, projectId: bot.projectId, id: data.action.value.id,
-        choice: data.action.value.choice, chatId: data.context.open_chat_id,
+      const request = { botId: feishuBindingId(bot), tenantKey: data.tenant_key,
+        workspacePath: bot.workspacePath, projectId: bot.projectId, id: value.id, chatId: data.context.open_chat_id,
         messageId: data.context.open_message_id, senderId: data.operator.open_id,
-      });
+      };
+      return this.options.port.runFeishuWork(value.relay === 'reply-file' ? { ...request, action: 'requestReplyFile' }
+        : { ...request, action: 'cardAction', choice: value.choice });
     })();
     this.pending.add(work);
     try {
       const result = await work;
+      if (value.relay === 'reply-file') {
+        const state = result?.kind === 'replyFileRequest' ? result.state : 'unavailable';
+        const content = {
+          queued: '已受理，附件将发送到当前会话。', sending: '附件正在发送。', sent: '附件已发送。',
+          unknown: '暂时无法确认附件是否已发送，请查看会话。', unavailable: '文件已变更或当前无法获取，请重新生成。',
+        }[state];
+        return { toast: { type: state === 'unknown' || state === 'unavailable' ? 'warning' : 'info', content } };
+      }
       if (result?.kind !== 'cardAccepted') return unavailable;
       return { toast: { type: 'info', content: result.duplicate ? '已收到此卡片的操作。' : '已收到，处理结果会在这里回复。' } };
     } catch {

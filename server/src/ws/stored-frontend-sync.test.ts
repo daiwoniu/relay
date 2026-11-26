@@ -40,6 +40,7 @@ async function prepared(){
   function running(){
     f.mutate(`UPDATE sessions SET status='processing',active_attempt_id='live-attempt' WHERE id='${session}'`);
     const runtime=createSessionRuntimeState({sessionId:session,projectId:project,engine:'codex'});runtime.attemptId='live-attempt';runtime.engineConnectionId='live-connection';runtime.isRunning=true;runtime.currentContent='A';
+    runtime.engineConnection={send(){},cancel:async()=>{},respondToInteraction:async()=>{},close(){}};
     runtimes.set(session,runtime);return runtime;
   }
   function pauseRead(){const entered=deferred(),release=deferred(),original=port.readSessionSync.bind(port);let once=true,calls=0;
@@ -266,6 +267,7 @@ test('runtime replacement during sending rebuilds the snapshot instead of publis
     a.socket.onSend=(event)=>{if(event.type==='session_updated'&&!replaced){replaced=true;p.f.mutate(`UPDATE sessions SET active_attempt_id='new-attempt' WHERE id='${session}'`);
       const next=p.running();next.attemptId='new-attempt';next.currentContent='new runtime';p.f.mutate(`UPDATE sessions SET active_attempt_id='new-attempt' WHERE id='${session}'`);}};
     assert.equal(await p.sync.subscribe(a.c,session),true);const states=a.socket.messages.filter((m)=>m.type==='sync_state');assert.equal(states.length,1);assert.equal(states[0].currentContent,'new runtime');
+    assert.equal(a.socket.messages.filter(m=>m.type==='session_updated').at(-1)?.session.active_attempt_id,'new-attempt');
   }finally{await p.cleanup();}
 });
 test('pending approvals use current management authority rather than shared-view permission',async()=>{

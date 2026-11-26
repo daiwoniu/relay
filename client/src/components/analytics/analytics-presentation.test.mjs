@@ -2,7 +2,10 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { dailySeries,sortedTools,beijingDay,beijingTime,resultTone,analyticsSourceName,analyticsName } from './analytics-presentation.ts';
+import {createRequire} from 'node:module';
+import {fileURLToPath} from 'node:url';
+import {buildSync} from 'esbuild';
+import { dailySeries,sortedTools,beijingDay,beijingTime,resultTone,analyticsSourceName,analyticsName,describeAnalyticsRange,parseBeijingDateTime,trendLinePath,trendSeries } from './analytics-presentation.ts';
 import { loadTsxForTest } from '../ui/tsx-test-helper.mjs';
 
 const {default:DailyVisitsChart}=await loadTsxForTest(new URL('./DailyVisitsChart.tsx',import.meta.url).href);
@@ -40,18 +43,81 @@ test('日期按北京时间跨日，早于保留范围未知、范围内无记�
   assert.equal(dailySeries([],now-60*86400000,now-60*86400000,now).length,30);
   assert.equal(beijingTime(now).includes('00:01:00'),true);
 });
+test('北京时间输入和跨午夜小时段使用实际起止时间',()=>{
+  const start=parseBeijingDateTime('2026-11-17T23:00'),selected=start+35*60_000,end=start+3600_000+10*60_000;
+  assert.equal(start,Date.parse('2026-11-17T15:00:00Z'));
+  assert.ok(Number.isNaN(parseBeijingDateTime('2026-02-30T15:00')));
+  const trend={start,step:3600_000,points:[{at:start+3600_000,pv:2,uv:1}]};
+  const rows=trendSeries(trend,selected,start,end);
+  assert.deepEqual(rows.map(row=>[row.tick,row.pv]),[['23:00',0],['00:00',2]]);
+  assert.equal(rows[0].label,'2026-11-17 23:35 – 2026-11-17 23:59');
+  assert.match(render(DailyVisitsChart,{daily:[],trend,since:selected,earliest:start,now:end,until:end}),/按小时/);
+});
+test('实际查询范围合并同一天日期，跨日和跨年保留边界',()=>{
+  const instant=value=>parseBeijingDateTime(value);
+  const asOf=instant('2026-11-26T18:50');
+  assert.equal(describeAnalyticsRange('24h',instant('2026-11-25T18:50'),asOf,asOf),'11 月 25 日 18:50 — 11 月 26 日 18:50');
+  assert.equal(describeAnalyticsRange('7d',instant('2026-11-20T00:00'),asOf,asOf),'11 月 20 日 — 11 月 26 日 · 今日截至 18:50');
+  assert.equal(describeAnalyticsRange('today',instant('2026-11-26T00:00'),asOf,asOf),'11 月 26 日 00:00 — 18:50');
+  assert.equal(describeAnalyticsRange('custom',instant('2025-12-31T23:00'),instant('2026-01-01T08:00'),asOf),'2025 年 12 月 31 日 23:00 — 2026 年 1 月 1 日 08:00');
+});
+
+test('折线保留有记录的零值，遇到无保留记录时断开',()=>{
+  assert.equal(trendLinePath([0,8,null,5],10),'M 12.5 100 L 37.5 20 M 87.5 50');
+  assert.equal(trendLinePath([null],1),'');
+});
+
+test('柱状与折线切换保留指标、选中时段与网络数据',()=>{
+  const bundled=buildSync({entryPoints:[fileURLToPath(new URL('./DailyVisitsChart.tsx',import.meta.url))],bundle:true,platform:'node',format:'cjs',jsx:'automatic',write:false,external:['react','react/jsx-runtime','react-dom']}).outputFiles[0].text;
+  const require=createRequire(import.meta.url),module={exports:{}},state=[];
+  let hook=0;
+  const react={...React,useState(initial){const index=hook++;state[index]??=initial;return[state[index],value=>{state[index]=typeof value==='function'?value(state[index]):value;}];}};
+  new Function('require','module','exports',bundled)(id=>id==='react'?react:require(id),module,module.exports);
+  const props={since,now,earliest:since,daily:[{day:'2026-11-17',pv:9,uv:3,network:{public:9,internal:0,unknown:0}}]};
+  const view=()=>{hook=0;return module.exports.default(props);};
+  const find=(node,predicate)=>{
+    if(!React.isValidElement(node))return;
+    if(predicate(node))return node;
+    return React.Children.toArray(node.props.children).map(child=>find(child,predicate)).find(Boolean);
+  };
+  const click=(tree,label)=>find(tree,node=>node.type==='button'&&node.props.children===label).props.onClick();
+  find(view(),node=>node.type==='button'&&node.props['aria-label']?.startsWith('2026-11-17')).props.onFocus();
+  click(view(),'折线');
+  const line=view();
+  const path=(tree,key)=>find(tree,node=>node.type==='path'&&node.props['data-series']===key);
+  const legend=(tree,label)=>find(tree,node=>node.type==='button'&&node.props['aria-label']===`${label}折线`);
+  assert.equal(line.props['data-chart-type'],'line');
+  assert.equal(find(line,node=>node.props['aria-label']?.startsWith('2026-11-17')).props['aria-pressed'],true);
+  const sharedPath=path(line,'public').props.d;
+  assert.equal(path(line,'total').props.d,sharedPath,'重合系列仍使用真实坐标');
+  assert.match(find(line,node=>node.props.className==='analytics-chart-overlap').props.children,/总访问、公网重合/);
+  legend(line,'总访问').props.onClick();
+  assert.equal(path(view(),'total'),undefined);
+  assert.equal(path(view(),'public').props.d,sharedPath);
+  assert.equal(legend(view(),'总访问').props['aria-pressed'],false);
+  assert.equal(find(view(),node=>node.props.className==='analytics-chart-overlap'),undefined);
+  click(view(),'估算访客 UV');
+  assert.equal(view().props['data-chart-type'],'line');
+  assert.equal(view().props['data-metric'],'uv');
+  assert.ok(path(view(),'total'),'隐藏 PV 总量不影响 UV');
+  assert.equal(find(view(),node=>node.type==='path'&&node.props['data-series']==='public'),undefined);
+  click(view(),'柱状');
+  assert.equal(view().props['data-chart-type'],'bar');
+  assert.equal(view().props['data-metric'],'uv');
+});
 test('工具分别按操作/打开排序，不修改响应数据；输入无效不视为系统故障',()=>{
   const rows=[{label:'qr',opens:2,actions:30},{label:'json',opens:10,actions:1}];
   assert.deepEqual(sortedTools(rows,'opens').map(r=>r.label),['json','qr']);
   assert.deepEqual(sortedTools(rows,'actions').map(r=>r.label),['qr','json']);
   assert.equal(rows[0].label,'qr');assert.equal(resultTone('invalid_input'),'warning');assert.equal(resultTone('error'),'danger');
-  const html=render(ToolsRanking,{rows});assert.ok(html.indexOf('二维码')<html.indexOf('JSON格式化'));assert.match(html,/按操作/);
+  const html=render(ToolsRanking,{rows});assert.ok(html.indexOf('JSON格式化')<html.indexOf('二维码'));assert.match(html,/aria-pressed="true">按打开/);
 });
 test('图表日期可聚焦操作，未知日期不伪称零，原始标签转义',()=>{
   const html=render(DailyVisitsChart,{daily:[{day:'2026-11-17',pv:9,uv:3}],since,earliest:Date.parse('2026-11-17T01:00Z'),now});
   assert.match(html,/<button[^>]*aria-label="2026-11-16：无保留记录"/);
   assert.match(html,/aria-label="2026-11-17：9次访问，3个估算访客"/);
   assert.match(html,/aria-pressed="true"/);assert.doesNotMatch(html,/title=/);
+  assert.doesNotMatch(html,/网络类型|data-stacked/,'旧统计接口继续显示单色 PV');
   const ranking=render(Ranking,{title:'来源',rows:[{label:'<script>bad()</script>',count:1}],raw:true});
   assert.doesNotMatch(ranking,/<script>/);assert.match(ranking,/&lt;script&gt;/);
 });

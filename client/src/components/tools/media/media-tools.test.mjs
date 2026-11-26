@@ -8,14 +8,15 @@ import { outputName } from './media-files.ts';
 import { fitRect, wrapText } from './image-render.ts';
 import { captionsAt, parseSubtitles, shiftSubtitles, writeSubtitles } from './subtitles.ts';
 import { MEDIA_TOOL_IDS } from '../../../../../server/src/analytics/registry.ts';
-import { toolOrder } from '../tools-state.ts';
+import { listTools } from '../tools-catalog.ts';
 
 const stubs = new Map([[new URL('./media-tools.css', import.meta.url).href, 'export {};']]);
 const load = (name) => loadTsxForTest(new URL(name, import.meta.url).href, stubs);
 
-test('all media cards are discoverable and participate in frequent ordering', () => {
-  assert.ok(MEDIA_TOOL_IDS.every((id) => toolOrder('all', {}).includes(id)));
-  assert.ok(toolOrder('frequent', { 'image-edit': { count: 2, lastUsed: 10 } }).includes('image-edit'));
+test('the directory shows every media tool and sorts a used media tool first', () => {
+  const directory = listTools('category', '', [], {}).directory;
+  assert.deepEqual(directory.find(group => group.label === '图片与影音').ids, [...MEDIA_TOOL_IDS]);
+  assert.equal(listTools('frequent', '', [], { 'image-edit': { count: 2, lastUsed: 10 } }).directory[0].ids[0], 'image-edit');
 });
 
 test('crop respects alignment, contain retains the whole source, and names preserve version dots', () => {
@@ -118,6 +119,15 @@ test('video rendering reports progress and releases capture tracks after export 
   assert.equal(stops, 2);
 });
 
+test('the video timeline can lock seeking while an export owns the preview player', async () => {
+  const { Timeline } = await load('./media-ui.tsx');
+  for (const disabled of [false, true]) {
+    const html = renderToStaticMarkup(React.createElement(Timeline, { time: 4, duration: 20, onChange() {}, disabled }));
+    assert.ok(html.includes('aria-label="拖动查看时间位置"'));
+    assert.equal(html.includes('disabled=""'), disabled);
+  }
+});
+
 test('every media panel gives the user an accessible preview, an input and its next action', async () => {
   const images = await load('./ImageTools.tsx');
   const audio = await load('./AudioTools.tsx');
@@ -128,7 +138,7 @@ test('every media panel gives the user an accessible preview, an input and its n
     [images.ImageStitch, '拼接预览', '选择要拼接的图片', '生成图片'],
     [images.ImageLayout, '排版预览', '添加文字', '生成图片'],
     [audio.AudioEdit, '原音和剪辑范围', '选择音频文件', '开始录音'],
-    [audio.ToneGenerator, '试听与波形', '音高', '生成试听文件（WAV）'],
+    [audio.ToneGenerator, '试听与波形', '音高', '试听当前设置'],
     [SubtitleTool, '视频与字幕预览', '导入字幕', '生成字幕文件'],
     [video.ImageMotion, '动效预览', '选择图片', '生成动效视频'],
     [video.VideoEdit, '视频画面与截取范围', '选择视频文件', '拖动时间条查看画面'],

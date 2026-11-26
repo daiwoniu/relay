@@ -1,23 +1,35 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { unifyTaskEntries, representedMatterIds, latestCompletedMember, selectMatterEntries, trackingItemsForMatters,workbenchTaskLanes,completedTaskDirectoryUpdatedAt } from './workspace-matters.ts';
-import { taskEntryLane, taskEntryConflict, groupTaskEntriesByLane, projectTaskCardDetails, buildWorkspaceConsoleView, buildTaskEntries, trackedParticipationLabel } from './workspace-console-view-model.ts';
+import { unifyTaskEntries, representedMatterIds, selectMatterEntries, trackingItemsForMatters,workbenchTaskLanes,workbenchEndedAt } from './workspace-matters.ts';
+import { taskEntryLane, taskEntryConflict, projectTaskCardDetails, buildWorkspaceConsoleView, buildTaskEntries, trackedParticipationLabel } from './workspace-console-view-model.ts';
 const root={workItemId:'7064669599',typeKey:'story',title:'人员筛选',mySubtasks:[],myNodes:[{phase:'upcoming',name:'全量上线'}],currentNodeNames:['测试验收'],localTaskIds:['old'],flowFinished:false};
 const report={sourceProjectKey:'space',items:[],workbenchItems:[root]};
 const local=(id,ids,status='done')=>({kind:'local',key:`local:${id}`,task:{id,title:id,status,feishuWorkItemIds:ids,completedAt:'2026-11-19T17:17:00+08:00',runIds:[],sessionIds:[]}});
 const issue=(done=false)=>({kind:'project',key:'project:7174125655',item:{workItemId:'7174125655',typeKey:'issue',title:'城市码值不全',nativeCompleted:done,linkedStoryIds:[root.workItemId],tasks:[],localTaskIds:[],actionability:'state_responsibility',finishedAt:done?'2026-11-20T18:00:00+08:00':null}});
 
-test('completed workbench history contains local ledgers only and sorts by directory mtime, not Feishu completion',()=>{
+test('completed workbench history sorts by local completion and puts missing end times last',()=>{
  const older=local('older',[]),newer=local('newer',[]),missing=local('missing',[]),active=local('active',[],'doing'),native=issue(true),pending=issue(false);
  older.task.taskDirectoryUpdatedAt='2026-11-18T10:00:00Z';older.task.completedAt='2026-11-22T10:00:00Z';
  newer.task.taskDirectoryUpdatedAt='2026-11-20T10:00:00Z';newer.task.completedAt='2026-11-17T10:00:00Z';
+ newer.task.lastVerifiedAt='2026-11-26T13:37:44+08:00';missing.task.completedAt=null;
  const lanes=workbenchTaskLanes([older,missing,native,newer,active,pending]);
- assert.deepEqual(lanes.completed.map(e=>e.key),['local:newer','local:older','local:missing']);
+ assert.deepEqual(lanes.completed.map(e=>e.key),['local:older','local:newer','local:missing']);
  assert.deepEqual(lanes.doing.map(e=>e.key),['local:active']);assert.deepEqual(lanes.unstarted.map(e=>e.key),[pending.key]);
  const group={kind:'group',key:'mixed',parent:root,members:[older,newer,native]};
- assert.equal(completedTaskDirectoryUpdatedAt(group),Date.parse(newer.task.taskDirectoryUpdatedAt));
+ assert.equal(workbenchEndedAt(group),Date.parse(older.task.completedAt));
  assert.deepEqual(workbenchTaskLanes([group]).completed,[group]);
  assert.equal(workbenchTaskLanes([{...group,members:[native]}]).completed.length,0);
+});
+test('active work sorts by its own progress and actionable waiting precedes more recent paused work',()=>{
+ const recent=local('recent',[],'doing'),stale=local('stale',[],'doing');
+ recent.task.startedAt='2026-11-26T13:20:00+08:00';stale.task.startedAt='2026-11-26T04:10:00Z';
+ const incidental=issue(false);incidental.item.updatedAt='2026-11-26T13:30:00+08:00';
+ const mixed={kind:'group',key:'mixed',parent:root,members:[stale,incidental]};
+ const waiting=local('waiting',[],'waiting'),ready=local('ready',[],'todo'),paused=local('paused',[],'paused');
+ paused.task.lastVerifiedAt='2026-11-26T13:30:00+08:00';
+ const lanes=workbenchTaskLanes([mixed,recent,paused,waiting,ready]);
+ assert.deepEqual(lanes.doing.map(entry=>entry.key),[recent.key,mixed.key]);
+ assert.deepEqual(lanes.unstarted.map(entry=>entry.key),[ready.key,waiting.key,paused.key]);
 });
 test('new defect and old delivery share one pending matter; completion updates the same historical card',()=>{
   const defect=issue(), source={...report,items:[defect.item]};
@@ -27,7 +39,7 @@ test('new defect and old delivery share one pending matter; completion updates t
   assert.equal(old.task.status,'done');assert(representedMatterIds([pending]).has(root.workItemId));
   const closed=issue(true);const completed=unifyTaskEntries([old,closed],{...source,items:[closed.item]});
   assert.equal(completed.length,1);assert.equal(completed[0].key,pending.key);
-  assert.equal(taskEntryLane(completed[0]),'completed');assert.equal(latestCompletedMember(completed[0]).key,closed.key);
+  assert.equal(taskEntryLane(completed[0]),'completed');assert.equal(workbenchEndedAt(completed[0]),Date.parse(old.task.completedAt));
 });
 
 test('verified standalone defects share one card with their delivery across personal completion and reopening',()=>{
@@ -115,7 +127,7 @@ test('completed cards sort by completion rather than verification or source upda
   const old=local('old',[]),newer=local('new',[]),missing=local('missing',[]);
   old.task.completedAt='2026-11-18T10:00:00+08:00';old.task.lastVerifiedAt='2026-11-21T20:00:00+08:00';
   newer.task.completedAt='2026-11-20T10:00:00+08:00';missing.task.completedAt=null;
-  const lanes=groupTaskEntriesByLane([old,missing,newer]);
+  const lanes=workbenchTaskLanes([old,missing,newer]);
   assert.deepEqual(lanes.completed.map(item=>item.task.id),['new','old','missing']);
   assert.equal(projectTaskCardDetails({typeName:'缺陷',statusName:null,nativeCompleted:true,currentNodes:[],personalSubtasks:[]}).current,'缺陷已结束');
 });

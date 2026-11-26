@@ -1,21 +1,41 @@
 import type { WorkspaceConsoleResponsibilityDto } from '../../generated/relay-contracts';
 import { primaryFeishuWorkItemId } from './workspace-task-identity.ts';
-import { groupTaskEntries, groupTaskEntriesByLane, taskDisplayEntryUpdatedAt, taskEntryLane, trackedOpenFeishuItems, type TaskEntry, type TaskGroup, type GroupedTaskEntry } from './workspace-console-view-model.ts';
+import { groupTaskEntries, groupTaskEntriesByLane, localTaskLane, pendingTaskUpdatedAt, selectGroupPrimaryEntry, taskDisplayEntryUpdatedAt, taskEntryLane, taskEntryProgressAt, trackedOpenFeishuItems, type TaskEntry, type TaskGroup, type GroupedTaskEntry, type TaskLane } from './workspace-console-view-model.ts';
 
 function cardLocalTasks(entry:GroupedTaskEntry){
   return entry.kind==='group'?entry.members.flatMap(member=>member.kind==='local'?[member.task]:[]):entry.kind==='local'?[entry.task]:entry.item.tasks??[];
 }
-export function completedTaskDirectoryUpdatedAt(entry:GroupedTaskEntry):number{
-  return Math.max(0,...cardLocalTasks(entry).map(task=>Date.parse(task.taskDirectoryUpdatedAt??'')||0));
+export function workbenchEndedAt(entry:GroupedTaskEntry):number{
+  return Math.max(0,...cardLocalTasks(entry).filter(task=>localTaskLane(task)==='completed').map(task=>Date.parse(task.completedAt??'')||0));
+}
+export function workbenchLaneTime(entry: GroupedTaskEntry, lane: TaskLane): number {
+  if (lane === 'completed') return workbenchEndedAt(entry);
+  if (lane === 'doing') return taskEntryProgressAt(entry) ?? 0;
+  return pendingTaskUpdatedAt(entry);
 }
 export function isWorkbenchTaskVisible(entry:GroupedTaskEntry):boolean{
   return taskEntryLane(entry)!=='completed'||cardLocalTasks(entry).length>0;
 }
+function waitingPriority(entry: GroupedTaskEntry): number {
+  const primary = entry.kind === 'group' ? selectGroupPrimaryEntry(entry) : entry;
+  if (primary?.kind === 'local') {
+    if (primary.task.status === 'paused') return 3;
+    if (['waiting','blocked'].includes(primary.task.status ?? '')) return 2;
+    return 0;
+  }
+  if (primary?.kind === 'subtask') return primary.subtask.phase === 'current' ? 0 : 1;
+  if (primary?.kind === 'project') return primary.item.actionability === 'current' ? 0 : 1;
+  return primary?.kind === 'parent' && primary.item.myNodes?.some(node => node.phase === 'current') ? 0 : 1;
+}
 /** Completion history is a local-ledger view; pure Feishu history remains in Feishu. */
 export function workbenchTaskLanes(entries:GroupedTaskEntry[]){
   const lanes=groupTaskEntriesByLane(entries);
-  lanes.completed=lanes.completed.filter(isWorkbenchTaskVisible)
-    .sort((a,b)=>completedTaskDirectoryUpdatedAt(b)-completedTaskDirectoryUpdatedAt(a)||a.key.localeCompare(b.key));
+  lanes.completed=lanes.completed.filter(isWorkbenchTaskVisible);
+  for (const lane of ['doing','unstarted','completed'] as const) {
+    lanes[lane]=lanes[lane].map(entry => ({entry, at:workbenchLaneTime(entry,lane), priority:lane==='unstarted'?waitingPriority(entry):0}))
+      .sort((a,b) => a.priority-b.priority || b.at-a.at || a.entry.key.localeCompare(b.entry.key))
+      .map(({entry}) => entry);
+  }
   return lanes;
 }
 
@@ -77,9 +97,4 @@ export function trackingItemsForMatters(report: WorkspaceConsoleResponsibilityDt
 export function selectMatterEntries(matters: GroupedTaskEntry[], selected: TaskEntry[]): GroupedTaskEntry[] {
   const keys=new Set(selected.map(entry=>entry.key));
   return matters.filter(entry=>entry.kind==='group'?entry.members.some(member=>keys.has(member.key)):keys.has(entry.key));
-}
-
-export function latestCompletedMember(group: TaskGroup): TaskEntry | null {
-  const finished = (entry: TaskEntry) => Date.parse(entry.kind === 'local' ? entry.task.completedAt ?? '' : entry.kind === 'subtask' ? entry.subtask.finishedAt ?? '' : entry.item.finishedAt ?? '') || 0;
-  return group.members.filter(entry => taskEntryLane(entry) === 'completed').sort((a, b) => finished(b) - finished(a))[0] ?? null;
 }

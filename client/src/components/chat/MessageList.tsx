@@ -1,4 +1,4 @@
-import { useRef, useEffect, useLayoutEffect, useState, useCallback, useMemo } from 'react';
+import { useRef, useEffect, useLayoutEffect, useState, useCallback, useMemo, type ComponentProps } from 'react';
 import { featureAction } from '../../analytics/features';
 import type { Message, ProcessStep, ProcessTimelineEntry, StreamingBlock } from '../../stores/chat';
 import AssistantMessage from '../messages/AssistantMessage';
@@ -59,6 +59,7 @@ interface Props {
   waitingStage: WaitingStage;
   isStreaming: boolean;
   isStopping: boolean;
+  stopControl?: ComponentProps<typeof AssistantMessage>['stopControl'];
   isAwaitingAction?: boolean;
   pendingActionKind?: 'approval' | 'input' | 'mixed' | null;
   isRecovering?: boolean;
@@ -93,7 +94,7 @@ interface Props {
   onLoadMessageDetails?: (messageId: string) => Promise<void>;
 }
 
-export default function MessageList({ sessionId, messages, hasOlderMessages, onLoadOlder, streamingContent, streamingProcessContent, isWaiting, waitingStage, isStreaming, isStopping, isAwaitingAction, pendingActionKind, isRecovering, errorMessage, operationErrorMessage, streamingStartTime, streamingSteps, streamingBlocks, streamingProcessTimeline, streamingTokenUsage, onInteractionRespond, onAsyncQuestionAnswer, canAnswerAsyncQuestion, shareSelectionMode = false, selectableMessageIds = new Set(), selectedMessageIds = new Set(), onToggleShareSelection, onShareMessage, onSelectMessagesShare, onForkMessage, forkingMessageId = null, searchTargetMessageId = null, searchQuery = '', searchTargetScope = 'message', searchTargetItemId, projectPath, mobile = false, wideLayout = false, onResync, latestMessagesRefreshStatus = 'idle', onRetryLatestMessages, onLoadMessageDetails, engine, projectName, followups = EMPTY_FOLLOWUPS, knownProjects }: Props) {
+export default function MessageList({ sessionId, messages, hasOlderMessages, onLoadOlder, streamingContent, streamingProcessContent, isWaiting, waitingStage, isStreaming, isStopping, stopControl, isAwaitingAction, pendingActionKind, isRecovering, errorMessage, operationErrorMessage, streamingStartTime, streamingSteps, streamingBlocks, streamingProcessTimeline, streamingTokenUsage, onInteractionRespond, onAsyncQuestionAnswer, canAnswerAsyncQuestion, shareSelectionMode = false, selectableMessageIds = new Set(), selectedMessageIds = new Set(), onToggleShareSelection, onShareMessage, onSelectMessagesShare, onForkMessage, forkingMessageId = null, searchTargetMessageId = null, searchQuery = '', searchTargetScope = 'message', searchTargetItemId, projectPath, mobile = false, wideLayout = false, onResync, latestMessagesRefreshStatus = 'idle', onRetryLatestMessages, onLoadMessageDetails, engine, projectName, followups = EMPTY_FOLLOWUPS, knownProjects }: Props) {
   const answeredAsyncQuestionIds = useMemo(() => new Set(messages.flatMap((message) => message.replyToAsyncQuestionId ? [message.replyToAsyncQuestionId] : [])), [messages]);
   const asyncQuestionAnswers = useMemo(() => new Map(messages.flatMap((message) => message.replyToAsyncQuestionId
     ? [[message.replyToAsyncQuestionId, message.content] as const]
@@ -553,6 +554,7 @@ export default function MessageList({ sessionId, messages, hasOlderMessages, onL
             processTimeline={streamingProcessTimeline}
             isStreaming
             isStopping={isStopping}
+            stopControl={shareSelectionMode ? undefined : stopControl}
             isAwaitingAction={isAwaitingAction}
             pendingActionKind={pendingActionKind}
             isRecovering={isRecovering}

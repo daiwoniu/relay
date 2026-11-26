@@ -11,6 +11,7 @@ function harness(t,data){
  const hooks={...React,
   useState(initial){const index=cursor++;if(!(index in slots))slots[index]=typeof initial==='function'?initial():initial;return[slots[index],next=>{slots[index]=typeof next==='function'?next(slots[index]):next;dirty=true;}];},
   useRef(initial){const index=cursor++;return slots[index]??={current:initial};},
+  useCallback(fn,deps){const index=cursor++,old=slots[index];if(!old||deps.some((value,i)=>!Object.is(value,old.deps[i])))slots[index]={deps,fn};return slots[index].fn;},
   useEffect(fn,deps){const index=cursor++,old=slots[index];if(!old||deps.some((value,i)=>!Object.is(value,old.deps[i]))){old?.cleanup?.();slots[index]={deps};effects.push(()=>slots[index].cleanup=fn());}},
  };
  t.mock.method(globalThis,'fetch',(path,options)=>new Promise((resolve,reject)=>requests.push({path,options,resolve,reject})));
@@ -25,12 +26,16 @@ test('点击排行查询对应动作，翻页与切换日期保持筛选并重�
  const h=harness(t);assert.equal(h.requests.length,0,'未展开时不读取明细');
  const ranking=h.find(node=>node.type==='ol'&&node.props.className==='analytics-operation-ranking');
  const button=h.find(node=>node.type==='button',ranking);button.props.onClick();h.render();
- const first=new URL(h.requests[0].path,'http://local');assert.equal(first.searchParams.get('feature'),'settings');assert.equal(first.searchParams.get('action'),'save');assert.equal(first.searchParams.get('metric'),'action');
+ const first=new URL(h.requests[0].path,'http://local');assert.equal(first.searchParams.get('feature'),'settings');assert.equal(first.searchParams.get('action'),'save');assert.equal(first.searchParams.get('metric'),'action');assert.equal(first.searchParams.get('pageSize'),'10');
  h.requests[0].resolve(Response.json({data:{items:[],next:{at:100,id:'00000000-0000-4000-8000-000000000001'}},asOf:123,cached:false}));await h.settle();
  const next=h.find(node=>node.type==='button'&&node.props.children==='下一页');assert.equal(next.props.disabled,false);next.props.onClick();h.render();assert.match(h.requests[1].path,/beforeAt=100/);
  h.query('range=today&excludeAdmin=true');const changed=h.requests[2];assert.doesNotMatch(changed.path,/beforeAt/);assert.match(changed.path,/feature=settings/);assert.match(changed.path,/range=today/);
  changed.reject(Error('temporary'));await h.settle();
  const state=h.find(node=>typeof node.type==='function'&&node.props.label==='操作明细');state.props.resource.retry();h.render();assert.match(h.requests[3].path,/feature=settings/);assert.match(h.requests[3].path,/fresh=true/);
+ h.query('range=7d&excludeAdmin=false');assert.doesNotMatch(h.requests[4].path,/beforeAt|fresh=true/,'切回原日期仍从第一页正常读取');
+ const size=h.find(node=>node.type==='select'&&node.props.value===10);
+ size.props.onChange({target:{value:'50'}});h.render();
+ assert.match(h.requests[5].path,/pageSize=50/);assert.doesNotMatch(h.requests[5].path,/beforeAt/);
 });
 
 test('长列表默认收起，桌面和手机同步展开，不触发明细读取',t=>{
@@ -51,17 +56,21 @@ test('关联查看限定一次操作，说明单条结果并可恢复原筛选',
  const h=harness(t);
  const rank=h.find(node=>node.props.className==='analytics-operation-ranking');
  h.find(node=>node.type==='button',rank).props.onClick();h.render();
- const row={id:'a',at:1000,registrationId:'settings.save',feature:'settings',action:'save',metric:'action',result:null,automatic:false,durationMs:null,operationId:'00000000-0000-4000-8000-000000000001'};
- h.requests[0].resolve(Response.json({data:{items:[row],next:null},asOf:123,cached:false}));await h.settle();
+ const row={id:'a',at:1000,registrationId:'settings.save',feature:'settings',action:'save',metric:'action',result:null,automatic:false,durationMs:null,operationId:'00000000-0000-4000-8000-000000000001',operationRecordCount:2};
+ const single={...row,id:'b',result:'error',operationId:'00000000-0000-4000-8000-000000000002',operationRecordCount:1,details:{reasonCode:'LOAD_FAILED'}};
+ h.requests[0].resolve(Response.json({data:{items:[row,single],next:null},asOf:123,cached:false}));await h.settle();
  const resultCell=h.find(node=>typeof node.type==='function'&&node.type.name==='RowResult');
  assert.equal(resultCell.type(resultCell.props).props.children,'仅记录操作');
- h.find(node=>node.type==='button'&&node.props.children==='只看这次操作').props.onClick();h.render();
+ const relatedButton=node=>node.type==='button'&&React.Children.toArray(node.props.children).join('').includes('查看关联记录');
+ assert.ok(h.find(node=>node.type==='p'&&node.props.children==='当前范围只有这条操作记录。'));
+ assert.match(JSON.stringify(h.find(node=>node.props.className==='analytics-failure-reason').props.children),/没有更具体的原因/);
+ h.find(relatedButton).props.onClick();h.render();
  const related=new URL(h.requests[1].path,'http://local').searchParams;
  assert.equal(related.get('operationId'),row.operationId);assert.equal(related.get('includeSystem'),'true');assert.equal(related.has('action'),false);assert.equal(related.get('range'),'7d');
- h.requests[1].resolve(Response.json({data:{items:[row],next:null},asOf:124,cached:false}));await h.settle();
+ h.requests[1].resolve(Response.json({data:{items:[row,{...row,id:'result',metric:'result',result:'success'}],next:null},asOf:124,cached:false}));await h.settle();
  const notice=h.find(node=>node.props.className==='analytics-filter-notice');
- const text=JSON.stringify(notice.props.children);assert.match(text,/当前范围：1 条/);assert.match(text,/未找到其他关联记录/);
- assert.equal(h.find(node=>node.type==='button'&&node.props.children==='只看这次操作'),undefined);
+ const text=JSON.stringify(notice.props.children);assert.match(text,/当前范围：2 条关联记录/);
+ assert.equal(h.find(relatedButton),undefined);
  h.find(node=>node.type==='button'&&node.props.children==='返回原筛选').props.onClick();h.render();
  const restored=new URL(h.requests[2].path,'http://local').searchParams;assert.equal(restored.get('action'),'save');assert.equal(restored.get('feature'),'settings');assert.equal(restored.has('operationId'),false);
 });

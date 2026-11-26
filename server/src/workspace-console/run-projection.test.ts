@@ -17,6 +17,16 @@ test('uses explicit operation names and does not mistake heartbeat for completio
   assert.doesNotMatch(JSON.stringify(result), /private command/);
 });
 
+test('separates record creation from execution and normalizes legacy China Standard Time', () => {
+  const record = projectRunRecord({created_at:'2026-11-26 13:20:00'}, 'run', 'task', []);
+  assert.equal(record.createdAt,'2026-11-26T13:20:00+08:00');
+  assert.equal(record.startedAt,null);
+  const executed = projectRunRecord({created_at:'2026-11-26 13:20:00', job_started_at:'invalid',
+    started_at:'2026-11-26 13:30:00', finished_at:'2026-11-26T05:31:00Z'}, 'run', 'task', []);
+  assert.equal(executed.startedAt,'2026-11-26T13:30:00+08:00');
+  assert.equal(executed.durationSeconds,60);
+});
+
 test('projects repair run facts into a readable summary', () => {
   const result = projectRunRecord({
     run_id: 'run-repair-1', mode: 'repair', target: 'df_risk.df_risk_judgement_ch', state: 'succeeded',

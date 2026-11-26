@@ -17,6 +17,7 @@ export interface DashboardTask extends TaskRegistryTask {
 }
 export interface WorkspaceDashboard {
   workspaceId?: string;
+  runTimeVersion?: 1;
   workspacePath: string;
   capturedAt: number;
   registryGeneratedAt: string | null;
@@ -32,6 +33,21 @@ export interface WorkspaceDashboard {
 }
 
 const completedStatuses = new Set(['done', 'completed', 'closed', 'cancelled', 'canceled']);
+
+type RunSnapshot = Pick<WorkspaceDashboard, 'runTimeVersion' | 'runs' | 'unmatchedRuns'>;
+export function hasCurrentRunTimes(value: RunSnapshot): boolean {
+  return value.runTimeVersion === 1 || value.runs.length + value.unmatchedRuns.length === 0;
+}
+
+export function withoutLegacyRunTiming<T extends RunSnapshot>(value: T): T {
+  if (hasCurrentRunTimes(value)) return value;
+  // Old projections could store an execution's creation time under startedAt.
+  const hideUnverifiedTiming = (run: WorkspaceRunProjection) => ({
+    ...run, startedAt: null, durationSeconds: null,
+    summary: run.summary.split(' · ').filter(part => !part.startsWith('用时 ')).join(' · ') || '暂无结果摘要',
+  });
+  return { ...value, runs: value.runs.map(hideUnverifiedTiming), unmatchedRuns: value.unmatchedRuns.map(hideUnverifiedTiming) };
+}
 
 export function buildWorkspaceDashboard(
   registry: TaskRegistryProjection,
@@ -60,7 +76,7 @@ export function buildWorkspaceDashboard(
     ...(activityEvidence.has(task.id) ? { activityEvidence: activityEvidence.get(task.id)! } : {}),
   }));
   return {
-    workspaceId:WORKSPACE_ID,workspacePath: FIXED_WORKSPACE_PATH, capturedAt, registryGeneratedAt: registry.generatedAt,
+    workspaceId:WORKSPACE_ID,runTimeVersion:1,workspacePath: FIXED_WORKSPACE_PATH, capturedAt, registryGeneratedAt: registry.generatedAt,
     counts: { total: tasks.length, completed: tasks.filter((task) => completedStatuses.has(task.status ?? '')).length,
       active: tasks.filter((task) => !completedStatuses.has(task.status ?? '')).length, runs: runs.length, sessions: validSessions.length },
     tasks, runs, unmatchedRuns: runs.filter((run) => !run.taskId || !taskIds.has(run.taskId)),

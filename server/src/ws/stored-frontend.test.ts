@@ -15,6 +15,9 @@ import type { EngineAdapter } from '../engine/adapter.js';
 import type { EngineModelCatalog } from '../engine/models/types.js';
 import { hashSessionToken } from '../auth/session.js';
 import type { StoredRuntimeStop } from '../services/stored-runtime-stop.js';
+import { AnalyticsService } from '../analytics/service.js';
+import { collectCommittedAnalytics } from '../analytics/command-collector.js';
+import type { AnalyticsRecord } from '../analytics/contract.js';
 const until=async(check:()=>boolean)=>{for(let n=0;n<500&&!check();n++)await new Promise(r=>setTimeout(r,5));assert.ok(check(),'Native socket stage timed out');};
 class Socket extends EventEmitter{
   readyState=1;bufferedAmount=0;messages:any[]=[];code:number|null=null;
@@ -41,23 +44,42 @@ test('Native socket reports uncertain and rejected stops without fabricating a t
   const graph=new StoredRuntimeGraph({port,storeId:'store',generation:1,registry:new EngineRegistry([]),assertExclusiveWriter:async()=>{},collectFileChanges:async()=>({}),attachmentAvailability:()=>false,resolveResource:()=>null,diagnostic:()=>{}});
   const commands=new StoredFrontendCommands({port,storeId:'store',generation:1,graph,sender:undefined!,assertExclusiveWriter:async()=>{}}),wss=new EventEmitter();
   const sockets=setupStoredWebSocket(wss as unknown as WebSocketServer,{port,graph,commands,acceptsOrigin:()=>true});
+  const records:AnalyticsRecord[]=[];
+  const analytics=new AnalyticsService({authenticateSession:input=>port.authenticateSession(input),appendAnalytics:async({records:batch})=>{records.push(...batch);return{accepted:batch.length};}});
+  const detachAnalytics=collectCommittedAnalytics(port,analytics);
   let result:Awaited<ReturnType<StoredRuntimeStop['request']>>={state:'unknown'};
-  t.mock.method(graph.stop,'request',async()=>result);
+  const stop=t.mock.method(graph.stop,'request',async()=>result);
   try{
+    const intents:string[]=[];
     for(const code of ['STORAGE_UNAVAILABLE','FORBIDDEN','CONFLICT'] as const){
       result=code==='STORAGE_UNAVAILABLE'?{state:'unknown'}:{state:'rejected',code};
       const socket=new Socket();wss.emit('connection',socket,{headers:{cookie:`relay_session=${token}`},socket:{remoteAddress:'127.0.0.1'}});
-      socket.command({type:'cancel',sessionId});
+      const analyticsOperationId=randomUUID();intents.push(analyticsOperationId);
+      socket.command({type:'cancel',sessionId,expectedAttemptId:'feedback-attempt',analyticsOperationId});
       await until(()=>socket.messages.some(event=>event.type==='error'&&event.sessionId===sessionId));
       const error=socket.messages.find(event=>event.type==='error'&&event.sessionId===sessionId);
       assert.equal(error.code,`TURN_CANCEL_${code}`);
       if(code==='STORAGE_UNAVAILABLE')assert.match(error.message,/停止结果暂时无法确认/);
       socket.close(1000);
     }
+    assert.equal(stop.mock.callCount(),3);
+    const stale=new Socket();wss.emit('connection',stale,{headers:{cookie:`relay_session=${token}`},socket:{remoteAddress:'127.0.0.1'}});
+    const staleIntent=randomUUID();intents.push(staleIntent);
+    stale.command({type:'cancel',sessionId,expectedAttemptId:'previous-attempt',analyticsOperationId:staleIntent});
+    await until(()=>stale.messages.some(event=>event.type==='error'&&event.code==='TURN_CANCEL_CONFLICT'&&event.sessionId===sessionId));
+    assert.equal(stop.mock.callCount(),3);
     assert.equal(f.scalar(`SELECT status FROM sessions WHERE id='${sessionId}'`),'processing');
     assert.equal(f.scalar(`SELECT count(*) FROM messages WHERE session_id='${sessionId}'`),0);
     assert.equal(f.scalar(`SELECT count(*) FROM engine_resource_leases WHERE session_id='${sessionId}'`),1);
-  }finally{await sockets.close();await commands.close();await graph.close();await port.close();f.cleanup();}
+    result={state:'requested',confirmed:true};
+    const confirmedIntent=randomUUID();intents.push(confirmedIntent);
+    stale.command({type:'cancel',sessionId,expectedAttemptId:'feedback-attempt',analyticsOperationId:confirmedIntent});
+    await until(()=>records.length===5);
+    assert.deepEqual(records.map(row=>row.event.properties),['unknown','rejected','rejected','rejected','success'].map((outcome,index)=>({
+      feature:'composer',action:'stop',surface:'unknown',operationId:intents[index],result:outcome,
+      ...(index<4?{reasonCode:['UNKNOWN','PERMISSION_DENIED','OPERATION_FAILED','OPERATION_FAILED'][index]}:{}),
+    })));
+  }finally{detachAnalytics();await analytics.close();await sockets.close();await commands.close();await graph.close();await port.close();f.cleanup();}
 });
 
 test('Native socket serializes commands during authentication, preserves queued work on disconnect and cancels only on an explicit command',async()=>{
@@ -76,7 +98,11 @@ test('Native socket serializes commands during authentication, preserves queued 
     const socket=new Socket();wss.emit('connection',socket,request);
     socket.command({type:'subscribe',sessionId});const messageId=randomUUID();socket.command({type:'send',sessionId,messageId,engine:'codex',content:'queued question'});
     await until(()=>socket.messages.some(event=>event.type==='message_saved'&&event.message.id===messageId));
-    assert.equal(f.scalar(`SELECT status FROM sessions WHERE id='${sessionId}'`),'queued');socket.close(1000);
+    assert.equal(f.scalar(`SELECT status FROM sessions WHERE id='${sessionId}'`),'queued');
+    const attemptId=f.scalar(`SELECT active_attempt_id FROM sessions WHERE id='${sessionId}'`);
+    socket.command({type:'cancel',sessionId,expectedAttemptId:attemptId});
+    await until(()=>socket.messages.some(event=>event.type==='error'&&event.code==='TURN_CANCEL_CONFLICT'&&event.sessionId===sessionId));
+    socket.close(1000);
     assert.equal(f.scalar(`SELECT state FROM engine_queue_entries WHERE session_id='${sessionId}'`),'queued');
     const next=new Socket();wss.emit('connection',next,request);next.command({type:'subscribe',sessionId});next.command({type:'cancel'});
     await until(()=>next.messages.some(event=>event.type==='sync_state'&&event.messages.some((message:any)=>message.role==='assistant'&&message.stopped)));

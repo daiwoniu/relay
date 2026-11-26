@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
-import { toRecoveryRequestAction, canIgnoreRecoveryConfirmationError } from './service-maintenance-operation.ts';
+import { toRecoveryRequestAction, canIgnoreRecoveryConfirmationError, hasCompletedFrontendRestart } from './service-maintenance-operation.ts';
 import { ApiError, parseApiResponse } from '../api/client.ts';
 import { pollForRecovery } from './recovery-flow.ts';
 
@@ -10,6 +10,30 @@ test('维护动作只映射固定服务枚举', () => {
   assert.equal(toRecoveryRequestAction('restart_frontend'), 'restart_frontend');
   assert.equal(toRecoveryRequestAction('restart_relay'), 'restart_relay');
   assert.equal(toRecoveryRequestAction('reload_browser'), null);
+});
+
+test('已完成的前端切换不受后来源码改动影响', async () => {
+  let clock = 0;
+  const result = await pollForRecovery({
+    target: 'frontend', clientProtocolVersion: 35, requireExplicitRestartObserved: true,
+    timeoutMs: 20, intervalMs: 5, now: () => clock, wait: async (ms) => { clock += ms; },
+    probe: async () => ({
+      healthy: true,
+      serverProtocolVersion: 35,
+      restartObserved: hasCompletedFrontendRestart(clock < 10 ? 'running' : 'completed', true, true),
+    }),
+  });
+  assert.equal(result.status, 'ready');
+  assert.equal(clock, 10);
+});
+
+test('有操作回执时按回执判定，缺少回执时要求实例已切换且构建匹配源码', () => {
+  assert.equal(hasCompletedFrontendRestart('completed', false, true), true);
+  assert.equal(hasCompletedFrontendRestart('running', true, false), false);
+  assert.equal(hasCompletedFrontendRestart('failed', true, false), false);
+  assert.equal(hasCompletedFrontendRestart(null, true, true), false);
+  assert.equal(hasCompletedFrontendRestart(null, false, false), false);
+  assert.equal(hasCompletedFrontendRestart(null, true, false), true);
 });
 
 test('确认失效属于结果未知，必须观察实例切换，不能把短暂断网当成功', async () => {

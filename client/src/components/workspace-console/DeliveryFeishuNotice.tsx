@@ -1,18 +1,22 @@
 import Tooltip from '../ui/Tooltip';
+import {formatDateTime} from '../../utils/date-display';
 import FeishuIdentity from './FeishuIdentity';
-import { deliveryFeishuGroups, type DeliveryFeishuItem } from './workspace-console-view-model';
+import { compareFeishuListTimes, deliveryFeishuGroups, feishuListTime, type DeliveryFeishuItem } from './workspace-console-view-model';
 
 export default function DeliveryFeishuNotice({ linkedFeishu, needsRecheck, completed, inDetail = false }: {
   linkedFeishu: DeliveryFeishuItem[] | undefined; needsRecheck: boolean; completed: boolean; inDetail?: boolean;
 }) {
   if (!linkedFeishu?.length) return null;
-  const groups = deliveryFeishuGroups(linkedFeishu);
+  const compare = compareFeishuListTimes<DeliveryFeishuItem>(item => item.finished === true, item => item);
+  const groups = deliveryFeishuGroups([...linkedFeishu].sort((a,b) => compare(a,b) || a.key.localeCompare(b.key)));
   const row = (item: DeliveryFeishuItem) => {
     const status = item.statusOnlyLabel !== undefined ? item.statusOnlyLabel : item.statusLabel || '飞书状态未返回';
+    const time = feishuListTime(item,item.finished===true);
     return <div key={item.key} className="workspace-workbench__relation-item min-w-0 space-y-1">
     <Tooltip overflowOnly content={item.title} asChild><p className={`${inDetail ? '' : 'line-clamp-2'} break-words text-xs font-medium text-slate-300`}>{item.title}</p></Tooltip>
     <FeishuIdentity label={item.kind === 'subtask' ? '子任务' : item.typeName || '工作项'} id={item.workItemId ?? ''} title={item.title} url={item.url} nodeLabel={item.nodeLabel} nodeName={item.nodeName} nodeNames={item.nodeNames} />
     {status && <Tooltip overflowOnly content={status} asChild><p className={`${inDetail ? '' : 'line-clamp-2'} break-words text-[11px] text-slate-400`}>{status}</p></Tooltip>}
+    {inDetail && item.associationVerified !== false && <p className="text-[11px] text-slate-500">{time.label}：{formatDateTime(time.at,{seconds:true,fallback:'未提供'})}</p>}
   </div>;
   };
   const rows = (items: DeliveryFeishuItem[]) => {

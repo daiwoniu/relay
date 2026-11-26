@@ -22,6 +22,7 @@ import type { AsyncQuestionAnswerHandler } from './AsyncQuestionPanel';
 import ChangedFilesSummary from './ChangedFilesSummary';
 import ChangedFilesIncompleteNotice from './ChangedFilesIncompleteNotice';
 import { useFilePreview } from './useFilePreview';
+import { normalizeMessageFilePath as normalizeFilePath } from './file-preview-path';
 import { shouldRenderMarkdownImageAsFileLink } from './markdown-image-source';
 import FileTypeIcon from './FileTypeIcon';
 import BlankProcessingStatus from './BlankProcessingStatus';
@@ -55,6 +56,7 @@ interface Props {
   content: string;
   isStreaming?: boolean;
   isStopping?: boolean;
+  stopControl?: { request: (placement: StopReplyPlacement) => void; pending: boolean };
   isAwaitingAction?: boolean;
   pendingActionKind?: 'approval' | 'input' | 'mixed' | null;
   isRecovering?: boolean;
@@ -109,7 +111,9 @@ interface Props {
   searchTargetItemId?: string;
 }
 
-function StreamingElapsed({ startTime, statusLabel, visualState }: { startTime?: number | null; statusLabel: string; visualState: MessageVisualState }) {
+export type StopReplyPlacement = 'message_header' | 'message_footer';
+
+function StreamingElapsed({ startTime, statusLabel, visualState, showWithoutElapsed }: { startTime?: number | null; statusLabel: string; visualState: MessageVisualState; showWithoutElapsed: boolean }) {
   const [elapsed, setElapsed] = useState(() => startTime ? Date.now() - startTime : 0);
 
   useEffect(() => {
@@ -119,10 +123,11 @@ function StreamingElapsed({ startTime, statusLabel, visualState }: { startTime?:
     return () => clearInterval(interval);
   }, [startTime]);
 
-  const presentation = getRunningDurationPresentation(statusLabel, elapsed);
+  const presentation = (startTime ? getRunningDurationPresentation(statusLabel, elapsed) : null)
+    ?? (showWithoutElapsed ? statusLabel : null);
   return presentation
     ? (
-      <span className="inline-flex items-center gap-1.5 text-xs text-[var(--color-text-tertiary)]">
+      <span className="inline-flex items-center gap-1.5">
         <span className="assistant-message__status-icon" aria-hidden="true">
           <ExecutionStatusIcon status={visualState} />
         </span>
@@ -130,6 +135,20 @@ function StreamingElapsed({ startTime, statusLabel, visualState }: { startTime?:
       </span>
     )
     : null;
+}
+
+function StopReplyButton({ request, pending, isStopping, isAwaitingAction, placement }: NonNullable<Props['stopControl']> & { placement: StopReplyPlacement; isStopping?: boolean; isAwaitingAction?: boolean }) {
+  const busy = pending || isStopping;
+  const label = isStopping ? '正在停止' : pending ? '正在请求停止' : isAwaitingAction ? '停止等待' : '停止生成';
+  return (
+    <Tooltip content={label} asChild>
+      <button type="button" onClick={() => request(placement)} disabled={busy} aria-label={label} className="assistant-message__stop">
+        <span className="assistant-message__stop-mark" aria-hidden="true">
+          {busy ? <span className="h-3 w-3 animate-spin rounded-full border border-current border-t-transparent" /> : <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor" aria-hidden="true"><rect x="2" y="2" width="8" height="8" rx="1" /></svg>}
+        </span>
+      </button>
+    </Tooltip>
+  );
 }
 
 /** 判断是否为网页 URL */
@@ -160,24 +179,6 @@ function truncateDisplayPath(path: string, maxChars: number = 80): string {
   }
 
   return parts[0] + ellipsis + parts[parts.length - 1];
-}
-
-/** 规范化文件路径：去掉前导 /、去掉 :lineNumber 后缀、处理双斜杠 */
-function normalizeFilePath(href: string): string {
-  if (!href || typeof href !== 'string') return '';
-  let p = href.trim();
-  if (!p) return '';
-  // URL decode（防止 react-markdown 对特殊字符编码）
-  try { p = decodeURIComponent(p); } catch {}
-  // 去掉前导 /（如 /G:/... → G:/...）
-  p = p.replace(/^\/+([A-Za-z]:)/, '$1');
-  // 规范双斜杠 G:// → G:/
-  p = p.replace(/^([A-Za-z]):\/\/+/, '$1:/');
-  // 去掉锚点
-  p = p.replace(/#.*$/, '');
-  // 去掉 :lineNumber 后缀（如 README.md:1 → README.md）
-  p = p.replace(/:(\d+)$/, '');
-  return p;
 }
 
 /** 判断是否为文件路径 */
@@ -454,7 +455,7 @@ const MarkdownContent = memo(function MarkdownContent({ content, projectPath, re
   );
 });
 
-function AssistantMessage({ historicalRecords, historicalRecordCount, sessionId, content, isStreaming, isStopping, isAwaitingAction, pendingActionKind, isRecovering, duration, startTime, createdAt, items, processContent, processTimeline, changedFiles, changedFilesIncomplete = false, hasDetails = false, detailsLoaded = false, processItemCount = 0, asyncQuestionIds, processNarrativeCount = 0, changedFileCount = 0, onLoadDetails, deferMarkdown = false, optimizeContentVisibility = false, projectPath, mobile = false, streamingSteps, stopped, outcome, executionStage, waitingStage, errorCode, errorMessage, tokenUsage, modelInfo, onInteractionRespond, onAsyncQuestionAnswer, answeredAsyncQuestionIds, asyncQuestionAnswers, canAnswerAsyncQuestion, readOnly = false, full, onShare, onSelectMessagesShare, onFork, forkPending = false, selectionMode = false, selected = false, selectable = true, onToggleSelection, messageId, searchTarget = false, searchTargetScope, searchTargetItemId, onResync, flowContext }: Props) {
+function AssistantMessage({ historicalRecords, historicalRecordCount, sessionId, content, isStreaming, isStopping, stopControl, isAwaitingAction, pendingActionKind, isRecovering, duration, startTime, createdAt, items, processContent, processTimeline, changedFiles, changedFilesIncomplete = false, hasDetails = false, detailsLoaded = false, processItemCount = 0, asyncQuestionIds, processNarrativeCount = 0, changedFileCount = 0, onLoadDetails, deferMarkdown = false, optimizeContentVisibility = false, projectPath, mobile = false, streamingSteps, stopped, outcome, executionStage, waitingStage, errorCode, errorMessage, tokenUsage, modelInfo, onInteractionRespond, onAsyncQuestionAnswer, answeredAsyncQuestionIds, asyncQuestionAnswers, canAnswerAsyncQuestion, readOnly = false, full, onShare, onSelectMessagesShare, onFork, forkPending = false, selectionMode = false, selected = false, selectable = true, onToggleSelection, messageId, searchTarget = false, searchTargetScope, searchTargetItemId, onResync, flowContext }: Props) {
   const [copied, setCopied] = useState(false);
   const [showSource, setShowSource] = useState(false);
   const [detailsStatus, setDetailsStatus] = useState<'idle' | 'loading' | 'error'>('idle');
@@ -479,6 +480,9 @@ function AssistantMessage({ historicalRecords, historicalRecordCount, sessionId,
   const visualState: MessageVisualState = isStreaming
     ? (isStopping ? 'stopping' : isAwaitingAction ? 'awaiting_action' : isRecovering ? 'recovering' : 'processing')
     : outcome || (stopped ? 'stopped' : 'completed');
+  const stopButton = isStreaming && !readOnly && !selectionMode && stopControl
+    ? { ...stopControl, isStopping, isAwaitingAction }
+    : null;
   const operationRecord = !isStreaming && !stopped && !content.trim() && (!outcome || outcome === 'completed') && !errorCode;
   const status = operationRecord
     ? { label: '操作记录', tone: 'warning' as const }
@@ -584,14 +588,13 @@ function AssistantMessage({ historicalRecords, historicalRecordCount, sessionId,
         <div className={`message-content message-content--assistant assistant-message assistant-message--${status.tone}`}>
         <div
           className={`assistant-message__status ${isStreaming && !displayContent && !hasVisibleProcess ? 'assistant-message__status--standalone' : ''}`}
-          role="status"
         >
           <div className="inline-flex flex-wrap items-center gap-1.5">
             <span className="assistant-message__status-icon" aria-hidden="true">
               <ExecutionStatusIcon status={visualState} />
             </span>
             <span className="inline-flex items-center gap-1">
-              <span className="font-medium">{status.label}</span>
+              <span role="status" className="font-medium">{status.label}</span>
               {tokenUsage && (
                 <>
                   <span className="text-[var(--color-text-tertiary)]" aria-hidden="true">·</span>
@@ -599,6 +602,7 @@ function AssistantMessage({ historicalRecords, historicalRecordCount, sessionId,
                 </>
               )}
             </span>
+            {stopButton && <StopReplyButton {...stopButton} placement="message_header" />}
             {isStreaming && stage === 'started' && visualState === 'processing'
               && !displayContent && !hasVisibleProcess && (
               <BlankProcessingStatus startTime={startTime} onResync={onResync} />
@@ -716,8 +720,9 @@ function AssistantMessage({ historicalRecords, historicalRecordCount, sessionId,
 
         {/* 底部操作栏 */}
         {isStreaming ? (
-          <div className="flex items-center gap-2 mt-2">
-            <StreamingElapsed startTime={startTime} statusLabel={status.label} visualState={visualState} />
+          <div className="assistant-message__running-footer">
+            <StreamingElapsed startTime={startTime} statusLabel={status.label} visualState={visualState} showWithoutElapsed={Boolean(stopButton)} />
+            {stopButton && <StopReplyButton {...stopButton} placement="message_footer" />}
           </div>
         ) : (
           <div className="message-support message-support--assistant message-meta message-meta--assistant justify-start">

@@ -85,10 +85,8 @@ import { readWorkspaceTaskLaunch } from '../workspace-console/workspace-task-lau
 interface Props {
   onSend: (content: string, attachments: SendAttachmentDto[], messageId: string, onConfirmationState?: (state: 'verifying') => void, enginePreferences?: EnginePreferencesDto) => Promise<boolean>;
   onEnsureProject: () => Promise<string>;
-  onStop?: () => void;
   onCancelQueued?: () => void;
   isStreaming: boolean;
-  isStopping?: boolean;
   isAwaitingAction?: boolean;
   canRespondToInteraction?: boolean;
   isQueued?: boolean;
@@ -112,7 +110,7 @@ interface Props {
   registerComposerFocusHandler: (handler: ComposerFocusHandler) => () => void;
 }
 
-export default function ChatInput({ onSend, onEnsureProject, onStop, onCancelQueued, isStreaming, isStopping = false, isAwaitingAction = false, canRespondToInteraction = true, isQueued = false, isQueueWaiting = false, isCancellingQueued = false, sessionId, projectName, selectedEngine, engineStatuses, engineLocked, engineFallbackNotice, onEngineChange, onEngineStatusesChange, engineStatusNotice = null, tokenUsageAvailable, wideLayout = false, expanded, onExpandedChange, suggestedReply = null, focusRequest = null, registerComposerFocusHandler }: Props) {
+export default function ChatInput({ onSend, onEnsureProject, onCancelQueued, isStreaming, isAwaitingAction = false, canRespondToInteraction = true, isQueued = false, isQueueWaiting = false, isCancellingQueued = false, sessionId, projectName, selectedEngine, engineStatuses, engineLocked, engineFallbackNotice, onEngineChange, onEngineStatusesChange, engineStatusNotice = null, tokenUsageAvailable, wideLayout = false, expanded, onExpandedChange, suggestedReply = null, focusRequest = null, registerComposerFocusHandler }: Props) {
   useFeatureView('composer',true,'composer');
   const { user } = useAuth();
   const [projectMenuAnchor, setProjectMenuAnchor] = useState<DOMRect | null>(null);
@@ -124,7 +122,6 @@ export default function ChatInput({ onSend, onEnsureProject, onStop, onCancelQue
   const [queuedPresentationSessionId, setQueuedPresentationSessionId] = useState<string | null>(null);
   const [mobileDetails, setMobileDetails] = useState<ChatInputMobileDetails | null>(null);
   const editingStarted=useRef(false);
-  const [stopConfirmOpen, setStopConfirmOpen] = useState(false);
   const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
   const engineSelectionRequired = !selectedEngine;
   const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth < 1024);
@@ -135,7 +132,6 @@ export default function ChatInput({ onSend, onEnsureProject, onStop, onCancelQue
   const lastAutoOpenedEmptySessionVersionRef = useRef<number | null>(null);
   const inputFocusFrameRef = useRef<number | null>(null);
   const lastHandledFocusRequestIdRef = useRef(0);
-  const pendingStopFocusSourceRef = useRef<HTMLElement | null>(null);
   const deviceFileInputRef = useRef<HTMLInputElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
@@ -150,7 +146,6 @@ export default function ChatInput({ onSend, onEnsureProject, onStop, onCancelQue
   const pendingCaretPositionRef = useRef<number | null>(null);
   const suggestedReplyStateRef = useRef<SuggestedReplyDraftState | null>(null);
   const suggestedReplySelectionPendingRef = useRef(false);
-  const stopClickedRef = useRef(false);
   const {
     projects,
     sessions,
@@ -381,22 +376,6 @@ export default function ChatInput({ onSend, onEnsureProject, onStop, onCancelQue
   }, []);
 
   useEffect(() => {
-    stopClickedRef.current = false;
-    setStopConfirmOpen(false);
-  }, [isStreaming, isStopping, sessionId]);
-
-  useEffect(() => {
-    const sourceElement = pendingStopFocusSourceRef.current;
-    if (!sourceElement || isStopping || isAwaitingAction) return;
-    pendingStopFocusSourceRef.current = null;
-    requestInputFocus('stop-finished', sourceElement);
-  }, [isAwaitingAction, isStopping, requestInputFocus]);
-
-  useEffect(() => {
-    pendingStopFocusSourceRef.current = null;
-  }, [sessionId]);
-
-  useEffect(() => {
     const handleResize = () => setIsMobile(window.innerWidth < 1024);
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
@@ -569,29 +548,6 @@ export default function ChatInput({ onSend, onEnsureProject, onStop, onCancelQue
     e.preventDefault();
     console.log('[ChatInput] handleSubmit (form)');
     void doSend();
-  };
-
-  const handleStop = () => {
-    if (stopClickedRef.current) return;
-    featureAction('composer','stop','composer');
-    stopClickedRef.current = true;
-    const sourceElement = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    pendingStopFocusSourceRef.current = sourceElement;
-    onStop?.();
-    if (!tryFocusInput('stop-finished', sourceElement)) requestInputFocus('stop-finished', sourceElement);
-  };
-
-  const handleStopRequest = () => {
-    if (isMobile) {
-      setStopConfirmOpen(true);
-      return;
-    }
-    handleStop();
-  };
-
-  const confirmStop = () => {
-    setStopConfirmOpen(false);
-    handleStop();
   };
 
   const handleSelectDirectory = (dirPath: string) => {
@@ -1097,9 +1053,6 @@ export default function ChatInput({ onSend, onEnsureProject, onStop, onCancelQue
             </div>
 
             <ChatInputSubmitControl
-              isStreaming={isStreaming}
-              isStopping={isStopping}
-              isAwaitingAction={isAwaitingAction}
               isQueued={queuedPresentationVisible}
               isCancellingQueued={isCancellingQueued}
               engineSelectionRequired={engineSelectionRequired}
@@ -1109,7 +1062,6 @@ export default function ChatInput({ onSend, onEnsureProject, onStop, onCancelQue
               hasUnreadyAttachments={hasUnreadyAttachments(attachments)}
               hasContent={Boolean(input.trim() || attachments.length > 0)}
               isMobile={isMobile}
-              onStop={handleStopRequest}
               onCancelQueued={onCancelQueued}
             />
           </div>
@@ -1128,10 +1080,6 @@ export default function ChatInput({ onSend, onEnsureProject, onStop, onCancelQue
         onCloseMobileDetails={() => setMobileDetails(null)}
         currentProject={currentProject}
         contextUsageDetails={contextUsageDetails}
-        stopConfirmOpen={stopConfirmOpen}
-        isAwaitingAction={isAwaitingAction}
-        onCancelStop={() => {featureAction('composer','cancel_stop','composer');setStopConfirmOpen(false);}}
-        onConfirmStop={confirmStop}
         clearConfirmOpen={clearConfirmOpen}
         onCancelClear={() => {featureAction('composer','cancel_clear','composer');setClearConfirmOpen(false);}}
         onConfirmClear={handleClearInput}

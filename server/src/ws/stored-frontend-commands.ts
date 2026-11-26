@@ -1,5 +1,6 @@
 import { createHash,randomUUID } from 'node:crypto';
 import { recordTrustedResult } from '../analytics/command-collector.js';
+import type { AnalyticsFeatureProperties } from '../analytics/registry.js';
 import { FrontendCommandSchema,RELAY_PROTOCOL_VERSION,type FrontendCommand } from '../contracts/index.js';
 import type { CoreStoragePort } from '../storage/contracts.js';
 import { StorageContractError } from '../storage/command-boundary.js';
@@ -65,20 +66,37 @@ export class StoredFrontendCommands {
         outcome:result.state==='submitted'?'accepted':result.state==='access-denied'?'skipped':'failed',...(result.state==='unknown'?{message:'答复结果暂时无法确认，请刷新状态核对'}:{})});return result;
     }
     if(command.type==='cancel'&&sessionId){
-      const state=await port.readSessionSync({principal,sessionId,includeMessages:false});if(!state.activeAttemptId)return;
-      const key=createHash('sha256').update(JSON.stringify([principal.userId,sessionId,state.activeAttemptId])).digest('hex');
-      if(state.queue?.state==='queued'){
-        await this.options.assertExclusiveWriter();const result=await executeStoredCommand(port,{protocolVersion:1,storeId:this.options.storeId,workerGeneration:this.options.generation,
-          requestId:randomUUID(),operationId:'frontend-queue-cancel:'+key,principal,command:{name:'queue.cancel',input:{sessionId,expectedAttemptId:state.activeAttemptId,messageId:'queue-cancel:'+key}}});
-        if(result.state!=='committed')throw new StorageContractError(result.state==='rejected'?result.code:'STORAGE_UNAVAILABLE');
-        await graph.refresh(sessionId);
-        for(const recipient of graph.hub.clients())if(recipient.subscribedSessionIds.has(sessionId))await graph.sync.subscribe(recipient,sessionId,recipient.activeSubscriptionSessionId===sessionId,true);
-        return;
+      const operationId=command.expectedAttemptId?command.analyticsOperationId:undefined;
+      const report=(result:NonNullable<AnalyticsFeatureProperties['result']>,reasonCode?:AnalyticsFeatureProperties['reasonCode'])=>{
+        if(operationId)recordTrustedResult(port,client.actor,'composer','stop',operationId,operationId,result,reasonCode?{reasonCode}:{});
+      };
+      try{
+        const state=await port.readSessionSync({principal,sessionId,includeMessages:false});
+        if(command.expectedAttemptId&&(state.activeAttemptId!==command.expectedAttemptId||state.queue?.state==='queued'))throw new StorageContractError('CONFLICT');
+        if(!state.activeAttemptId)return;
+        const key=createHash('sha256').update(JSON.stringify([principal.userId,sessionId,state.activeAttemptId])).digest('hex');
+        if(state.queue?.state==='queued'){
+          await this.options.assertExclusiveWriter();const result=await executeStoredCommand(port,{protocolVersion:1,storeId:this.options.storeId,workerGeneration:this.options.generation,
+            requestId:randomUUID(),operationId:'frontend-queue-cancel:'+key,principal,command:{name:'queue.cancel',input:{sessionId,expectedAttemptId:state.activeAttemptId,messageId:'queue-cancel:'+key}}});
+          if(result.state!=='committed')throw new StorageContractError(result.state==='rejected'?result.code:'STORAGE_UNAVAILABLE');
+          await graph.refresh(sessionId);
+          for(const recipient of graph.hub.clients())if(recipient.subscribedSessionIds.has(sessionId))await graph.sync.subscribe(recipient,sessionId,recipient.activeSubscriptionSessionId===sessionId,true);
+          return;
+        }
+        const result=await graph.stop.request(principal,{sessionId,expectedAttemptId:state.activeAttemptId},'frontend-stop:'+key);
+        if(result.state==='rejected')throw new StorageContractError(result.code);
+        if(result.state==='unknown')throw new StorageContractError('STORAGE_UNAVAILABLE');
+        if(result.confirmed)report('success');
+        else report('unknown','UNKNOWN');
+        return result;
+      }catch(error){
+        const code=error instanceof StorageContractError?error.code:undefined;
+        if(code==='FORBIDDEN')report('rejected','PERMISSION_DENIED');
+        else if(code==='CONFLICT')report('rejected','OPERATION_FAILED');
+        else if(code==='OVERLOADED')report('throttled','RATE_LIMITED');
+        else report('unknown','UNKNOWN');
+        throw error;
       }
-      const result=await graph.stop.request(principal,{sessionId,expectedAttemptId:state.activeAttemptId},'frontend-stop:'+key);
-      if(result.state==='rejected')throw new StorageContractError(result.code);
-      if(result.state==='unknown')throw new StorageContractError('STORAGE_UNAVAILABLE');
-      return result;
     }
   }
   async failed(client:FrontendClient,command:Partial<FrontendCommand>|undefined,error:unknown){
